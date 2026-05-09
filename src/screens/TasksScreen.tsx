@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, TextInput, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, TextInput, Alert, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { MainTabParamList } from '../navigation';
@@ -21,6 +21,7 @@ export default function TasksScreen({ navigation }: Props) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [epics, setEpics] = useState<Epic[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState<'all' | 'pending' | 'in_progress' | 'completed'>('all');
   const [selectedEpic, setSelectedEpic] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -31,7 +32,8 @@ export default function TasksScreen({ navigation }: Props) {
     fetchData();
   }, []);
 
-  const fetchData = async () => {
+  const fetchData = async (showLoader = true) => {
+    if (showLoader) setIsLoading(true);
     try {
       const [tasksResponse, epicsResponse] = await Promise.all([
         tasksApi.getTasks(),
@@ -48,7 +50,13 @@ export default function TasksScreen({ navigation }: Props) {
       console.error('Failed to fetch tasks:', error);
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
+  };
+
+  const onRefresh = () => {
+    setIsRefreshing(true);
+    fetchData(false);
   };
 
   const filteredTasks = tasks.filter(task => {
@@ -196,7 +204,12 @@ export default function TasksScreen({ navigation }: Props) {
         </View>
       </ScrollView>
 
-      <ScrollView style={styles.tasksList}>
+      <ScrollView 
+        style={styles.tasksList}
+        refreshControl={
+          <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} colors={[colors.primary]} />
+        }
+      >
         {filteredTasks.map(task => (
           <TouchableOpacity
             key={task.id}

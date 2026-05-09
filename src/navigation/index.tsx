@@ -40,6 +40,8 @@ import FeesScreen from '../screens/FeesScreen';
 import { useTheme } from '../theme/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
 
+import IdeaDetailScreen from '../screens/IdeaDetailScreen';
+
 export type RootStackParamList = {
   Onboarding1: undefined;
   Onboarding2: undefined;
@@ -61,6 +63,7 @@ export type RootStackParamList = {
   CreateTask: undefined;
   TaskDetail: { taskId: string };
   Ideas: undefined;
+  IdeaDetail: { idea: Idea };
   Backlog: undefined;
   ActivityLogs: undefined;
   Subscription: undefined;
@@ -394,7 +397,7 @@ function MainDrawer() {
 
 export default function Navigation() {
   const { colors, mode } = useTheme();
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, hasSeenOnboarding } = useAuth();
   const [isSplashVisible, setIsSplashVisible] = useState(true);
   
   const navTheme = mode === 'dark'
@@ -440,6 +443,7 @@ export default function Navigation() {
             <Stack.Screen name="CreateTask" component={CreateTaskScreen} />
             <Stack.Screen name="TaskDetail" component={TaskDetailScreen} />
             <Stack.Screen name="Ideas" component={IdeasScreen} />
+            <Stack.Screen name="IdeaDetail" component={IdeaDetailScreen} />
             <Stack.Screen name="Backlog" component={BacklogScreen} />
             <Stack.Screen name="ActivityLogs" component={ActivityLogsScreen} />
             <Stack.Screen name="Subscription" component={SubscriptionScreen} />
@@ -447,9 +451,13 @@ export default function Navigation() {
           </>
         ) : (
           <>
-            <Stack.Screen name="Onboarding1" component={OnboardingScreen1} />
-            <Stack.Screen name="Onboarding2" component={OnboardingScreen2} />
-            <Stack.Screen name="Onboarding3" component={OnboardingScreen3} />
+            {!hasSeenOnboarding && (
+              <>
+                <Stack.Screen name="Onboarding1" component={OnboardingScreen1} />
+                <Stack.Screen name="Onboarding2" component={OnboardingScreen2} />
+                <Stack.Screen name="Onboarding3" component={OnboardingScreen3} />
+              </>
+            )}
             <Stack.Screen name="Login" component={LoginScreen} />
             <Stack.Screen name="Register" component={RegisterScreen} />
             <Stack.Screen name="VerifyOtp" component={VerifyOtpScreen} />

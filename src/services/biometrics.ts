@@ -7,23 +7,32 @@ export interface BiometricResult {
 }
 
 export class BiometricService {
+  static async hasHardware(): Promise<boolean> {
+    try {
+      return await LocalAuthentication.hasHardwareAsync();
+    } catch (error) {
+      console.error('Failed to check biometric hardware:', error);
+      return false;
+    }
+  }
+
+  static async isEnrolled(): Promise<boolean> {
+    try {
+      return await LocalAuthentication.isEnrolledAsync();
+    } catch (error) {
+      console.error('Failed to check biometric enrollment:', error);
+      return false;
+    }
+  }
+
   static async isAvailable(): Promise<boolean> {
     try {
-      const hasHardware = await LocalAuthentication.hasHardwareAsync();
-      if (!hasHardware) {
-        console.log('Biometric hardware not available');
-        return false;
-      }
+      const hasHardware = await this.hasHardware();
+      if (!hasHardware) return false;
       
-      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-      if (!isEnrolled) {
-        console.log('No biometrics enrolled on device');
-        return false;
-      }
-      
-      return true;
+      const isEnrolled = await this.isEnrolled();
+      return isEnrolled;
     } catch (error) {
-      console.error('Biometric availability check failed:', error);
       return false;
     }
   }

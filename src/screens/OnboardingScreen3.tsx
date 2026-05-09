@@ -4,6 +4,7 @@ import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation';
 import { useTheme } from '../theme/ThemeContext';
+import { useAuth } from '../contexts/AuthContext';
 import { LinearGradient } from 'expo-linear-gradient';
 import Ionicons from '@expo/vector-icons/Ionicons';
 
@@ -12,7 +13,18 @@ type OnboardingScreenNavigationProp = NativeStackNavigationProp<RootStackParamLi
 export default function OnboardingScreen3() {
   const navigation = useNavigation<OnboardingScreenNavigationProp>();
   const { colors } = useTheme();
+  const { completeOnboarding } = useAuth();
   const styles = createStyles(colors);
+
+  const handleGetStarted = async () => {
+    await completeOnboarding();
+    navigation.navigate('Login');
+  };
+
+  const handleSignUp = async () => {
+    await completeOnboarding();
+    navigation.navigate('Register');
+  };
 
   const features = [
     { icon: 'cash-outline', title: 'One-Click Payroll', desc: 'Run payroll for your entire team in seconds.' },
@@ -64,7 +76,7 @@ export default function OnboardingScreen3() {
         </View>
         <TouchableOpacity 
           style={styles.buttonContainer}
-          onPress={() => navigation.navigate('Login')}
+          onPress={handleGetStarted}
           activeOpacity={0.9}
         >
           <LinearGradient
@@ -78,7 +90,7 @@ export default function OnboardingScreen3() {
         </TouchableOpacity>
         <View style={styles.signupContainer}>
           <Text style={styles.signupText}>Don't have an account? </Text>
-          <TouchableOpacity onPress={() => navigation.navigate('Register')}>
+          <TouchableOpacity onPress={handleSignUp}>
             <Text style={styles.signupLink}>Sign Up</Text>
           </TouchableOpacity>
         </View>

@@ -6,7 +6,10 @@ import { ideasApi } from '../services/api';
 import { Idea } from '../types';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../navigation';
 import { LinearGradient } from 'expo-linear-gradient';
+import { RefreshControl } from 'react-native';
 
 interface Documentation {
   id: string;
@@ -15,11 +18,14 @@ interface Documentation {
   createdAt: string;
 }
 
+type IdeasScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Ideas'>;
+
 export default function IdeasScreen() {
   const { colors } = useTheme();
-  const navigation = useNavigation();
+  const navigation = useNavigation<IdeasScreenNavigationProp>();
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [newIdea, setNewIdea] = useState({ title: '', description: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -34,7 +40,8 @@ export default function IdeasScreen() {
     fetchIdeas();
   }, []);
 
-  const fetchIdeas = async () => {
+  const fetchIdeas = async (showLoader = true) => {
+    if (showLoader) setIsLoading(true);
     try {
       const response = await ideasApi.getIdeas();
       if (response.data.success) {
@@ -44,7 +51,13 @@ export default function IdeasScreen() {
       console.error('Failed to fetch ideas:', error);
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
+  };
+
+  const onRefresh = () => {
+    setIsRefreshing(true);
+    fetchIdeas(false);
   };
 
   const handleCreateIdea = async () => {
@@ -135,9 +148,20 @@ export default function IdeasScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        style={styles.content} 
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} colors={[colors.primary]} />
+        }
+      >
         {ideas.map((idea) => (
-          <View key={idea.id} style={styles.ideaCard}>
+          <TouchableOpacity 
+            key={idea.id} 
+            style={styles.ideaCard}
+            onPress={() => navigation.navigate('IdeaDetail', { idea })}
+            activeOpacity={0.7}
+          >
             <View style={styles.ideaHeader}>
               <Text style={styles.ideaTitle}>{idea.title}</Text>
               <View style={[styles.statusBadge, { backgroundColor: getStatusColor(idea.status) + '20' }]}>
@@ -146,7 +170,7 @@ export default function IdeasScreen() {
                 </Text>
               </View>
             </View>
-            <Text style={styles.ideaDescription}>{idea.description}</Text>
+            <Text style={styles.ideaDescription} numberOfLines={3}>{idea.description}</Text>
             
             <TouchableOpacity 
               style={styles.docButton}
@@ -160,7 +184,7 @@ export default function IdeasScreen() {
               <Text style={styles.ideaMeta}>By {idea.userName || 'Anonymous'}</Text>
               <Text style={styles.ideaMeta}>{new Date(idea.createdAt).toLocaleDateString()}</Text>
             </View>
-          </View>
+          </TouchableOpacity>
         ))}
         {ideas.length === 0 && (
           <View style={styles.emptyState}>

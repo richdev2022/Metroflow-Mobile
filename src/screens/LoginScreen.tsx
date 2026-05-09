@@ -10,6 +10,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import BiometricService from '../services/biometrics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { kycApi } from '../services/api';
+import Logger from '../utils/logger';
 
 type LoginScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Login'>;
 
@@ -39,18 +40,32 @@ export default function LoginScreen() {
 
   const checkKycAndNavigate = async () => {
     try {
+      Logger.log('Checking KYC status...');
       const kycRes = await kycApi.getStatus();
+      
+      if (!kycRes || !kycRes.data || !kycRes.data.user) {
+        Logger.warn('Invalid KYC response structure', kycRes);
+        // Navigate to Main if response is invalid to avoid crash
+        navigation.reset({
+          index: 0,
+          routes: [{ name: 'Main' }],
+        });
+        return;
+      }
+
       const { user } = kycRes.data;
       
       // Tier 1 is verified if either BVN or NIN is verified
       const isTier1Verified = user.bvnStatus === 'verified' || user.ninStatus === 'verified';
       
       if (!isTier1Verified) {
+        Logger.log('User not Tier 1 verified, navigating to KycPrompt');
         navigation.reset({
           index: 0,
           routes: [{ name: 'KycPrompt' }],
         });
       } else {
+        Logger.log('User verified, checking biometrics...');
         const promptShown = await BiometricService.hasPromptBeenShown();
         const isEnabled = await BiometricService.isEnabled();
         const hasBiometrics = await BiometricService.isAvailable();
@@ -65,9 +80,8 @@ export default function LoginScreen() {
         }
       }
     } catch (error) {
-      console.error('Failed to check KYC status:', error);
-      // If KYC check fails, default to main to avoid locking user out, 
-      // but ideally we should handle this better.
+      Logger.error('Failed to check KYC status:', error);
+      // If KYC check fails, default to main to avoid locking user out
       navigation.reset({
         index: 0,
         routes: [{ name: 'Main' }],
@@ -83,13 +97,17 @@ export default function LoginScreen() {
 
     setLoading(true);
     try {
+      Logger.log('Attempting login for:', email);
       await login(email, password);
+      Logger.log('Login successful, proceeding to KYC check');
       await checkKycAndNavigate();
     } catch (error: any) {
+      Logger.error('Login handle error:', error);
       if (error.message === 'OTP required') {
         navigation.navigate('VerifyOtp', { email });
       } else {
-        Alert.alert('Error', error.response?.data?.message || 'Login failed');
+        const errorMsg = error.response?.data?.message || error.message || 'Login failed';
+        Alert.alert('Login Error', errorMsg);
       }
     } finally {
       setLoading(false);
@@ -223,10 +241,13 @@ export default function LoginScreen() {
             </LinearGradient>
           </TouchableOpacity>
 
-          {biometricsAvailable && biometricsEnabled && (
+          {biometricsAvailable && (
             <TouchableOpacity 
-              style={styles.biometricButton} 
-              onPress={handleBiometricLogin}
+              style={[
+                styles.biometricButton,
+                !biometricsEnabled && { borderColor: colors.border, opacity: 0.8 }
+              ]} 
+              onPress={biometricsEnabled ? handleBiometricLogin : () => Alert.alert('Enable Biometrics', 'Please sign in with your password first, then enable biometric login in Settings.')}
               disabled={biometricLoading}
               activeOpacity={0.7}
             >
@@ -234,8 +255,18 @@ export default function LoginScreen() {
                 <ActivityIndicator color={colors.primary} />
               ) : (
                 <>
-                  <Ionicons name="finger-print-outline" size={24} color={colors.primary} style={{ marginRight: 8 }} />
-                  <Text style={styles.biometricButtonText}>Sign in with Biometrics</Text>
+                  <Ionicons 
+                    name="finger-print-outline" 
+                    size={24} 
+                    color={biometricsEnabled ? colors.primary : colors.textSecondary} 
+                    style={{ marginRight: 8 }} 
+                  />
+                  <Text style={[
+                    styles.biometricButtonText,
+                    !biometricsEnabled && { color: colors.textSecondary }
+                  ]}>
+                    {biometricsEnabled ? 'Sign in with Biometrics' : 'Biometrics not enabled'}
+                  </Text>
                 </>
               )}
             </TouchableOpacity>

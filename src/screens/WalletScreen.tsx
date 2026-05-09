@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Alert, TextInput, Modal, FlatList } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Alert, TextInput, Modal, FlatList, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, DrawerActions } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -24,6 +24,7 @@ export default function WalletScreen() {
   const navigation = useNavigation<WalletScreenNavigationProp>();
   const { colors } = useTheme();
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isKycLoading, setIsKycLoading] = useState(true);
   const [kycStatus, setKycStatus] = useState<{ ninVerified: boolean; bvnVerified: boolean }>({
     ninVerified: false,
@@ -53,8 +54,8 @@ export default function WalletScreen() {
     fetchBanks();
   }, []);
 
-  const checkKycStatus = async () => {
-    setIsKycLoading(true);
+  const checkKycStatus = async (showLoader = true) => {
+    if (showLoader) setIsKycLoading(true);
     try {
       const response = await kycApi.getStatus();
       const { user } = response.data;
@@ -70,7 +71,13 @@ export default function WalletScreen() {
       console.error('Failed to fetch KYC status:', error);
     } finally {
       setIsKycLoading(false);
+      setIsRefreshing(false);
     }
+  };
+
+  const onRefresh = () => {
+    setIsRefreshing(true);
+    checkKycStatus(false);
   };
 
   const fetchWalletData = async () => {
@@ -309,7 +316,12 @@ export default function WalletScreen() {
   }
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView 
+      style={styles.container}
+      refreshControl={
+        <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} colors={[colors.primary]} />
+      }
+    >
       <View style={styles.header}>
         <TouchableOpacity 
           style={styles.menuButton}

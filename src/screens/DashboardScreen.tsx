@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/ThemeContext';
 import { tasksApi, teamApi, epicsApi } from '../services/api';
@@ -24,13 +24,14 @@ export default function DashboardScreen() {
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [epics, setEpics] = useState<Epic[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedMember, setSelectedMember] = useState<string>('all');
   const [selectedEpic, setSelectedEpic] = useState<string>('all');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
 
-  const fetchData = async () => {
-    setIsLoading(true);
+  const fetchData = async (showLoader = true) => {
+    if (showLoader) setIsLoading(true);
     try {
       const [tasksResponse, teamResponse, epicsResponse] = await Promise.all([
         tasksApi.getTasks(10000, {
@@ -56,7 +57,13 @@ export default function DashboardScreen() {
       console.error('Failed to fetch dashboard data:', error);
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
+  };
+
+  const onRefresh = () => {
+    setIsRefreshing(true);
+    fetchData(false);
   };
 
   // Re-fetch when filters change
@@ -132,7 +139,12 @@ export default function DashboardScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView style={styles.scrollView}>
+      <ScrollView 
+        style={styles.scrollView}
+        refreshControl={
+          <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} colors={[colors.primary]} />
+        }
+      >
         <View style={styles.header}>
           <TouchableOpacity 
             style={styles.menuButton}

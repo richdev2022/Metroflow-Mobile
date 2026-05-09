@@ -28,6 +28,7 @@ export default function SettingsScreen({ navigation }: Props) {
   const [editCurrency, setEditCurrency] = useState<'NGN' | 'USD'>('NGN');
   const [otpPreference, setOtpPreference] = useState<'email' | 'sms' | 'both'>('email');
   const [biometricsAvailable, setBiometricsAvailable] = useState(false);
+  const [hasBiometricHardware, setHasBiometricHardware] = useState(false);
 
   const isDarkMode = mode === 'dark';
 
@@ -36,12 +37,23 @@ export default function SettingsScreen({ navigation }: Props) {
   }, []);
 
   const checkBiometricAvailability = async () => {
-    const available = await BiometricService.isAvailable();
-    setBiometricsAvailable(available);
+    const hasHardware = await BiometricService.hasHardware();
+    const enrolled = await BiometricService.isEnrolled();
+    setHasBiometricHardware(hasHardware);
+    setBiometricsAvailable(enrolled);
   };
 
   const handleBiometricToggle = async (value: boolean) => {
     if (value) {
+      const enrolled = await BiometricService.isEnrolled();
+      if (!enrolled) {
+        Alert.alert(
+          'Biometrics Not Set Up',
+          'Please set up fingerprint or face recognition in your device settings first.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
       const success = await enableBiometrics();
       if (!success) {
         Alert.alert('Error', 'Failed to enable biometric login');
@@ -359,16 +371,17 @@ export default function SettingsScreen({ navigation }: Props) {
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Security</Text>
-          {biometricsAvailable && renderSettingItem(
+          {hasBiometricHardware && renderSettingItem(
             'finger-print-outline',
             'Biometric Login',
-            biometricsEnabled ? 'Enabled' : 'Disabled',
+            !biometricsAvailable ? 'Not enrolled on device' : (biometricsEnabled ? 'Enabled' : 'Disabled'),
             undefined,
             <Switch
               value={biometricsEnabled}
               onValueChange={handleBiometricToggle}
               trackColor={{ false: colors.border, true: colors.primary + '80' }}
               thumbColor={biometricsEnabled ? colors.primary : colors.textSecondary}
+              disabled={!biometricsAvailable && !biometricsEnabled}
             />
           )}
           {renderSettingItem(

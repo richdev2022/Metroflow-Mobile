@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, TextInput, Alert, Image, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, TextInput, Alert, Image, KeyboardAvoidingView, Platform, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation';
 import { useTheme } from '../theme/ThemeContext';
-import { tasksApi, commentsApi } from '../services/api';
-import { Task, Comment } from '../types';
+import { tasksApi, commentsApi, assignmentsApi, teamApi } from '../services/api';
+import { Task, Comment, TeamMember } from '../types';
 import Ionicons from '@expo/vector-icons/Ionicons';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'TaskDetail'>;
@@ -15,12 +15,15 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
   const { colors } = useTheme();
   const [task, setTask] = useState<Task | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [newComment, setNewComment] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmittingComment, setIsSubmittingComment] = useState(false);
+  const [showAssignModal, setShowAssignModal] = useState(false);
 
   useEffect(() => {
     fetchTaskDetails();
+    fetchTeamMembers();
   }, [taskId]);
 
   const fetchTaskDetails = async () => {
@@ -43,6 +46,53 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
       console.error('Failed to fetch task details:', error);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const fetchTeamMembers = async () => {
+    try {
+      const response = await teamApi.getTeam();
+      if (response.data.success) {
+        setTeamMembers(response.data.data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch team members:', error);
+    }
+  };
+
+  const handleToggleAssignment = async (userId: string) => {
+    if (!task) return;
+    
+    const isAssigned = task.assignedTo?.includes(userId);
+    
+    try {
+      if (isAssigned) {
+        // Find assignment ID if available, otherwise use taskId and userId logic
+        // For simplicity with the provided API, we might need a separate call or handle it differently
+        // If we don't have assignment IDs, we might just re-assign the whole list
+        const newUserIds = task.assignedTo?.filter(id => id !== userId) || [];
+        await tasksApi.updateTask(taskId, { assignedTo: newUserIds });
+        setTask({ ...task, assignedTo: newUserIds });
+      } else {
+        const newUserIds = [...(task.assignedTo || []), userId];
+        await assignmentsApi.assignTasks({ taskIds: [taskId], userIds: [userId] });
+        setTask({ ...task, assignedTo: newUserIds });
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to update assignment');
+    }
+  };
+
+  const handleToggleReaction = async (commentId: string, type: 'like' | 'love' | 'laugh') => {
+    try {
+      await commentsApi.toggleReaction(commentId, type);
+      // Refresh comments
+      const response = await commentsApi.getComments(taskId);
+      if (response.data.success) {
+        setComments(response.data.data);
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to update reaction');
     }
   };
 
@@ -159,16 +209,24 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
           </View>
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Assignees</Text>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Assignees</Text>
+              <TouchableOpacity onPress={() => setShowAssignModal(true)} style={styles.addAssigneeButton}>
+                <Ionicons name="person-add-outline" size={20} color={colors.primary} />
+              </TouchableOpacity>
+            </View>
             <View style={styles.assigneeList}>
-              {task.assignedTo?.map((userId, index) => (
-                <View key={index} style={styles.assigneeItem}>
-                  <View style={styles.avatar}>
-                    <Text style={styles.avatarText}>{userId.charAt(0).toUpperCase()}</Text>
+              {task.assignedTo?.map((userId, index) => {
+                const member = teamMembers.find(m => m.id === userId);
+                return (
+                  <View key={index} style={styles.assigneeItem}>
+                    <View style={styles.avatar}>
+                      <Text style={styles.avatarText}>{(member?.name || userId).charAt(0).toUpperCase()}</Text>
+                    </View>
+                    <Text style={styles.assigneeName}>{member?.name || userId}</Text>
                   </View>
-                  <Text style={styles.assigneeName}>{userId}</Text>
-                </View>
-              )) || <Text style={styles.emptyText}>No one assigned</Text>}
+                );
+              }) || <Text style={styles.emptyText}>No one assigned</Text>}
             </View>
           </View>
 
@@ -216,6 +274,20 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
                     <Text style={styles.commentAuthor}>{comment.userName || 'User'}</Text>
                     <Text style={styles.commentDate}>{new Date(comment.createdAt).toLocaleDateString()}</Text>
                   </View>
+                  <View style={styles.reactions}>
+                    <TouchableOpacity 
+                      onPress={() => handleToggleReaction(comment.id, 'like')}
+                      style={[styles.reactionButton, comment.reactions?.some(r => r.type === 'like') && styles.activeReaction]}
+                    >
+                      <Text>👍</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      onPress={() => handleToggleReaction(comment.id, 'love')}
+                      style={[styles.reactionButton, comment.reactions?.some(r => r.type === 'love') && styles.activeReaction]}
+                    >
+                      <Text>❤️</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
                 <Text style={styles.commentContent}>{comment.content}</Text>
               </View>
@@ -248,6 +320,51 @@ export default function TaskDetailScreen({ route, navigation }: Props) {
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+
+      <Modal
+        visible={showAssignModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowAssignModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Assign Task</Text>
+              <TouchableOpacity onPress={() => setShowAssignModal(false)}>
+                <Ionicons name="close" size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView>
+              {teamMembers.map((member) => {
+                const isAssigned = task.assignedTo?.includes(member.id);
+                return (
+                  <TouchableOpacity 
+                    key={member.id} 
+                    style={styles.memberItem}
+                    onPress={() => handleToggleAssignment(member.id)}
+                  >
+                    <View style={styles.memberInfo}>
+                      <View style={[styles.avatar, { backgroundColor: colors.primary + '20' }]}>
+                        <Text style={[styles.avatarText, { color: colors.primary }]}>{member.name.charAt(0).toUpperCase()}</Text>
+                      </View>
+                      <View>
+                        <Text style={styles.memberName}>{member.name}</Text>
+                        <Text style={styles.memberRole}>{member.role}</Text>
+                      </View>
+                    </View>
+                    <Ionicons 
+                      name={isAssigned ? "checkbox" : "square-outline"} 
+                      size={24} 
+                      color={isAssigned ? colors.primary : colors.textSecondary} 
+                    />
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -361,11 +478,19 @@ const createStyles = (colors: any) => StyleSheet.create({
   section: {
     marginBottom: 24,
   },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
   sectionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
     color: colors.text,
-    marginBottom: 12,
+  },
+  addAssigneeButton: {
+    padding: 4,
   },
   assigneeList: {
     flexDirection: 'row',
@@ -498,5 +623,67 @@ const createStyles = (colors: any) => StyleSheet.create({
   sendButtonDisabled: {
     backgroundColor: colors.textSecondary,
     opacity: 0.5,
+  },
+  reactions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginLeft: 'auto',
+  },
+  reactionButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: colors.surfaceVariant,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  activeReaction: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary + '10',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: colors.background,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 24,
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: colors.text,
+  },
+  memberItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  memberInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  memberName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  memberRole: {
+    fontSize: 12,
+    color: colors.textSecondary,
   },
 });

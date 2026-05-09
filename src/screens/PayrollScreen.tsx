@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, Modal, TextInput, ActivityIndicator, Switch } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, Modal, TextInput, ActivityIndicator, Switch, RefreshControl } from 'react-native';
 import { useNavigation, DrawerActions } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { MainTabParamList, RootStackParamList } from '../navigation';
@@ -19,6 +19,7 @@ export default function PayrollScreen() {
   const navigation = useNavigation<PayrollScreenNavigationProp>();
   const { colors } = useTheme();
   const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [config, setConfig] = useState<PayrollConfig | null>(null);
   const [showConfigModal, setShowConfigModal] = useState(false);
@@ -29,6 +30,7 @@ export default function PayrollScreen() {
   const [adjustmentData, setAdjustmentData] = useState({
     type: 'bonus' as 'bonus' | 'deduction',
     amount: '',
+    currency: 'NGN',
     reason: '',
   });
   const [configData, setConfigData] = useState({
@@ -42,8 +44,8 @@ export default function PayrollScreen() {
     fetchPayrollData();
   }, []);
 
-  const fetchPayrollData = async () => {
-    setIsLoading(true);
+  const fetchPayrollData = async (showLoader = true) => {
+    if (showLoader) setIsLoading(true);
     try {
       const [summaryRes, configRes] = await Promise.all([
         payrollApi.getSummary(),
@@ -61,7 +63,13 @@ export default function PayrollScreen() {
       console.error('Failed to fetch payroll data:', error);
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
+  };
+
+  const onRefresh = () => {
+    setIsRefreshing(true);
+    fetchPayrollData(false);
   };
 
   const fetchAdjustments = async (userId: string) => {
@@ -103,11 +111,12 @@ export default function PayrollScreen() {
         userId: selectedEmployee.id,
         type: adjustmentData.type,
         amount: parseFloat(adjustmentData.amount),
+        currency: adjustmentData.currency,
         reason: adjustmentData.reason,
       });
       Alert.alert('Success', 'Adjustment added successfully');
       setShowAdjustmentModal(false);
-      setAdjustmentData({ type: 'bonus', amount: '', reason: '' });
+      setAdjustmentData({ type: 'bonus', amount: '', currency: 'NGN', reason: '' });
       fetchAdjustments(selectedEmployee.id);
       fetchPayrollData();
     } catch (error: any) {
@@ -160,7 +169,12 @@ export default function PayrollScreen() {
   }
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView 
+      style={styles.container}
+      refreshControl={
+        <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} colors={[colors.primary]} />
+      }
+    >
       <View style={styles.header}>
         <TouchableOpacity 
           style={styles.menuButton}
@@ -439,14 +453,23 @@ export default function PayrollScreen() {
 
               <View style={styles.field}>
                 <Text style={styles.label}>Amount</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter amount"
-                  placeholderTextColor={colors.textSecondary}
-                  value={adjustmentData.amount}
-                  onChangeText={(text) => setAdjustmentData(prev => ({ ...prev, amount: text }))}
-                  keyboardType="numeric"
-                />
+                <View style={styles.amountInputContainer}>
+                  <TouchableOpacity 
+                    style={styles.currencySelector}
+                    onPress={() => setAdjustmentData(prev => ({ ...prev, currency: prev.currency === 'NGN' ? 'USD' : 'NGN' }))}
+                  >
+                    <Text style={styles.currencyText}>{adjustmentData.currency}</Text>
+                    <Ionicons name="chevron-down" size={14} color={colors.textSecondary} />
+                  </TouchableOpacity>
+                  <TextInput
+                    style={[styles.input, { flex: 1, marginBottom: 0 }]}
+                    placeholder="0.00"
+                    placeholderTextColor={colors.textSecondary}
+                    value={adjustmentData.amount}
+                    onChangeText={(text) => setAdjustmentData(prev => ({ ...prev, amount: text }))}
+                    keyboardType="numeric"
+                  />
+                </View>
               </View>
 
               <View style={styles.field}>
@@ -625,7 +648,31 @@ const createStyles = (colors: any) => StyleSheet.create({
   bulkTransferText: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: 'bold',
+  },
+  amountInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    overflow: 'hidden',
+  },
+  currencySelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    backgroundColor: colors.surfaceVariant,
+    height: '100%',
+    borderRightWidth: 1,
+    borderRightColor: colors.border,
+    gap: 4,
+  },
+  currencyText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: colors.text,
   },
   modalOverlay: {
     flex: 1,

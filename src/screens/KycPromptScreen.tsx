@@ -7,6 +7,7 @@ import { useTheme } from '../theme/ThemeContext';
 import { kycApi } from '../services/api';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
+import Logger from '../utils/logger';
 
 type KycPromptScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'KycPrompt'>;
 
@@ -22,10 +23,15 @@ export default function KycPromptScreen() {
 
   const fetchStatus = async () => {
     try {
+      Logger.log('Fetching KYC status in prompt...');
       const res = await kycApi.getStatus();
-      setKycStatus(res.data.user);
+      if (res && res.data && res.data.user) {
+        setKycStatus(res.data.user);
+      } else {
+        Logger.warn('Invalid KYC status response in prompt', res);
+      }
     } catch (error) {
-      console.error('Failed to fetch KYC status:', error);
+      Logger.error('Failed to fetch KYC status in prompt:', error);
     } finally {
       setIsLoading(false);
     }

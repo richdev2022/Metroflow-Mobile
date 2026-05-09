@@ -18,6 +18,8 @@ interface AuthContextType {
   disableBiometrics: () => Promise<void>;
   loginWithBiometrics: () => Promise<boolean>;
   checkBiometricsAvailable: () => Promise<boolean>;
+  hasSeenOnboarding: boolean;
+  completeOnboarding: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -30,6 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [businessId, setBusinessId] = useState<string | null>(null);
   const [userName, setUserName] = useState<string | null>(null);
   const [biometricsEnabled, setBiometricsEnabled] = useState(false);
+  const [hasSeenOnboarding, setHasSeenOnboarding] = useState(false);
 
   useEffect(() => {
     checkAuth();
@@ -37,15 +40,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const checkAuth = async () => {
     try {
-      const [storedToken, storedUserId, storedBusinessId, storedUserName, storedBiometricsEnabled] = await Promise.all([
+      const [storedToken, storedUserId, storedBusinessId, storedUserName, storedBiometricsEnabled, storedHasSeenOnboarding] = await Promise.all([
         storage.getToken(),
         storage.getUserId(),
         storage.getBusinessId(),
         storage.getUserName(),
         BiometricService.isEnabled(),
+        storage.getHasSeenOnboarding(),
       ]);
 
       setBiometricsEnabled(storedBiometricsEnabled);
+      setHasSeenOnboarding(storedHasSeenOnboarding);
 
       if (storedToken) {
         setToken(storedToken);
@@ -64,24 +69,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (email: string, password: string) => {
     try {
       const response = await authApi.login(email, password);
-      const { token: responseToken, userId: responseUserId, businessId: responseBusinessId, requiresOtp } = response.data;
+      const { token: responseToken, user, business, requiresOtp } = response.data;
 
       if (requiresOtp) {
         throw new Error('OTP required');
       }
 
       if (responseToken) {
+        const responseUserId = user?.id;
+        const responseBusinessId = business?.id;
+        const responseUserName = user?.name || email;
+
         await Promise.all([
           storage.setToken(responseToken),
           storage.setUserId(responseUserId),
           storage.setBusinessId(responseBusinessId),
-          storage.setUserName(email),
+          storage.setUserName(responseUserName),
         ]);
 
         setToken(responseToken);
         setUserId(responseUserId);
         setBusinessId(responseBusinessId);
-        setUserName(email);
+        setUserName(responseUserName);
         setIsAuthenticated(true);
       }
     } catch (error) {
@@ -98,6 +107,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { requiresOtp: true, email: data.adminEmail };
       }
 
+      // If token is returned immediately (e.g. no OTP required in some flows)
       if (responseToken) {
         await Promise.all([
           storage.setToken(responseToken),
@@ -122,20 +132,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const verifyOtp = async (email: string, otpCode: string) => {
     try {
       const response = await authApi.verifyOtp(email, otpCode);
-      const { token: responseToken, userId: responseUserId, businessId: responseBusinessId } = response.data;
+      const { token: responseToken, userId: responseUserId, businessId: responseBusinessId, user } = response.data;
 
       if (responseToken) {
+        const finalUserId = responseUserId || user?.id;
+        const finalBusinessId = responseBusinessId || user?.businessId;
+        const finalUserName = user?.name || email;
+
         await Promise.all([
           storage.setToken(responseToken),
-          storage.setUserId(responseUserId),
-          storage.setBusinessId(responseBusinessId),
-          storage.setUserName(email),
+          storage.setUserId(finalUserId),
+          storage.setBusinessId(finalBusinessId),
+          storage.setUserName(finalUserName),
         ]);
 
         setToken(responseToken);
-        setUserId(responseUserId);
-        setBusinessId(responseBusinessId);
-        setUserName(email);
+        setUserId(finalUserId);
+        setBusinessId(finalBusinessId);
+        setUserName(finalUserName);
         setIsAuthenticated(true);
       }
     } catch (error) {
@@ -210,6 +224,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return await BiometricService.isAvailable();
   };
 
+  const completeOnboarding = async () => {
+    try {
+      await storage.setHasSeenOnboarding(true);
+      setHasSeenOnboarding(true);
+    } catch (error) {
+      console.error('Failed to complete onboarding:', error);
+    }
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -228,6 +251,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         disableBiometrics,
         loginWithBiometrics,
         checkBiometricsAvailable,
+        hasSeenOnboarding,
+        completeOnboarding,
       }}
     >
       {children}

@@ -8,6 +8,7 @@ import { ThemeProvider } from './src/theme/ThemeContext';
 import { AuthProvider } from './src/contexts/AuthContext';
 import Navigation from './src/navigation';
 import Toast from 'react-native-toast-message';
+import ErrorBoundary from './src/components/ErrorBoundary';
 
 export default function App() {
   const [fontsLoaded, setFontsLoaded] = useState(false);
@@ -39,15 +40,17 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <ThemeProvider>
+        <ErrorBoundary>
+          <ThemeProvider>
             <AuthProvider>
               <View style={{ flex: 1 }}>
                 <Navigation />
                 <Toast />
-                <StatusBar style="auto" />
+                <StatusBar style="dark" />
               </View>
             </AuthProvider>
           </ThemeProvider>
+        </ErrorBoundary>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

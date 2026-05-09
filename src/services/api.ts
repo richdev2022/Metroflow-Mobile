@@ -122,19 +122,27 @@ export const commentsApi = {
     api.get(`/comments/${taskId}`),
   
   addComment: (data: {
-    taskId?: string;
-    epicName?: string;
-    epicId?: string;
+    taskId: string;
     content: string;
     parentCommentId?: string;
-    mentions?: Array<{ type: 'user' | 'task'; id: string }>;
   }) => api.post('/comments', data),
   
   deleteComment: (id: string) =>
     api.delete(`/comments/${id}`),
   
   toggleReaction: (id: string, type: 'like' | 'love' | 'laugh') =>
-    api.post(`/comments/${id}/reaction`, { type }),
+    api.put(`/comments/${id}/reaction`, { type }),
+};
+
+export const assignmentsApi = {
+  assignTasks: (data: { taskIds: string[]; userIds: string[] }) =>
+    api.post('/assignments', data),
+  
+  getAssignments: (taskId: string) =>
+    api.get(`/assignments/${taskId}`),
+  
+  removeAssignment: (assignmentId: string) =>
+    api.delete(`/assignments/${assignmentId}`),
 };
 
 export const epicsApi = {
@@ -375,6 +383,9 @@ export const storage = {
   setBiometricsPromptShown: (shown: boolean) => AsyncStorage.setItem('biometricsPromptShown', JSON.stringify(shown)),
   getBiometricsPromptShown: () => AsyncStorage.getItem('biometricsPromptShown').then(val => val ? JSON.parse(val) : false),
   removeBiometricsPromptShown: () => AsyncStorage.removeItem('biometricsPromptShown'),
+
+  setHasSeenOnboarding: (seen: boolean) => AsyncStorage.setItem('hasSeenOnboarding', JSON.stringify(seen)),
+  getHasSeenOnboarding: () => AsyncStorage.getItem('hasSeenOnboarding').then(val => val ? JSON.parse(val) : false),
   
   clearAll: () => AsyncStorage.multiRemove([
     'token', 
