@@ -1,0 +1,37 @@
+{
+  "expo": {
+    "name": "Metroflow",
+    "slug": "metroflow-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./Asset/logo.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./Asset/logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#6366f1"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./Asset/logo.png",
+        "backgroundColor": "#6366f1"
+      },
+      "package": "com.metroflow.metroflowapp"
+    },
+    "web": {
+      "favicon": "./Asset/logo.png"
+    },
+    "plugins": [
+      "expo-font"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "ec0e7114-7e2a-404b-92b9-1d80dc463cd9"
+      }
+    }
+  }
+}
