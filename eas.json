@@ -5,15 +5,13 @@
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal",
-      "image": "default"
+      "distribution": "internal"
     },
     "preview": {
       "distribution": "internal",
       "android": {
         "buildType": "apk"
-      },
-      "image": "default"
+      }
     },
     "production": {
       "android": {
@@ -21,8 +19,7 @@
       },
       "ios": {
         "distribution": "store"
-      },
-      "image": "default"
+      }
     }
   },
   "submit": {
