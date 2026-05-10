@@ -6,28 +6,40 @@
     "orientation": "portrait",
     "icon": "./Asset/appIcon.png",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "splash": {
-      "image": "./Asset/appIcon.png",
+      "image": "./Asset/Logo-white.png",
       "resizeMode": "contain",
-      "backgroundColor": "#6366f1"
+      "backgroundColor": "#2563eb"
     },
     "ios": {
       "supportsTablet": true,
-      "icon": "./Asset/appIcon.png"
+      "icon": "./Asset/appIcon.png",
+      "bundleIdentifier": "com.metroflow.metroflowapp"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./Asset/appIcon.png",
         "backgroundColor": "#6366f1"
       },
-      "package": "com.metroflow.metroflowapp"
+      "package": "com.metroflow.metroflowapp",
+      "versionCode": 2
     },
     "web": {
       "favicon": "./Asset/appIcon.png"
     },
     "plugins": [
-      "expo-font"
+      "expo-font",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "compileSdkVersion": 34,
+            "targetSdkVersion": 34,
+            "buildToolsVersion": "34.0.0"
+          }
+        }
+      ]
     ],
     "extra": {
       "eas": {
