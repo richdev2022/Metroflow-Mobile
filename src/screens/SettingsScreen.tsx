@@ -228,10 +228,17 @@ export default function SettingsScreen({ navigation }: Props) {
 
   return (
     <SafeAreaView style={styles.container}>
+      <View style={[styles.header, { backgroundColor: colors.surface }]}>
+        <TouchableOpacity 
+          style={styles.backButton}
+          onPress={() => navigation.goBack()}
+        >
+          <Ionicons name="arrow-back" size={24} color={colors.text} />
+        </TouchableOpacity>
+        <Text style={styles.title}>Settings</Text>
+        <View style={{ width: 40 }} />
+      </View>
       <ScrollView style={styles.scrollView}>
-        <View style={styles.header}>
-          <Text style={styles.title}>Settings</Text>
-        </View>
 
         <View style={styles.profileSection}>
           <View style={styles.profileHeader}>
@@ -318,7 +325,7 @@ export default function SettingsScreen({ navigation }: Props) {
           {renderSettingItem(
             'shield-checkmark-outline',
             'KYC Status',
-            `${kycStatus?.business_kyc_status?.charAt(0).toUpperCase()}${kycStatus?.business_kyc_status?.slice(1) || 'None'}`,
+            kycStatus?.business?.status ? `${kycStatus.business.status.charAt(0).toUpperCase()}${kycStatus.business.status.slice(1)}` : 'None',
             () => navigation.navigate('BusinessKyc')
           )}
         </View>
@@ -371,10 +378,10 @@ export default function SettingsScreen({ navigation }: Props) {
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Security</Text>
-          {hasBiometricHardware && renderSettingItem(
+          {renderSettingItem(
             'finger-print-outline',
             'Biometric Login',
-            !biometricsAvailable ? 'Not enrolled on device' : (biometricsEnabled ? 'Enabled' : 'Disabled'),
+            !biometricsAvailable && !hasBiometricHardware ? 'Not available on this device' : (!biometricsAvailable ? 'Not enrolled on device' : (biometricsEnabled ? 'Enabled' : 'Disabled')),
             undefined,
             <Switch
               value={biometricsEnabled}
@@ -542,6 +549,17 @@ const createStyles = (colors: any) => StyleSheet.create({
   },
   header: {
     padding: 24,
+    paddingTop: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomWidth: 1,
+    borderBottomColor: 'transparent',
+  },
+  backButton: {
+    padding: 8,
+    width: 40,
+    alignItems: 'center',
   },
   title: {
     fontSize: 28,

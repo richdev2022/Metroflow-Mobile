@@ -1,5 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, TextInput, Alert, RefreshControl } from 'react-native';
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  ScrollView, 
+  TouchableOpacity, 
+  ActivityIndicator, 
+  TextInput, 
+  Alert, 
+  RefreshControl,
+  FlatList,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { MainTabParamList } from '../navigation';
@@ -27,45 +41,75 @@ export default function TasksScreen({ navigation }: Props) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTasks, setSelectedTasks] = useState<string[]>([]);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [total, setTotal] = useState(0);
 
   useEffect(() => {
-    fetchData();
+    fetchData(1, true);
   }, []);
 
-  const fetchData = async (showLoader = true) => {
-    if (showLoader) setIsLoading(true);
+  const fetchData = async (pageNumber: number, refresh = false) => {
     try {
+      if (refresh) {
+        setIsRefreshing(true);
+      } else if (pageNumber > 1) {
+        setIsLoadingMore(true);
+      } else {
+        setIsLoading(true);
+      }
+
+      const params: any = {
+        page: pageNumber,
+        limit: 20,
+      };
+      if (selectedStatus !== 'all') params.status = selectedStatus;
+
       const [tasksResponse, epicsResponse] = await Promise.all([
-        tasksApi.getTasks(),
+        tasksApi.getTasks(params),
         epicsApi.getEpics(),
       ]);
 
       if (tasksResponse.data.success) {
-        setTasks(tasksResponse.data.data.tasks);
+        const newTasks = tasksResponse.data.data.tasks || [];
+        if (refresh) {
+          setTasks(newTasks);
+        } else {
+          setTasks(prev => [...prev, ...newTasks]);
+        }
+        setHasMore(newTasks.length === 20);
+        setPage(pageNumber);
+        setTotal(tasksResponse.data.data.total || 0);
       }
       if (epicsResponse.data.success) {
-        setEpics(epicsResponse.data.data);
+        setEpics(epicsResponse.data.data || []);
       }
     } catch (error) {
       console.error('Failed to fetch tasks:', error);
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
+      setIsLoadingMore(false);
     }
   };
 
   const onRefresh = () => {
-    setIsRefreshing(true);
-    fetchData(false);
+    fetchData(1, true);
+  };
+
+  const loadMore = () => {
+    if (!isLoadingMore && hasMore) {
+      fetchData(page + 1);
+    }
   };
 
   const filteredTasks = tasks.filter(task => {
-    const matchesStatus = selectedStatus === 'all' || task.status === selectedStatus;
     const matchesEpic = selectedEpic === 'all' || task.epicId === selectedEpic;
     const matchesSearch = searchQuery === '' || 
       task.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (task.description?.toLowerCase().includes(searchQuery.toLowerCase()));
-    return matchesStatus && matchesEpic && matchesSearch;
+    return matchesEpic && matchesSearch;
   });
 
   const toggleTaskSelection = (taskId: string) => {
@@ -86,6 +130,7 @@ export default function TasksScreen({ navigation }: Props) {
   };
 
   const handleBulkDelete = async () => {
+    Keyboard.dismiss();
     Alert.alert(
       'Delete Tasks',
       `Are you sure you want to delete ${selectedTasks.length} task(s)?`,
@@ -128,144 +173,193 @@ export default function TasksScreen({ navigation }: Props) {
     );
   }
 
+  const renderItem = ({ item: task }: { item: Task }) => (
+    <TouchableOpacity
+      style={[
+        styles.taskCard,
+        selectedTasks.includes(task.id) && styles.taskCardSelected,
+        task.isOverdue && styles.taskCardOverdue,
+      ]}
+      onPress={() => {
+        Keyboard.dismiss();
+        if (isSelectionMode) {
+          toggleTaskSelection(task.id);
+        } else {
+          navigation.navigate('TaskDetail', { taskId: task.id });
+        }
+      }}
+      onLongPress={() => handleLongPress(task.id)}
+    >
+      <View style={styles.taskHeader}>
+        <View style={[styles.statusDot, { backgroundColor: getStatusColor(task.status) }]} />
+        <Text style={styles.taskTitle} numberOfLines={1}>{task.title}</Text>
+        {task.isOverdue && <Text style={styles.overdueBadge}>Overdue</Text>}
+      </View>
+      {task.description && (
+        <Text style={styles.taskDescription} numberOfLines={2}>
+          {task.description}
+        </Text>
+      )}
+      <View style={styles.taskMeta}>
+        {task.epic && <Text style={styles.taskEpic}>📁 {task.epic}</Text>}
+        <Text style={styles.taskDate}>
+          {new Date(task.endDate).toLocaleDateString()}
+        </Text>
+      </View>
+      {task.assignedTo && task.assignedTo.length > 0 && (
+        <View style={styles.assignees}>
+          {task.assignedTo.slice(0, 3).map((userId, index) => (
+            <View key={index} style={styles.assigneeAvatar}>
+              <Text style={styles.assigneeText}>
+                {userId.charAt(0).toUpperCase()}
+              </Text>
+            </View>
+          ))}
+          {task.assignedTo.length > 3 && (
+            <Text style={styles.moreAssignees}>+{task.assignedTo.length - 3}</Text>
+          )}
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity 
-          style={styles.menuButton}
-          onPress={() => navigation.getParent()?.dispatch(DrawerActions.openDrawer())}
-        >
-          <Ionicons name="menu" size={24} color={colors.text} />
-        </TouchableOpacity>
-        {isSelectionMode ? (
-          <View style={styles.selectionHeader}>
-            <TouchableOpacity onPress={() => { setIsSelectionMode(false); setSelectedTasks([]); }}>
-              <Ionicons name="close" size={24} color={colors.text} />
-            </TouchableOpacity>
-            <Text style={styles.selectionCount}>{selectedTasks.length} selected</Text>
-            <TouchableOpacity onPress={handleBulkDelete}>
-              <Ionicons name="trash-outline" size={24} color="#F44336" />
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={styles.titleRow}>
-            <Text style={styles.title}>Tasks</Text>
-            <TouchableOpacity style={styles.addButton} onPress={() => navigation.navigate('CreateTask')}>
-              <Ionicons name="add" size={24} color="#fff" />
-            </TouchableOpacity>
-          </View>
-        )}
-
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search tasks..."
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
-      </View>
-
-      <ScrollView horizontal style={styles.filtersScroll} showsHorizontalScrollIndicator={false}>
-        <View style={styles.filters}>
-          {(['all', 'pending', 'in_progress', 'completed'] as const).map(status => (
-            <TouchableOpacity
-              key={status}
-              style={[styles.filterChip, selectedStatus === status && styles.filterChipActive]}
-              onPress={() => setSelectedStatus(status)}
-            >
-              <Text style={[styles.filterChipText, selectedStatus === status && styles.filterChipTextActive]}>
-                {status === 'all' ? 'All' : status.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </ScrollView>
-
-      <ScrollView horizontal style={styles.epicsScroll} showsHorizontalScrollIndicator={false}>
-        <View style={styles.epics}>
-          <TouchableOpacity
-            style={[styles.epicChip, selectedEpic === 'all' && styles.epicChipActive]}
-            onPress={() => setSelectedEpic('all')}
-          >
-            <Text style={[styles.epicChipText, selectedEpic === 'all' && styles.epicChipTextActive]}>
-              All Epics
-            </Text>
-          </TouchableOpacity>
-          {epics.map(epic => (
-            <TouchableOpacity
-              key={epic.id}
-              style={[styles.epicChip, selectedEpic === epic.id && styles.epicChipActive]}
-              onPress={() => setSelectedEpic(epic.id)}
-            >
-              <Text style={[styles.epicChipText, selectedEpic === epic.id && styles.epicChipTextActive]}>
-                {epic.name}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </ScrollView>
-
-      <ScrollView 
-        style={styles.tasksList}
-        refreshControl={
-          <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} colors={[colors.primary]} />
-        }
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1 }}
       >
-        {filteredTasks.map(task => (
-          <TouchableOpacity
-            key={task.id}
-            style={[
-              styles.taskCard,
-              selectedTasks.includes(task.id) && styles.taskCardSelected,
-              task.isOverdue && styles.taskCardOverdue,
-            ]}
+        <View style={styles.header}>
+          <TouchableOpacity 
+            style={styles.menuButton}
             onPress={() => {
-              if (isSelectionMode) {
-                toggleTaskSelection(task.id);
-              } else {
-                navigation.navigate('TaskDetail', { taskId: task.id });
-              }
+              Keyboard.dismiss();
+              navigation.getParent()?.dispatch(DrawerActions.openDrawer());
             }}
-            onLongPress={() => handleLongPress(task.id)}
           >
-            <View style={styles.taskHeader}>
-              <View style={[styles.statusDot, { backgroundColor: getStatusColor(task.status) }]} />
-              <Text style={styles.taskTitle} numberOfLines={1}>{task.title}</Text>
-              {task.isOverdue && <Text style={styles.overdueBadge}>Overdue</Text>}
-            </View>
-            {task.description && (
-              <Text style={styles.taskDescription} numberOfLines={2}>
-                {task.description}
-              </Text>
-            )}
-            <View style={styles.taskMeta}>
-              {task.epic && <Text style={styles.taskEpic}>📁 {task.epic}</Text>}
-              <Text style={styles.taskDate}>
-                {new Date(task.endDate).toLocaleDateString()}
-              </Text>
-            </View>
-            {task.assignedTo && task.assignedTo.length > 0 && (
-              <View style={styles.assignees}>
-                {task.assignedTo.slice(0, 3).map((userId, index) => (
-                  <View key={index} style={styles.assigneeAvatar}>
-                    <Text style={styles.assigneeText}>
-                      {userId.charAt(0).toUpperCase()}
-                    </Text>
-                  </View>
-                ))}
-                {task.assignedTo.length > 3 && (
-                  <Text style={styles.moreAssignees}>+{task.assignedTo.length - 3}</Text>
-                )}
-              </View>
-            )}
+            <Ionicons name="menu" size={24} color={colors.text} />
           </TouchableOpacity>
-        ))}
-        {filteredTasks.length === 0 && (
-          <View style={styles.emptyState}>
-            <Ionicons name="list-outline" size={64} color={colors.textSecondary} />
-            <Text style={styles.emptyText}>No tasks found</Text>
+          {isSelectionMode ? (
+            <View style={styles.selectionHeader}>
+              <TouchableOpacity onPress={() => { 
+                setIsSelectionMode(false); 
+                setSelectedTasks([]); 
+              }}>
+                <Ionicons name="close" size={24} color={colors.text} />
+              </TouchableOpacity>
+              <Text style={styles.selectionCount}>{selectedTasks.length} selected</Text>
+              <TouchableOpacity onPress={handleBulkDelete}>
+                <Ionicons name="trash-outline" size={24} color="#F44336" />
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.titleRow}>
+              <Text style={styles.title}>Tasks</Text>
+              <TouchableOpacity 
+                style={styles.addButton} 
+                onPress={() => {
+                  Keyboard.dismiss();
+                  navigation.navigate('CreateTask');
+                }}
+              >
+                <Ionicons name="add" size={24} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+
+        <View style={styles.searchContainer}>
+          <View style={styles.searchInputContainer}>
+            <Ionicons name="search-outline" size={20} color={colors.textSecondary} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search tasks..."
+              placeholderTextColor={colors.textSecondary}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              returnKeyType="search"
+            />
+            {searchQuery ? (
+              <TouchableOpacity onPress={() => setSearchQuery('')}>
+                <Ionicons name="close-circle" size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+            ) : null}
           </View>
-        )}
-      </ScrollView>
+        </View>
+
+        <ScrollView horizontal style={styles.filtersScroll} showsHorizontalScrollIndicator={false}>
+          <View style={styles.filters}>
+            {(['all', 'pending', 'in_progress', 'completed'] as const).map(status => (
+              <TouchableOpacity
+                key={status}
+                style={[styles.filterChip, selectedStatus === status && styles.filterChipActive]}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setSelectedStatus(status);
+                  fetchData(1, true);
+                }}
+              >
+                <Text style={[styles.filterChipText, selectedStatus === status && styles.filterChipTextActive]}>
+                  {status === 'all' ? 'All' : status.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </ScrollView>
+
+        <ScrollView horizontal style={styles.epicsScroll} showsHorizontalScrollIndicator={false}>
+          <View style={styles.epics}>
+            <TouchableOpacity
+              style={[styles.epicChip, selectedEpic === 'all' && styles.epicChipActive]}
+              onPress={() => {
+                Keyboard.dismiss();
+                setSelectedEpic('all');
+              }}
+            >
+              <Text style={[styles.epicChipText, selectedEpic === 'all' && styles.epicChipTextActive]}>
+                All Epics
+              </Text>
+            </TouchableOpacity>
+            {epics.map(epic => (
+              <TouchableOpacity
+                key={epic.id}
+                style={[styles.epicChip, selectedEpic === epic.id && styles.epicChipActive]}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setSelectedEpic(epic.id);
+                }}
+              >
+                <Text style={[styles.epicChipText, selectedEpic === epic.id && styles.epicChipTextActive]}>
+                  {epic.name}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </ScrollView>
+
+        <FlatList
+          data={filteredTasks}
+          renderItem={renderItem}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.tasksList}
+          refreshControl={
+            <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} colors={[colors.primary]} />
+          }
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={() => (
+            isLoadingMore ? <ActivityIndicator style={{ margin: 16 }} color={colors.primary} /> : null
+          )}
+          ListEmptyComponent={
+            !isLoading ? (
+              <View style={styles.emptyState}>
+                <Ionicons name="list-outline" size={64} color={colors.textSecondary} />
+                <Text style={styles.emptyText}>No tasks found</Text>
+              </View>
+            ) : null
+          }
+        />
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -280,19 +374,9 @@ const createStyles = (colors: any) => StyleSheet.create({
     alignItems: 'center',
   },
   header: {
-    padding: 24,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  menuButton: {
-    padding: 8,
-    marginRight: 8,
-  },
-  titleRow: {
-    flex: 1,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingTop: 24,
+    paddingBottom: 8,
   },
   menuButton: {
     padding: 8,
@@ -318,22 +402,33 @@ const createStyles = (colors: any) => StyleSheet.create({
     alignItems: 'center',
   },
   selectionHeader: {
+    flex: 1,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
   },
   selectionCount: {
     fontSize: 18,
     fontWeight: '600',
     color: colors.text,
   },
-  searchInput: {
+  searchContainer: {
+    paddingHorizontal: 24,
+    paddingBottom: 16,
+  },
+  searchInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 12,
-    padding: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
     fontSize: 16,
     color: colors.text,
   },
@@ -393,8 +488,8 @@ const createStyles = (colors: any) => StyleSheet.create({
     color: colors.primary,
   },
   tasksList: {
-    flex: 1,
     padding: 24,
+    paddingBottom: 100,
   },
   taskCard: {
     backgroundColor: colors.surface,

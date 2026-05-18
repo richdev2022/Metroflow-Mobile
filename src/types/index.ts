@@ -165,11 +165,14 @@ export interface Employee {
   bank_code?: string | null;
   account_name?: string | null;
   role: string;
-  bonuses_total: number;
-  deductions_total: number;
-  net_salary: number;
-  next_pay_date: string;
-  salary_calculation_status: string;
+  bonuses_total?: number;
+  deductions_total?: number;
+  netSalary: number;
+  next_pay_date?: string;
+  salary_calculation_status?: string;
+  contract_start_date?: string;
+  bonusesTotal?: number;
+  deductionsTotal?: number;
   adjustments?: {
     bonuses: number;
     deductions: number;

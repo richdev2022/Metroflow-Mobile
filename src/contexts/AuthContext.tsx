@@ -1,6 +1,9 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { storage, authApi } from '../services/api';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useRef, useCallback } from 'react';
+import { AppState, AppStateStatus, InteractionManager } from 'react-native';
+import { storage, authApi, setLogoutHandler } from '../services/api';
 import BiometricService from '../services/biometrics';
+
+const IDLE_TIMEOUT = 5 * 60 * 1000; // 5 minutes in milliseconds
 
 interface AuthContextType {
   isAuthenticated: boolean;
@@ -20,6 +23,7 @@ interface AuthContextType {
   checkBiometricsAvailable: () => Promise<boolean>;
   hasSeenOnboarding: boolean;
   completeOnboarding: () => Promise<void>;
+  resetIdleTimer: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -33,10 +37,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [userName, setUserName] = useState<string | null>(null);
   const [biometricsEnabled, setBiometricsEnabled] = useState(false);
   const [hasSeenOnboarding, setHasSeenOnboarding] = useState(false);
+  const idleTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const appStateRef = useRef<AppStateStatus>('active');
+
+  const resetIdleTimer = useCallback(() => {
+    if (idleTimerRef.current) {
+      clearTimeout(idleTimerRef.current);
+    }
+    if (isAuthenticated) {
+      idleTimerRef.current = setTimeout(() => {
+        logout();
+      }, IDLE_TIMEOUT);
+    }
+  }, [isAuthenticated]);
+
+  const handleAppStateChange = useCallback((nextAppState: AppStateStatus) => {
+    if (appStateRef.current === 'active' && nextAppState.match(/inactive|background/)) {
+    }
+    if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
+      resetIdleTimer();
+    }
+    appStateRef.current = nextAppState;
+  }, [resetIdleTimer]);
 
   useEffect(() => {
     checkAuth();
+    setLogoutHandler(logout);
+    
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+    
+    return () => {
+      subscription.remove();
+      if (idleTimerRef.current) {
+        clearTimeout(idleTimerRef.current);
+      }
+    };
   }, []);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      resetIdleTimer();
+    } else {
+      if (idleTimerRef.current) {
+        clearTimeout(idleTimerRef.current);
+      }
+    }
+  }, [isAuthenticated, resetIdleTimer]);
 
   const checkAuth = async () => {
     try {
@@ -69,15 +115,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (email: string, password: string) => {
     try {
       const response = await authApi.login(email, password);
-      const { token: responseToken, user, business, requiresOtp } = response.data;
+      const { token: responseToken, user, business, userId: responseUserIdDirect, businessId: responseBusinessIdDirect, requiresOtp } = response.data;
 
       if (requiresOtp) {
         throw new Error('OTP required');
       }
 
       if (responseToken) {
-        const responseUserId = user?.id;
-        const responseBusinessId = business?.id;
+        const responseUserId = responseUserIdDirect || user?.id;
+        const responseBusinessId = responseBusinessIdDirect || business?.id;
         const responseUserName = user?.name || email;
 
         await Promise.all([
@@ -92,6 +138,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setBusinessId(responseBusinessId);
         setUserName(responseUserName);
         setIsAuthenticated(true);
+        resetIdleTimer();
       }
     } catch (error) {
       throw error;
@@ -121,6 +168,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setBusinessId(responseBusinessId);
         setUserName(data.adminName);
         setIsAuthenticated(true);
+        resetIdleTimer();
       }
 
       return { requiresOtp: false };
@@ -132,11 +180,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const verifyOtp = async (email: string, otpCode: string) => {
     try {
       const response = await authApi.verifyOtp(email, otpCode);
-      const { token: responseToken, userId: responseUserId, businessId: responseBusinessId, user } = response.data;
+      const { token: responseToken, userId: responseUserId, businessId: responseBusinessId, user, businessId: bizId } = response.data;
 
       if (responseToken) {
         const finalUserId = responseUserId || user?.id;
-        const finalBusinessId = responseBusinessId || user?.businessId;
+        const finalBusinessId = responseBusinessId || bizId || user?.businessId;
         const finalUserName = user?.name || email;
 
         await Promise.all([
@@ -151,6 +199,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setBusinessId(finalBusinessId);
         setUserName(finalUserName);
         setIsAuthenticated(true);
+        resetIdleTimer();
       }
     } catch (error) {
       throw error;
@@ -159,6 +208,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = async () => {
     try {
+      if (idleTimerRef.current) {
+        clearTimeout(idleTimerRef.current);
+      }
       await storage.clearAll();
       setToken(null);
       setUserId(null);
@@ -177,6 +229,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (success) {
         setBiometricsEnabled(true);
       }
+      resetIdleTimer();
       return success;
     } catch (error) {
       console.error('Enable biometrics failed:', error);
@@ -188,6 +241,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await BiometricService.disableBiometrics();
       setBiometricsEnabled(false);
+      resetIdleTimer();
     } catch (error) {
       console.error('Disable biometrics failed:', error);
     }
@@ -210,6 +264,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setBusinessId(storedBusinessId);
           setUserName(storedUserName);
           setIsAuthenticated(true);
+          resetIdleTimer();
           return true;
         }
       }
@@ -228,6 +283,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await storage.setHasSeenOnboarding(true);
       setHasSeenOnboarding(true);
+      resetIdleTimer();
     } catch (error) {
       console.error('Failed to complete onboarding:', error);
     }
@@ -253,6 +309,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         checkBiometricsAvailable,
         hasSeenOnboarding,
         completeOnboarding,
+        resetIdleTimer,
       }}
     >
       {children}

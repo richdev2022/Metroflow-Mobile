@@ -5,7 +5,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createDrawerNavigator, DrawerContentScrollView } from '@react-navigation/drawer';
 import { useNavigation } from '@react-navigation/native';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { View, Text, Image, StyleSheet, TouchableOpacity, Alert, Switch, useWindowDimensions } from 'react-native';
+import { View, Text, Image, StyleSheet, TouchableOpacity, Alert, Switch, useWindowDimensions, ActivityIndicator } from 'react-native';
 
 import LoginScreen from '../screens/LoginScreen';
 import RegisterScreen from '../screens/RegisterScreen';
@@ -70,48 +70,6 @@ export type RootStackParamList = {
   Profile: undefined;
   Fees: undefined;
 };
-
-function SplashScreen({ onFinish }: { onFinish: () => void }) {
-  const { colors } = useTheme();
-  const styles = createSplashStyles(colors);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      onFinish();
-    }, 2000);
-    return () => clearTimeout(timer);
-  }, [onFinish]);
-
-   return (
-    <View style={styles.container}>
-      <Image 
-        source={require('../../Asset/Logo-white.png')} 
-        style={styles.logo}
-        resizeMode="contain"
-      />
-      <Text style={styles.appName}>Metroflow</Text>
-    </View>
-  );
-}
-
-const createSplashStyles = (colors: any) => StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  logo: {
-    width: 120,
-    height: 120,
-  },
-  appName: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginTop: 20,
-  },
-});
 
 export type MainTabParamList = {
   Dashboard: undefined;
@@ -398,7 +356,6 @@ function MainDrawer() {
 export default function Navigation() {
   const { colors, mode } = useTheme();
   const { isAuthenticated, isLoading, hasSeenOnboarding } = useAuth();
-  const [isSplashVisible, setIsSplashVisible] = useState(true);
   
   const navTheme = mode === 'dark'
     ? {
@@ -426,8 +383,12 @@ export default function Navigation() {
         }
       };
 
-  if (isSplashVisible || isLoading) {
-    return <SplashScreen onFinish={() => setIsSplashVisible(false)} />;
+  if (isLoading) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.primary, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator color="#ffffff" size="large" />
+      </View>
+    );
   }
 
   return (

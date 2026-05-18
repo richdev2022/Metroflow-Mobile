@@ -46,6 +46,11 @@ export default function WalletScreen() {
   const [showVirtualAccountModal, setShowVirtualAccountModal] = useState(false);
   const [showBankSearchModal, setShowBankSearchModal] = useState(false);
   const [bankSearchQuery, setBankSearchQuery] = useState('');
+  const [showCreateBusinessModal, setShowCreateBusinessModal] = useState(false);
+  const [businessFormData, setBusinessFormData] = useState({
+    gtbAccountNumber: '',
+    businessName: '',
+  });
 
   const styles = createStyles(colors);
 
@@ -72,6 +77,61 @@ export default function WalletScreen() {
     } finally {
       setIsKycLoading(false);
       setIsRefreshing(false);
+    }
+  };
+
+  const handleCreateBusinessAccount = async () => {
+    setIsLoading(true);
+    try {
+      const response = await kycApi.getStatus();
+      const { user, business } = response.data;
+      
+      const bvnVerified = user.bvnStatus === 'verified';
+      const ninVerified = user.ninStatus === 'verified';
+      
+      if (!bvnVerified) {
+        navigation.navigate('KycPrompt');
+        return;
+      }
+      
+      if (!ninVerified) {
+        navigation.navigate('KycPrompt');
+        return;
+      }
+      
+      if (business?.status !== 'verified') {
+        navigation.navigate('BusinessKyc');
+        return;
+      }
+      
+      setShowCreateBusinessModal(true);
+    } catch (error) {
+      console.error('Failed to check KYC status:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSubmitBusinessAccount = async () => {
+    if (!businessFormData.gtbAccountNumber || !businessFormData.businessName) {
+      Alert.alert('Error', 'Please fill in all fields');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      await walletApi.createBusiness(
+        businessFormData.gtbAccountNumber,
+        businessFormData.businessName
+      );
+      Alert.alert('Success', 'Business virtual account created successfully!');
+      setShowCreateBusinessModal(false);
+      setBusinessFormData({ gtbAccountNumber: '', businessName: '' });
+      fetchWalletData();
+    } catch (error: any) {
+      Alert.alert('Error', error.response?.data?.message || 'Failed to create business account');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -211,46 +271,62 @@ export default function WalletScreen() {
     setShowTransferModal(true);
   };
 
-  const renderWalletCard = (wallet: any | undefined, label: string, walletType: 'user' | 'business') => (
-    <View style={styles.walletCard}>
-      <Text style={styles.walletLabel}>{label}</Text>
-      <Text style={styles.walletBalance}>
-        {wallet ? `${wallet.currency} ${parseFloat(wallet.balance).toLocaleString()}` : '₦0.00'}
-      </Text>
-      {wallet && wallet.virtual_account_number && (
-        <View style={styles.accountInfo}>
-          <View style={styles.accountDetailRow}>
-            <Text style={styles.accountDetailLabel}>Account Number:</Text>
-            <Text style={styles.accountNumber}>{wallet.virtual_account_number}</Text>
-          </View>
-          <View style={styles.accountDetailRow}>
-            <Text style={styles.accountDetailLabel}>Bank:</Text>
-            <Text style={styles.bankName}>{wallet.bank_name || 'Squad (GTBank)'}</Text>
-          </View>
-          {wallet.account_name && (
+  const renderWalletCard = (wallet: any | undefined, label: string, walletType: 'user' | 'business') => {
+    const hasVirtualAccount = wallet && wallet.virtual_account_number;
+    const isBusinessWallet = walletType === 'business';
+    
+    return (
+      <View style={[
+        styles.walletCard,
+        isBusinessWallet && !hasVirtualAccount && styles.blurredWalletCard
+      ]}>
+        <Text style={styles.walletLabel}>{label}</Text>
+        <Text style={styles.walletBalance}>
+          {wallet ? `${wallet.currency} ${parseFloat(wallet.balance).toLocaleString()}` : '₦0.00'}
+        </Text>
+        {hasVirtualAccount && (
+          <View style={styles.accountInfo}>
             <View style={styles.accountDetailRow}>
-              <Text style={styles.accountDetailLabel}>Account Name:</Text>
-              <Text style={styles.accountNameText}>{wallet.account_name}</Text>
+              <Text style={styles.accountDetailLabel}>Account Number:</Text>
+              <Text style={styles.accountNumber}>{wallet.virtual_account_number}</Text>
             </View>
-          )}
+            <View style={styles.accountDetailRow}>
+              <Text style={styles.accountDetailLabel}>Bank:</Text>
+              <Text style={styles.bankName}>{wallet.bank_name || 'Squad (GTBank)'}</Text>
+            </View>
+            {wallet.account_name && (
+              <View style={styles.accountDetailRow}>
+                <Text style={styles.accountDetailLabel}>Account Name:</Text>
+                <Text style={styles.accountNameText}>{wallet.account_name}</Text>
+              </View>
+            )}
+          </View>
+        )}
+        {isBusinessWallet && !hasVirtualAccount && (
+          <View style={styles.noVirtualAccountOverlay}>
+            <Ionicons name="lock-closed" size={32} color="#fff" />
+            <Text style={styles.noVirtualAccountText}>Business Account Locked</Text>
+          </View>
+        )}
+        <View style={styles.walletActions}>
+          <TouchableOpacity 
+            style={[styles.actionButton, isBusinessWallet && !hasVirtualAccount && styles.actionButtonDisabled]}
+            onPress={() => hasVirtualAccount && navigation.navigate('FundWallet', { walletType })}
+            disabled={isBusinessWallet && !hasVirtualAccount}
+          >
+            <Text style={styles.actionButtonText}>Fund Wallet</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.actionButton, isBusinessWallet && !hasVirtualAccount && styles.actionButtonDisabled]}
+            onPress={() => hasVirtualAccount && openTransferModal(walletType)}
+            disabled={isBusinessWallet && !hasVirtualAccount}
+          >
+            <Text style={styles.actionButtonText}>Transfer</Text>
+          </TouchableOpacity>
         </View>
-      )}
-      <View style={styles.walletActions}>
-        <TouchableOpacity 
-          style={styles.actionButton}
-          onPress={() => navigation.navigate('FundWallet', { walletType })}
-        >
-          <Text style={styles.actionButtonText}>Fund Wallet</Text>
-        </TouchableOpacity>
-        <TouchableOpacity 
-          style={styles.actionButton}
-          onPress={() => openTransferModal(walletType)}
-        >
-          <Text style={styles.actionButtonText}>Transfer</Text>
-        </TouchableOpacity>
       </View>
-    </View>
-  );
+    );
+  };
 
   if (isKycLoading) {
     return (
@@ -354,9 +430,11 @@ export default function WalletScreen() {
 
       <TouchableOpacity 
         style={styles.createBusinessButton}
-        onPress={() => navigation.navigate('BusinessKyc')}
+        onPress={handleCreateBusinessAccount}
+        disabled={isLoading}
       >
-        <Text style={styles.createBusinessText}>Create Business Account</Text>
+        <Ionicons name="business-outline" size={20} color={colors.primary} style={{ marginRight: 8 }} />
+        <Text style={styles.createBusinessText}>Complete KYC to Create Business Virtual Account</Text>
       </TouchableOpacity>
 
       <Modal
@@ -586,6 +664,59 @@ export default function WalletScreen() {
           </View>
         </View>
       </Modal>
+
+      <Modal
+        visible={showCreateBusinessModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowCreateBusinessModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Create Business Virtual Account</Text>
+              <TouchableOpacity onPress={() => setShowCreateBusinessModal(false)}>
+                <Ionicons name="close" size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.field}>
+              <Text style={styles.label}>GTBank Account Number</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your GTBank account number"
+                placeholderTextColor={colors.textSecondary}
+                value={businessFormData.gtbAccountNumber}
+                onChangeText={(text) => setBusinessFormData(prev => ({ ...prev, gtbAccountNumber: text })}
+                keyboardType="numeric"
+              />
+            </View>
+
+            <View style={styles.field}>
+              <Text style={styles.label}>Business Name</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your business name"
+                placeholderTextColor={colors.textSecondary}
+                value={businessFormData.businessName}
+                onChangeText={(text) => setBusinessFormData(prev => ({ ...prev, businessName: text }))}
+              />
+            </View>
+
+            <TouchableOpacity 
+              style={[styles.submitButton, isLoading && styles.submitButtonDisabled]}
+              onPress={handleSubmitBusinessAccount}
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.submitButtonText}>Create Business Account</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -621,6 +752,30 @@ const createStyles = (colors: any) => StyleSheet.create({
     padding: 24,
     backgroundColor: colors.primary,
     borderRadius: 16,
+    position: 'relative',
+  },
+  blurredWalletCard: {
+    opacity: 0.6,
+  },
+  noVirtualAccountOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 12,
+  },
+  noVirtualAccountText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  actionButtonDisabled: {
+    opacity: 0.4,
   },
   walletLabel: {
     color: colors.primaryLight,
@@ -646,7 +801,7 @@ const createStyles = (colors: any) => StyleSheet.create({
     marginBottom: 8,
   },
   accountDetailLabel: {
-    color: colors.primaryLight,
+    color: 'rgba(255,255,255,0.7)',
     fontSize: 12,
   },
   accountNumber: {
@@ -710,10 +865,13 @@ const createStyles = (colors: any) => StyleSheet.create({
     borderWidth: 2,
     borderColor: colors.primary,
     borderStyle: 'dashed',
+    flexDirection: 'row',
+    justifyContent: 'center',
   },
   createBusinessText: {
     color: colors.primary,
     fontWeight: '600',
+    flexShrink: 1,
   },
   modalOverlay: {
     flex: 1,

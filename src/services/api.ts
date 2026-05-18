@@ -5,6 +5,12 @@ import Toast from 'react-native-toast-message';
 // @ts-ignore
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'https://metroflow-backend.netlify.app/api';
 
+let logoutHandler: (() => Promise<void>) | null = null;
+
+export const setLogoutHandler = (handler: () => Promise<void>) => {
+  logoutHandler = handler;
+};
+
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
@@ -37,11 +43,14 @@ api.interceptors.response.use(
   async (error) => {
     const message = error.response?.data?.message || 'Something went wrong';
     
-    if (error.response?.status === 401) {
+    if (error.response?.status === 401 || error.response?.status === 403) {
       await AsyncStorage.multiRemove(['token', 'userId', 'businessId', 'userName']);
+      if (logoutHandler) {
+        await logoutHandler();
+      }
     }
 
-    if (error.config?.method !== 'get' || error.response?.status !== 401) {
+    if (error.config?.method !== 'get' || (error.response?.status !== 401 && error.response?.status !== 403)) {
       Toast.show({
         type: 'error',
         text1: 'Error',
@@ -85,30 +94,31 @@ export const authApi = {
 };
 
 export const tasksApi = {
-  getTasks: (limit = 10000, filters?: {
-    assignedTo?: string;
+  getTasks: (params?: {
+    page?: number;
+    limit?: number;
+    status?: string;
+  }) => api.get('/tasks', { params }),
+  
+  createTask: (data: {
+    title: string;
+    description?: string;
+    epic?: string;
     epicId?: string;
+    sprint?: string;
     startDate?: string;
     endDate?: string;
-  }) => {
-    const params: any = { limit };
-    if (filters) {
-      Object.assign(params, filters);
-    }
-    return api.get('/tasks', { params });
-  },
-  
-  getBacklog: () =>
-    api.get('/tasks', { params: { isBacklog: true } }),
+    dueDate?: string;
+    assignedTo?: string[];
+  }) => api.post('/tasks', data),
   
   createBulkTasks: (tasks: any[]) =>
     api.post('/tasks/bulk', { tasks }),
   
-  updateTask: (id: string, data: any) =>
-    api.put(`/tasks/${id}`, data),
-  
-  bulkUpdateTasks: (taskIds: string[], updates: any) =>
-    api.put('/tasks/bulk-update', { taskIds, updates }),
+  bulkUpdateTasks: (data: {
+    taskIds: string[];
+    updates: any;
+  }) => api.patch('/tasks/bulk', data),
   
   deleteTask: (id: string) =>
     api.delete(`/tasks/${id}`),
@@ -147,6 +157,16 @@ export const assignmentsApi = {
 
 export const epicsApi = {
   getEpics: () => api.get('/epics'),
+  
+  createEpic: (data: {
+    name: string;
+    description?: string;
+  }) => api.post('/epics', data),
+  
+  linkTasksToEpic: (epicId: string, taskIds: string[]) =>
+    api.post(`/epics/${epicId}/link-tasks`, { taskIds }),
+  
+  backfillEpics: () => api.post('/epics/backfill'),
 };
 
 export const teamApi = {
@@ -190,13 +210,16 @@ export const walletApi = {
     }),
   
   createVirtualAccount: () => api.post('/wallet/create-virtual-account'),
+  
+  verifyPayment: (reference: string) =>
+    api.get('/wallet/verify', { params: { reference } }),
 };
 
 export const transfersApi = {
   getBanks: () => api.get('/transfers/banks'),
   
   resolveAccount: (bankCode: string, accountNumber: string) =>
-    api.post('/transfers/lookup', { bankCode, accountNumber }),
+    api.post('/api/transfers/account-lookup', { bank_code: bankCode, account_number: accountNumber }),
   
   requestTransferOtp: (walletId?: string) =>
     api.post('/transfers/otp/request', { wallet_id: walletId }),
@@ -212,9 +235,21 @@ export const transfersApi = {
   }) => api.post('/transfers/single', data),
   
   bulkTransfer: (data: {
-    type: 'salary' | 'manual' | 'sprint' | 'task';
-    source_wallet_id: string;
+    transfers: Array<{
+      recipient_account: string;
+      recipient_bank: string;
+      recipient_name: string;
+      amount: number;
+      remark: string;
+      source_type: string;
+      source_id: string;
+    }>;
+  }) => api.post('/api/transfers/bulk', data),
+  
+  bulkTransferV2: (data: {
+    type: 'manual';
     otp: string;
+    source_wallet_id: string;
     data: any;
   }) => api.post('/transfers/bulk', data),
   
@@ -244,25 +279,27 @@ export const payrollApi = {
   
   updateConfig: (data: {
     salary_interval: 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom';
-    salary_custom_date?: string | null;
+    salary_custom_date?: string;
   }) => api.put('/payroll/config', data),
   
   updateUser: (id: string, data: {
     salary: number;
     salary_currency: string;
+    bank_account_number: string;
     bank_code: string;
-    account_number: string;
-    account_name?: string;
+    account_name: string;
+    contract_start_date?: string;
   }) => api.put(`/payroll/user/${id}`, data),
   
   addAdjustment: (data: {
     userId: string;
     type: 'bonus' | 'deduction';
     amount: number;
+    currency: string;
     reason: string;
   }) => api.post('/payroll/adjustments', data),
   
-  getAdjustments: (userId: string) =>
+  getAdjustments: (userId?: string) =>
     api.get('/payroll/adjustments', { params: { userId } }),
   
   deleteAdjustment: (id: string) =>
@@ -363,17 +400,17 @@ export const ideasApi = {
 };
 
 export const storage = {
-  setToken: (token: string) => AsyncStorage.setItem('token', token),
+  setToken: (token: string) => token ? AsyncStorage.setItem('token', token) : AsyncStorage.removeItem('token'),
   getToken: () => AsyncStorage.getItem('token'),
   removeToken: () => AsyncStorage.removeItem('token'),
   
-  setUserId: (userId: string) => AsyncStorage.setItem('userId', userId),
+  setUserId: (userId: string) => userId ? AsyncStorage.setItem('userId', userId) : AsyncStorage.removeItem('userId'),
   getUserId: () => AsyncStorage.getItem('userId'),
   
-  setBusinessId: (businessId: string) => AsyncStorage.setItem('businessId', businessId),
+  setBusinessId: (businessId: string) => businessId ? AsyncStorage.setItem('businessId', businessId) : AsyncStorage.removeItem('businessId'),
   getBusinessId: () => AsyncStorage.getItem('businessId'),
   
-  setUserName: (userName: string) => AsyncStorage.setItem('userName', userName),
+  setUserName: (userName: string) => userName ? AsyncStorage.setItem('userName', userName) : AsyncStorage.removeItem('userName'),
   getUserName: () => AsyncStorage.getItem('userName'),
 
   setBiometricsEnabled: (enabled: boolean) => AsyncStorage.setItem('biometricsEnabled', JSON.stringify(enabled)),

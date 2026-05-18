@@ -84,11 +84,38 @@ export default function FundWalletScreen() {
 
     // Check for success/callback URL from Squad
     if (url.includes('success') || url.includes('callback')) {
+      // Extract reference from URL
+      const urlParams = new URLSearchParams(url.split('?')[1]);
+      const reference = urlParams.get('reference');
+      
+      verifyPayment(reference);
+    }
+  };
+
+  const verifyPayment = async (reference: string | null) => {
+    if (!reference) {
       setShowWebView(false);
       setCardPaymentInfo(null);
       Alert.alert('Success', 'Payment processed successfully', [
         { text: 'OK', onPress: () => navigation.goBack() }
       ]);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await walletApi.verifyPayment(reference);
+      setShowWebView(false);
+      setCardPaymentInfo(null);
+      Alert.alert('Success', 'Payment verified successfully!', [
+        { text: 'OK', onPress: () => navigation.goBack() }
+      ]);
+    } catch (error: any) {
+      Alert.alert('Warning', 'Payment status could not be verified. Please check your wallet balance.', [
+        { text: 'OK', onPress: () => navigation.goBack() }
+      ]);
+    } finally {
+      setLoading(false);
     }
   };
 

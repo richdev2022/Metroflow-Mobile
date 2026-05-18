@@ -1,32 +1,79 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, TextInput, Alert } from 'react-native';
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  TouchableOpacity, 
+  ActivityIndicator, 
+  TextInput, 
+  FlatList,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  RefreshControl
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/ThemeContext';
 import { tasksApi } from '../services/api';
 import { Task } from '../types';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useNavigation } from '@react-navigation/native';
 
 export default function BacklogScreen({ navigation }: any) {
   const { colors } = useTheme();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   useEffect(() => {
-    fetchBacklog();
+    fetchData(1, true);
   }, []);
 
-  const fetchBacklog = async () => {
+  const fetchData = async (pageNumber: number, refresh = false) => {
     try {
-      const response = await tasksApi.getBacklog();
+      if (refresh) {
+        setIsRefreshing(true);
+      } else if (pageNumber > 1) {
+        setIsLoadingMore(true);
+      } else {
+        setIsLoading(true);
+      }
+
+      const response = await tasksApi.getTasks({
+        page: pageNumber,
+        limit: 20,
+      });
+
       if (response.data.success) {
-        setTasks(response.data.data.tasks || response.data.data);
+        const newTasks = response.data.data.tasks || [];
+        if (refresh) {
+          setTasks(newTasks);
+        } else {
+          setTasks(prev => [...prev, ...newTasks]);
+        }
+        setHasMore(newTasks.length === 20);
+        setPage(pageNumber);
       }
     } catch (error) {
       console.error('Failed to fetch backlog:', error);
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
+      setIsLoadingMore(false);
+    }
+  };
+
+  const onRefresh = () => {
+    fetchData(1, true);
+  };
+
+  const loadMore = () => {
+    if (!isLoadingMore && hasMore) {
+      fetchData(page + 1);
     }
   };
 
@@ -36,6 +83,33 @@ export default function BacklogScreen({ navigation }: any) {
   );
 
   const styles = createStyles(colors);
+
+  const renderItem = ({ item: task }: { item: Task }) => (
+    <TouchableOpacity 
+      key={task.id} 
+      style={styles.taskCard}
+      onPress={() => {
+        Keyboard.dismiss();
+        navigation.navigate('TaskDetail', { taskId: task.id });
+      }}
+    >
+      <View style={styles.taskHeader}>
+        <Text style={styles.taskTitle}>{task.title}</Text>
+        <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+      </View>
+      {task.description && (
+        <Text style={styles.taskDescription} numberOfLines={2}>
+          {task.description}
+        </Text>
+      )}
+      <View style={styles.taskFooter}>
+        {task.epic && <Text style={styles.taskEpic}>📁 {task.epic}</Text>}
+        <Text style={styles.taskDate}>
+          Added {new Date(task.createdAt).toLocaleDateString()}
+        </Text>
+      </View>
+    </TouchableOpacity>
+  );
 
   if (isLoading) {
     return (
@@ -47,48 +121,53 @@ export default function BacklogScreen({ navigation }: any) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Backlog</Text>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search backlog..."
-          placeholderTextColor={colors.textSecondary}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
-      </View>
-
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        {filteredTasks.map((task) => (
-          <TouchableOpacity 
-            key={task.id} 
-            style={styles.taskCard}
-            onPress={() => navigation.navigate('TaskDetail', { taskId: task.id })}
-          >
-            <View style={styles.taskHeader}>
-              <Text style={styles.taskTitle}>{task.title}</Text>
-              <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
-            </View>
-            {task.description && (
-              <Text style={styles.taskDescription} numberOfLines={2}>
-                {task.description}
-              </Text>
-            )}
-            <View style={styles.taskFooter}>
-              {task.epic && <Text style={styles.taskEpic}>📁 {task.epic}</Text>}
-              <Text style={styles.taskDate}>
-                Added {new Date(task.createdAt).toLocaleDateString()}
-              </Text>
-            </View>
-          </TouchableOpacity>
-        ))}
-        {filteredTasks.length === 0 && (
-          <View style={styles.emptyState}>
-            <Ionicons name="archive-outline" size={64} color={colors.textSecondary} />
-            <Text style={styles.emptyText}>Backlog is empty</Text>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1 }}
+      >
+        <View style={styles.header}>
+          <Text style={styles.title}>Backlog</Text>
+          <View style={styles.searchInputContainer}>
+            <Ionicons name="search-outline" size={20} color={colors.textSecondary} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search backlog..."
+              placeholderTextColor={colors.textSecondary}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              returnKeyType="search"
+            />
+            {searchQuery ? (
+              <TouchableOpacity onPress={() => setSearchQuery('')}>
+                <Ionicons name="close-circle" size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+            ) : null}
           </View>
-        )}
-      </ScrollView>
+        </View>
+
+        <FlatList
+          data={filteredTasks}
+          renderItem={renderItem}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.content}
+          refreshControl={
+            <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} colors={[colors.primary]} />
+          }
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={() => (
+            isLoadingMore ? <ActivityIndicator style={{ margin: 16 }} color={colors.primary} /> : null
+          )}
+          ListEmptyComponent={
+            !isLoading ? (
+              <View style={styles.emptyState}>
+                <Ionicons name="archive-outline" size={64} color={colors.textSecondary} />
+                <Text style={styles.emptyText}>Backlog is empty</Text>
+              </View>
+            ) : null
+          }
+        />
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -111,18 +190,26 @@ const createStyles = (colors: any) => StyleSheet.create({
     color: colors.text,
     marginBottom: 16,
   },
-  searchInput: {
+  searchInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: colors.surface,
-    borderRadius: 12,
-    padding: 12,
-    fontSize: 16,
-    color: colors.text,
     borderWidth: 1,
     borderColor: colors.border,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 16,
+    color: colors.text,
   },
   content: {
     flex: 1,
     paddingHorizontal: 24,
+    paddingBottom: 100,
   },
   taskCard: {
     backgroundColor: colors.surface,
