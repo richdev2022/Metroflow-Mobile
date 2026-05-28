@@ -687,7 +687,7 @@ export default function WalletScreen() {
                 placeholder="Enter your GTBank account number"
                 placeholderTextColor={colors.textSecondary}
                 value={businessFormData.gtbAccountNumber}
-                onChangeText={(text) => setBusinessFormData(prev => ({ ...prev, gtbAccountNumber: text })}
+                onChangeText={(text) => setBusinessFormData(prev => ({ ...prev, gtbAccountNumber: text }))}
                 keyboardType="numeric"
               />
             </View>
