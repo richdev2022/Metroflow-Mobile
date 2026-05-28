@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, TextInput, Switch } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, TextInput, Switch, Modal, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/ThemeContext';
 import { settingsApi, subscriptionApi, kycApi, storage } from '../services/api';
@@ -9,6 +9,362 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation';
 import { useAuth } from '../contexts/AuthContext';
 import BiometricService from '../services/biometrics';
+
+const BUSINESS_INDUSTRIES = [
+  'Technology',
+  'Healthcare',
+  'Finance',
+  'Education',
+  'Retail',
+  'Manufacturing',
+  'Agriculture',
+  'Energy',
+  'Transportation',
+  'Telecommunications',
+  'Media & Entertainment',
+  'Real Estate',
+  'Construction',
+  'Hospitality',
+  'Professional Services',
+  'Non-Profit',
+  'Government',
+  'E-commerce',
+  'Fintech',
+  'Healthtech',
+  'Edtech',
+  'Biotechnology',
+  'Aerospace',
+  'Automotive',
+  'Chemicals',
+  'Pharmaceuticals',
+  'Logistics',
+  'Marketing',
+  'Advertising',
+  'Consulting',
+  'Legal Services',
+  'Accounting',
+  'Insurance',
+  'Banking',
+  'Venture Capital',
+  'Cryptocurrency',
+  'Gaming',
+  'Fashion',
+  'Food & Beverage',
+  'Sports',
+  'Tourism',
+  'Art & Design',
+  'Music',
+  'Film & Television',
+  'Publishing',
+  'Architecture',
+  'Engineering',
+  'Research & Development',
+  'Customer Service',
+  'Human Resources',
+  'IT Services',
+  'Software Development',
+  'Hardware',
+  'Networking',
+  'Cybersecurity',
+  'Cloud Computing',
+  'Artificial Intelligence',
+  'Machine Learning',
+  'Data Science',
+  'Big Data',
+  'Internet of Things',
+  'Blockchain',
+  'Virtual Reality',
+  'Augmented Reality',
+  'Renewable Energy',
+  'Sustainability',
+  'Environmental Services',
+  'Waste Management',
+  'Water Treatment',
+  'Mining',
+  'Oil & Gas',
+  'Forestry',
+  'Fishing',
+  'Textiles',
+  'Footwear',
+  'Furniture',
+  'Electronics',
+  'Appliances',
+  'Toys',
+  'Gifts',
+  'Jewelry',
+  'Beauty',
+  'Personal Care',
+  'Fitness',
+  'Wellness',
+  'Nutrition',
+  'Pet Care',
+  'Childcare',
+  'Elder Care',
+  'Home Services',
+  'Cleaning',
+  'Gardening',
+  'Moving & Storage',
+  'Packaging',
+  'Printing',
+  'Photography',
+  'Videography',
+  'Event Planning',
+  'Catering',
+  'Bakery',
+  'Coffee Shops',
+  'Restaurants',
+  'Bars',
+  'Nightclubs',
+  'Hotels',
+  'Resorts',
+  'Travel Agencies',
+  'Airlines',
+  'Railways',
+  'Shipping',
+  'Warehousing',
+  'Courier',
+  'Delivery',
+  'Rental Services',
+  'Leasing',
+  'Lending',
+  'Investing',
+  'Trading',
+  'Brokering',
+  'Auctions',
+  'Marketplaces',
+  'Classifieds',
+  'Social Media',
+  'Dating Apps',
+  'Messaging',
+  'Collaboration Tools',
+  'Project Management',
+  'Productivity',
+  'Accounting Software',
+  'HR Software',
+  'CRM',
+  'ERP',
+  'CMS',
+  'E-commerce Platforms',
+  'Payment Processing',
+  'Point of Sale',
+  'Inventory Management',
+  'Supply Chain',
+  'Quality Control',
+  'Safety & Compliance',
+  'Legal Tech',
+  'RegTech',
+  'InsurTech',
+  'PropTech',
+  'AgriTech',
+  'FoodTech',
+  'CleanTech',
+  'SpaceTech',
+  'Defense',
+  'Security',
+  'Surveillance',
+  'Emergency Services',
+  'Public Administration',
+  'International Organizations',
+  'Religious Organizations',
+  'Charities',
+  'Foundations',
+  'Associations',
+  'Clubs',
+  'Sports Teams',
+  'Fitness Centers',
+  'Yoga Studios',
+  'Dance Studios',
+  'Music Schools',
+  'Art Galleries',
+  'Museums',
+  'Libraries',
+  'Theaters',
+  'Concert Halls',
+  'Stadiums',
+  'Theme Parks',
+  'Zoos',
+  'Aquariums',
+  'Botanical Gardens',
+  'Nature Reserves',
+  'National Parks',
+  'Tour Operators',
+  'Travel Guides',
+  'Language Schools',
+  'Tutoring',
+  'Online Courses',
+  'Universities',
+  'Colleges',
+  'High Schools',
+  'Primary Schools',
+  'Preschools',
+  'Vocational Training',
+  'Corporate Training',
+  'Executive Coaching',
+  'Mentoring',
+  'Career Services',
+  'Recruitment',
+  'Staffing',
+  'Outsourcing',
+  'Freelance Platforms',
+  'Gig Economy',
+  'Shared Economy',
+  'Co-working Spaces',
+  'Business Centers',
+  'Virtual Offices',
+  'Meeting Spaces',
+  'Event Venues',
+  'Conference Centers',
+  'Exhibition Halls',
+  'Trade Shows',
+  'Conventions',
+  'Summits',
+  'Workshops',
+  'Webinars',
+  'Podcasts',
+  'Blogs',
+  'Vlogs',
+  'Influencer Marketing',
+  'Affiliate Marketing',
+  'Email Marketing',
+  'SEO',
+  'SEM',
+  'Content Marketing',
+  'Social Media Marketing',
+  'Digital Advertising',
+  'Traditional Advertising',
+  'Public Relations',
+  'Media Relations',
+  'Crisis Management',
+  'Brand Strategy',
+  'Design',
+  'UX/UI',
+  'Graphic Design',
+  'Web Design',
+  'App Design',
+  'Industrial Design',
+  'Interior Design',
+  'Landscape Design',
+  'Fashion Design',
+  'Game Design',
+  'Sound Design',
+  'Video Editing',
+  'Animation',
+  'Special Effects',
+  'Post-production',
+  'Film Production',
+  'Music Production',
+  'Publishing',
+  'Print Media',
+  'Digital Media',
+  'Streaming Services',
+  'Video On Demand',
+  'Music Streaming',
+  'Podcast Hosting',
+  'Cloud Storage',
+  'File Sharing',
+  'Backup Services',
+  'Domain Registration',
+  'Web Hosting',
+  'CDN',
+  'DNS',
+  'SSL Certificates',
+  'Email Hosting',
+  'Collaboration',
+  'Video Conferencing',
+  'Voice Over IP',
+  'Messaging Apps',
+  'Project Management',
+  'Task Management',
+  'Time Tracking',
+  'Invoicing',
+  'Expense Management',
+  'Tax Preparation',
+  'Financial Planning',
+  'Wealth Management',
+  'Retirement Planning',
+  'Estate Planning',
+  'Insurance',
+  'Health Insurance',
+  'Life Insurance',
+  'Property Insurance',
+  'Casualty Insurance',
+  'Liability Insurance',
+  'Travel Insurance',
+  'Pet Insurance',
+  'Auto Insurance',
+  'Home Insurance',
+  'Business Insurance',
+  'Reinsurance',
+  'Underwriting',
+  'Claims Processing',
+  'Risk Management',
+  'Compliance',
+  'Audit',
+  'Accounting',
+  'Bookkeeping',
+  'Financial Reporting',
+  'Management Accounting',
+  'Cost Accounting',
+  'Tax Accounting',
+  'Forensic Accounting',
+  'Government Accounting',
+  'Non-profit Accounting',
+  'International Accounting',
+  'Auditing',
+  'Internal Audit',
+  'External Audit',
+  'Tax',
+  'Corporate Tax',
+  'Personal Tax',
+  'International Tax',
+  'Transfer Pricing',
+  'Tax Planning',
+  'Tax Compliance',
+  'Legal',
+  'Corporate Law',
+  'Commercial Law',
+  'Contract Law',
+  'Employment Law',
+  'Intellectual Property',
+  'Patents',
+  'Trademarks',
+  'Copyrights',
+  'Trade Secrets',
+  'Privacy Law',
+  'Data Protection',
+  'Cybersecurity Law',
+  'Competition Law',
+  'Antitrust',
+  'Regulatory Law',
+  'Administrative Law',
+  'Environmental Law',
+  'Healthcare Law',
+  'Education Law',
+  'Real Estate Law',
+  'Construction Law',
+  'Banking Law',
+  'Securities Law',
+  'Insurance Law',
+  'Tax Law',
+  'Immigration Law',
+  'Family Law',
+  'Criminal Law',
+  'Civil Litigation',
+  'Arbitration',
+  'Mediation',
+  'Alternative Dispute Resolution',
+  'Notary',
+  'Legal Tech',
+  'Document Management',
+  'Contract Management',
+  'E-discovery',
+  'Legal Research',
+  'Case Management',
+  'Billing',
+  'Timekeeping',
+  'Client Relationship Management',
+  'Practice Management',
+];
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Profile'>;
 
@@ -25,10 +381,17 @@ export default function SettingsScreen({ navigation }: Props) {
   const [otp, setOtp] = useState('');
   const [editName, setEditName] = useState('');
   const [editIndustry, setEditIndustry] = useState('');
+  const [industrySearchQuery, setIndustrySearchQuery] = useState('');
+  const [showIndustryDropdown, setShowIndustryDropdown] = useState(false);
   const [editCurrency, setEditCurrency] = useState<'NGN' | 'USD'>('NGN');
   const [otpPreference, setOtpPreference] = useState<'email' | 'sms' | 'both'>('email');
   const [biometricsAvailable, setBiometricsAvailable] = useState(false);
   const [hasBiometricHardware, setHasBiometricHardware] = useState(false);
+
+  const filteredIndustries = BUSINESS_INDUSTRIES.filter(
+    (industry) =>
+      industry.toLowerCase().includes(industrySearchQuery.toLowerCase())
+  );
 
   const isDarkMode = mode === 'dark';
 
@@ -322,12 +685,26 @@ export default function SettingsScreen({ navigation }: Props) {
             settings?.phone_number,
             () => setShowUpdateContact({ type: 'phone', value: settings?.phone_number || '' })
           )}
-          {renderSettingItem(
-            'shield-checkmark-outline',
-            'KYC Status',
-            kycStatus?.business?.status ? `${kycStatus.business.status.charAt(0).toUpperCase()}${kycStatus.business.status.slice(1)}` : 'None',
-            () => navigation.navigate('BusinessKyc')
-          )}
+          {(() => {
+            const hasPendingKyc = 
+              (kycStatus as any)?.user?.bvnStatus !== 'verified' ||
+              (kycStatus as any)?.user?.ninStatus !== 'verified' ||
+              (kycStatus as any)?.business?.status !== 'verified';
+
+            return renderSettingItem(
+              'shield-checkmark-outline',
+              'KYC Status',
+              kycStatus?.business?.status ? `${kycStatus.business.status.charAt(0).toUpperCase()}${kycStatus.business.status.slice(1)}` : 'None',
+              hasPendingKyc ? () => {
+                const tier = getKycTier();
+                if (tier === 'Tier 0' || tier === 'Tier 1') {
+                  navigation.navigate('KycPrompt');
+                } else if (tier === 'Tier 2') {
+                  navigation.navigate('BusinessKyc');
+                }
+              } : undefined
+            );
+          })()}
         </View>
 
         <View style={styles.section}>
@@ -442,11 +819,14 @@ export default function SettingsScreen({ navigation }: Props) {
 
             <View style={styles.field}>
               <Text style={styles.label}>Industry</Text>
-              <TextInput
+              <TouchableOpacity
                 style={styles.input}
-                value={editIndustry}
-                onChangeText={setEditIndustry}
-              />
+                onPress={() => setShowIndustryDropdown(true)}
+              >
+                <Text style={[editIndustry ? {} : styles.placeholderText]}>
+                  {editIndustry || 'Select Industry'}
+                </Text>
+              </TouchableOpacity>
             </View>
 
             <View style={styles.field}>
@@ -530,6 +910,59 @@ export default function SettingsScreen({ navigation }: Props) {
             </TouchableOpacity>
           </View>
         </View>
+      )}
+
+      {showIndustryDropdown && (
+        <Modal
+          visible={showIndustryDropdown}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={() => setShowIndustryDropdown(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
+              <View style={styles.modalHeader}>
+                <Text style={[styles.modalTitle, { color: colors.text }]}>Select Industry</Text>
+                <TouchableOpacity onPress={() => setShowIndustryDropdown(false)}>
+                  <Ionicons name="close" size={24} color={colors.text} />
+                </TouchableOpacity>
+              </View>
+              <View style={[styles.searchContainer, { backgroundColor: colors.background }]}>
+                <Ionicons name="search-outline" size={20} color={colors.textSecondary} style={styles.searchIcon} />
+                <TextInput
+                  style={[styles.searchInput, { 
+                    backgroundColor: colors.background, 
+                    borderColor: colors.border, 
+                    color: colors.text 
+                  }]}
+                  placeholder="Search industries..."
+                  placeholderTextColor={colors.textSecondary}
+                  value={industrySearchQuery}
+                  onChangeText={setIndustrySearchQuery}
+                  autoFocus
+                />
+              </View>
+              <FlatList
+                data={filteredIndustries}
+                keyExtractor={(item) => item}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={[styles.industryItem, { backgroundColor: colors.background }]}
+                    onPress={() => {
+                      setEditIndustry(item);
+                      setIndustrySearchQuery('');
+                      setShowIndustryDropdown(false);
+                    }}
+                  >
+                    <Text style={[styles.industryItemText, { color: colors.text }]}>{item}</Text>
+                  </TouchableOpacity>
+                )}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.industryList}
+              />
+            </View>
+          </View>
+        </Modal>
       )}
     </SafeAreaView>
   );
@@ -867,5 +1300,41 @@ const createStyles = (colors: any) => StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: 'bold',
+  },
+  placeholderText: {
+    color: colors.textSecondary,
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.background,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    marginBottom: 16,
+  },
+  searchIcon: {
+    marginRight: 12,
+  },
+  searchInput: {
+    flex: 1,
+    paddingVertical: 14,
+    fontSize: 16,
+    borderWidth: 0,
+    borderRadius: 0,
+    paddingHorizontal: 0,
+  },
+  industryList: {
+    gap: 8,
+  },
+  industryItem: {
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  industryItemText: {
+    fontSize: 16,
   },
 });

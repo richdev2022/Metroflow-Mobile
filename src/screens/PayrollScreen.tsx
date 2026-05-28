@@ -53,7 +53,15 @@ export default function PayrollScreen() {
       ]);
 
       if (summaryRes.data.success) {
-        setEmployees(summaryRes.data.payroll || []);
+        const payrollData = (summaryRes.data.payroll || []).map((emp: any) => ({
+          ...emp,
+          salary: typeof emp.salary === 'string' ? parseFloat(emp.salary) : emp.salary,
+          bonusesTotal: emp.bonuses_total ?? emp.bonusesTotal,
+          deductionsTotal: emp.deductions_total ?? emp.deductionsTotal,
+          netSalary: typeof emp.net_salary === 'number' ? emp.net_salary : 
+                     typeof emp.netSalary === 'number' ? emp.netSalary : 0
+        }));
+        setEmployees(payrollData);
       }
       if (configRes.data.success) {
         setConfig(configRes.data.config);
@@ -158,7 +166,11 @@ export default function PayrollScreen() {
     setShowEmployeeDetailModal(true);
   };
 
-  const totalNetPay = employees.reduce((sum, emp) => sum + (typeof emp.netSalary === 'number' ? emp.netSalary : 0), 0);
+  const totalNetPay = employees.reduce((sum, emp) => {
+    const netSal = typeof emp.net_salary === 'number' ? emp.net_salary : 
+                  typeof emp.netSalary === 'number' ? emp.netSalary : 0;
+    return sum + netSal;
+  }, 0);
 
   if (isLoading && employees.length === 0) {
     return (
@@ -228,7 +240,7 @@ export default function PayrollScreen() {
               </View>
             </View>
             <View style={styles.employeeSalary}>
-              <Text style={styles.salaryAmount}>₦{(typeof employee.netSalary === 'number' ? employee.netSalary : 0).toLocaleString()}</Text>
+              <Text style={styles.salaryAmount}>₦{(typeof employee.net_salary === 'number' ? employee.net_salary : typeof employee.netSalary === 'number' ? employee.netSalary : 0).toLocaleString()}</Text>
               <Text style={styles.salaryLabel}>Net Pay</Text>
             </View>
           </TouchableOpacity>
@@ -333,15 +345,15 @@ export default function PayrollScreen() {
                 </View>
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Bonuses</Text>
-                  <Text style={styles.bonusText}>+₦{selectedEmployee?.bonusesTotal?.toLocaleString() || '0'}</Text>
+                  <Text style={styles.bonusText}>+₦{(selectedEmployee?.bonuses_total ?? selectedEmployee?.bonusesTotal ?? 0).toLocaleString()}</Text>
                 </View>
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Deductions</Text>
-                  <Text style={styles.deductionText}>-₦{selectedEmployee?.deductionsTotal?.toLocaleString() || '0'}</Text>
+                  <Text style={styles.deductionText}>-₦{(selectedEmployee?.deductions_total ?? selectedEmployee?.deductionsTotal ?? 0).toLocaleString()}</Text>
                 </View>
                 <View style={[styles.detailRow, styles.netPayRow]}>
                   <Text style={styles.netPayLabel}>Net Pay</Text>
-                  <Text style={styles.netPayValue}>₦{(typeof selectedEmployee?.netSalary === 'number' ? selectedEmployee.netSalary : 0).toLocaleString()}</Text>
+                  <Text style={styles.netPayValue}>₦{(typeof selectedEmployee?.net_salary === 'number' ? selectedEmployee.net_salary : typeof selectedEmployee?.netSalary === 'number' ? selectedEmployee.netSalary : 0).toLocaleString()}</Text>
                 </View>
               </View>
 

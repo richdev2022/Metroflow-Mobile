@@ -98,6 +98,10 @@ export const tasksApi = {
     page?: number;
     limit?: number;
     status?: string;
+    assignedTo?: string;
+    epicId?: string;
+    startDate?: string;
+    endDate?: string;
   }) => api.get('/tasks', { params }),
   
   createTask: (data: {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, RefreshControl, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/ThemeContext';
 import { tasksApi, teamApi, epicsApi } from '../services/api';
@@ -34,7 +34,8 @@ export default function DashboardScreen() {
     if (showLoader) setIsLoading(true);
     try {
       const [tasksResponse, teamResponse, epicsResponse] = await Promise.all([
-        tasksApi.getTasks(10000, {
+        tasksApi.getTasks({
+          limit: 10000,
           assignedTo: selectedMember === 'all' ? undefined : selectedMember,
           epicId: selectedEpic === 'all' ? undefined : selectedEpic,
           startDate: startDate || undefined,
@@ -66,7 +67,6 @@ export default function DashboardScreen() {
     fetchData(false);
   };
 
-  // Re-fetch when filters change
   useEffect(() => {
     fetchData();
   }, [selectedMember, selectedEpic, startDate, endDate]);
@@ -96,7 +96,6 @@ export default function DashboardScreen() {
     setEndDate('');
   };
 
-  // Calculate stats from filtered tasks
   const totalTasks = tasks.length;
   const completedTasks = tasks.filter(t => t.status === 'completed').length;
   const inProgressTasks = tasks.filter(t => t.status === 'in_progress').length;
@@ -158,11 +157,9 @@ export default function DashboardScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Filters Section */}
         <View style={styles.filtersSection}>
           <Text style={styles.sectionTitle}>Filters</Text>
           
-          {/* Team Member Filter */}
           <View style={styles.filterGroup}>
             <Text style={styles.filterLabel}>Team Member</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -188,7 +185,6 @@ export default function DashboardScreen() {
             </ScrollView>
           </View>
 
-          {/* Epic Filter */}
           <View style={styles.filterGroup}>
             <Text style={styles.filterLabel}>Epic</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -214,7 +210,6 @@ export default function DashboardScreen() {
             </ScrollView>
           </View>
 
-          {/* Date Range Filter */}
           <View style={styles.filterGroup}>
             <Text style={styles.filterLabel}>Date Range</Text>
             <View style={styles.dateRow}>
@@ -246,9 +241,7 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* Stats Grid */}
         <View style={styles.statsGrid}>
-          {/* Quick Actions */}
           <TouchableOpacity style={styles.actionCard} onPress={() => navigation.navigate('Backlog')}>
             <LinearGradient
               colors={[colors.primary, colors.primaryLight]}
@@ -294,7 +287,6 @@ export default function DashboardScreen() {
             <Text style={styles.actionLabel}>Team</Text>
           </TouchableOpacity>
 
-          {/* KPI Cards */}
           <View style={[styles.statCard, styles.statCardShadow]}>
             <View style={[styles.statIcon, { backgroundColor: colors.primary + '20' }]}>
               <Ionicons name="list-outline" size={24} color={colors.primary} />
@@ -328,7 +320,6 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* Completion Rate */}
         <View style={styles.progressSection}>
           <Text style={styles.sectionTitle}>Completion Rate</Text>
           <View style={styles.progressCard}>
@@ -346,7 +337,6 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* Overdue Tasks */}
         {overdueTasks.length > 0 && (
           <View style={styles.overdueSection}>
             <Text style={styles.sectionTitle}>Overdue Tasks</Text>
@@ -364,7 +354,6 @@ export default function DashboardScreen() {
           </View>
         )}
 
-        {/* Team Performance */}
         <View style={styles.teamRankingSection}>
           <Text style={styles.sectionTitle}>Team Performance</Text>
           {teamMembers
