@@ -1,0 +1,45 @@
+name: metroflow_flutter
+description: Metroflow business management app
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+  flutter_riverpod: ^3.3.1
+  dio: ^5.9.2
+  shared_preferences: ^2.2.2
+  cached_network_image: ^3.3.1
+  font_awesome_flutter: ^11.0.0
+  intl: ^0.20.2
+  go_router: ^17.2.3
+  local_auth: ^3.0.1
+  google_fonts: ^6.2.1
+  image_picker: ^1.0.7
+  fluttertoast: ^9.1.0
+  share_plus: ^13.1.0
+  webview_flutter: ^4.7.0
+  web: ^1.1.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.1
+  mocktail: ^1.0.3
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/images/appIcon.png"
+  adaptive_icon_background: "#2563EB"
+  adaptive_icon_foreground: "assets/images/appIcon.png"
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/

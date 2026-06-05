@@ -1,0 +1,275 @@
+import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import '../services/api.dart';
+import '../models/task.dart';
+import '../theme/app_theme.dart';
+
+class BacklogScreen extends StatefulWidget {
+  const BacklogScreen({super.key});
+
+  @override
+  State<BacklogScreen> createState() => _BacklogScreenState();
+}
+
+class _BacklogScreenState extends State<BacklogScreen> {
+  final ScrollController _scrollController = ScrollController();
+  List<Task> _tasks = [];
+  bool _isLoading = true;
+  bool _isLoadingMore = false;
+  bool _hasMore = true;
+  int _page = 1;
+  String _searchQuery = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_handleScroll);
+    _fetchData();
+  }
+
+  @override
+  void dispose() {
+    _scrollController
+      ..removeListener(_handleScroll)
+      ..dispose();
+    super.dispose();
+  }
+
+  Future<void> _fetchData({int pageNumber = 1, bool refresh = false}) async {
+    if (!refresh && pageNumber > 1 && (!_hasMore || _isLoadingMore)) return;
+
+    try {
+      setState(() {
+        if (refresh) {
+          _isLoading = _tasks.isEmpty;
+        } else if (pageNumber > 1) {
+          _isLoadingMore = true;
+        } else {
+          _isLoading = true;
+        }
+      });
+      final api = ApiService();
+      final response = await api.getTasks(params: {
+        'page': pageNumber,
+        'limit': 20,
+      });
+
+      if (response.statusCode == 200) {
+        final data = response.data;
+        if (data['success'] == true) {
+          final tasksData = (data['data']['tasks'] ?? []) as List;
+          final newTasks = tasksData
+              .map((t) => Task.fromJson(t as Map<String, dynamic>))
+              .toList();
+          setState(() {
+            if (refresh) {
+              _tasks = newTasks;
+            } else {
+              _tasks = [..._tasks, ...newTasks];
+            }
+            _hasMore = newTasks.length == 20;
+            _page = pageNumber;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Failed to fetch backlog: $e');
+    } finally {
+      setState(() {
+        _isLoading = false;
+        _isLoadingMore = false;
+      });
+    }
+  }
+
+  void _handleScroll() {
+    if (!_scrollController.hasClients || _searchQuery.isNotEmpty) return;
+    final position = _scrollController.position;
+    if (position.pixels >= position.maxScrollExtent - 120) {
+      _fetchData(pageNumber: _page + 1);
+    }
+  }
+
+  List<Task> get _filteredTasks {
+    final q = _searchQuery.toLowerCase();
+    return _tasks.where((task) {
+      return task.title.toLowerCase().contains(q) ||
+          (task.description ?? '').toLowerCase().contains(q);
+    }).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : Column(
+                children: [
+                  _buildHeader(),
+                  Expanded(
+                    child: RefreshIndicator(
+                      onRefresh: () => _fetchData(refresh: true),
+                      child: _filteredTasks.isEmpty
+                          ? _buildEmptyState()
+                          : ListView.separated(
+                              controller: _scrollController,
+                              padding: const EdgeInsets.symmetric(horizontal: 24),
+                              itemCount: _filteredTasks.length + (_isLoadingMore ? 1 : 0),
+                              separatorBuilder: (_, __) => const SizedBox(height: 12),
+                              itemBuilder: (context, index) {
+                                if (index == _filteredTasks.length) {
+                                  return const Padding(
+                                    padding: EdgeInsets.all(16),
+                                    child: Center(child: CircularProgressIndicator(color: AppColors.primary)),
+                                  );
+                                }
+                                final task = _filteredTasks[index];
+                                return _TaskCard(
+                                  task: task,
+                                  onTap: () {
+                                    context.go('/main/task-detail', extra: task);
+                                  },
+                                );
+                              },
+                            ),
+                    ),
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => context.go('/main'),
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                'Backlog',
+                style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            decoration: InputDecoration(
+              hintText: 'Search backlog...',
+              hintStyle: TextStyle(color: AppTheme.colors.textSecondary),
+              prefixIcon: Icon(Icons.search_outlined, color: AppTheme.colors.textSecondary),
+              suffixIcon: _searchQuery.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () {
+                        setState(() => _searchQuery = '');
+                      },
+                    )
+                  : null,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: AppTheme.colors.border),
+              ),
+              filled: true,
+              fillColor: AppTheme.colors.surface,
+            ),
+            onChanged: (value) => setState(() => _searchQuery = value),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        children: [
+          Icon(Icons.archive_outlined, size: 64, color: AppTheme.colors.textSecondary),
+          const SizedBox(height: 16),
+          Text(
+            _searchQuery.isNotEmpty ? 'No results found' : 'Backlog is empty',
+            style: TextStyle(color: AppTheme.colors.textSecondary, fontSize: 16),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TaskCard extends StatelessWidget {
+  final Task task;
+  final VoidCallback onTap;
+
+  const _TaskCard({required this.task, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppTheme.colors.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppTheme.colors.border),
+        ),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text(
+                    task.title,
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                Icon(Icons.chevron_right, color: AppTheme.colors.textSecondary),
+              ],
+            ),
+            if (task.description != null && task.description!.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                task.description!,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: AppTheme.colors.textSecondary,
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                if (task.epic != null)
+                  Text(
+                    '\u{1F4C1} ${task.epic}',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                Text(
+                  'Added ${DateTime.tryParse(task.createdAt)?.toLocal().toString().split(' ')[0] ?? task.createdAt}',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
