@@ -1,7 +1,10 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:fluttertoast/fluttertoast.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../services/api.dart';
 import '../models/subscription.dart';
@@ -160,7 +163,7 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
         final data = response.data;
         if (data['success'] == true && data['checkout_url'] != null) {
           Fluttertoast.showToast(msg: 'Opening payment...');
-          _showPaymentWebView(data['checkout_url']);
+          _showPaymentWebView(data['checkout_url'], reference: data['reference'] as String?);
         }
       }
     } catch (e) {
@@ -181,7 +184,7 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
       if (response.statusCode == 200) {
         final data = response.data;
         if (data['success'] == true && data['checkout_url'] != null) {
-          _showPaymentWebView(data['checkout_url']);
+          _showPaymentWebView(data['checkout_url'], reference: data['reference'] as String?);
         }
       }
     } catch (e) {
@@ -194,15 +197,80 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
     }
   }
 
-  void _showPaymentWebView(String url) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => _PaymentWebViewScreen(
-          url: url,
-          onComplete: _fetchData,
+  Future<void> _verifySubscriptionPayment(String reference) async {
+    setState(() => _isUpgrading = true);
+    try {
+      final api = ApiService();
+      final response = await api.verifySubscriptionPayment(reference);
+      if (response.statusCode == 200) {
+        final data = response.data;
+        if (data['success'] == true) {
+          Fluttertoast.showToast(msg: 'Payment verified successfully!', backgroundColor: AppColors.success);
+          _fetchData();
+        } else {
+          Fluttertoast.showToast(msg: 'Payment verification pending. Please refresh later.');
+        }
+      }
+    } catch (e) {
+      Fluttertoast.showToast(
+        msg: 'Payment verification pending. Please refresh later.',
+      );
+    } finally {
+      setState(() => _isUpgrading = false);
+    }
+  }
+
+  void _showWebPaymentPrompt(String url, String? reference) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Complete Payment'),
+        content: SelectableText(
+          'Open this payment link in your browser, complete the payment, then tap Verify Payment.\n\n$url',
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              Clipboard.setData(ClipboardData(text: url));
+              Fluttertoast.showToast(msg: 'Payment link copied', backgroundColor: AppColors.success);
+            },
+            child: const Text('Copy Link'),
+          ),
+          ElevatedButton(
+            onPressed: reference == null
+                ? null
+                : () async {
+                    Navigator.of(dialogContext).pop();
+                    await _verifySubscriptionPayment(reference);
+                  },
+            child: const Text('Verify Payment'),
+          ),
+        ],
       ),
     );
+  }
+
+  void _showPaymentWebView(String url, {String? reference}) {
+    if (kIsWeb) {
+      // On web, open URL in new tab and show verification dialog
+      launchUrl(Uri.parse(url), webOnlyWindowName: '_blank');
+      _showWebPaymentPrompt(url, reference);
+    } else {
+      // On mobile, use WebView
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => _PaymentWebViewScreen(
+            url: url,
+            onComplete: _fetchData,
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _handleCancel() async {

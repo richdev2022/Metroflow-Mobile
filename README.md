@@ -1,20 +1,30 @@
-# Metroflow Pay - React Native App
+# Metroflow Pay - Flutter App
 
 ## Getting Started
 
 ### Prerequisites
-- Node.js
-- Expo CLI
+- Flutter SDK (3.0.0+)
+- Android Studio / VS Code (with Flutter plugin)
 
 ### Installation
-1. Install dependencies:
+1. Navigate to Flutter project:
    ```bash
-   npm install
+   cd metroflow_flutter
    ```
 
-2. Start the development server:
+2. Install dependencies:
    ```bash
-   npm start
+   flutter pub get
+   ```
+
+3. Generate platform-specific files if missing:
+   ```bash
+   flutter create .
+   ```
+
+4. Start the development server:
+   ```bash
+   flutter run
    ```
 
 ### Features Implemented
@@ -24,16 +34,19 @@
 - ✅ Payroll & Employees
 - ✅ Transfers & History
 - ✅ Profile & Settings
+- ✅ Theme Switching (Light/Dark/System)
+- ✅ Biometrics (Fingerprint/FaceID)
 
 ### Project Structure
 ```
-metroflow-app/
-├── src/
+metroflow_flutter/
+├── lib/
 │   ├── screens/          # All screen components
-│   ├── navigation/       # Navigation setup
-│   ├── services/         # API services
-│   └── types/            # TypeScript interfaces
-├── App.tsx
-├── package.json
-└── tsconfig.json
+│   ├── services/         # API & Biometrics services
+│   ├── providers/        # Riverpod state management
+│   ├── models/           # Data models
+│   ├── utils/            # Utilities (logger)
+│   ├── theme/            # App theme & colors
+│   └── main.dart
+└── pubspec.yaml
 ```

@@ -133,29 +133,30 @@ class BiometricService {
       }
     } on LocalAuthException catch (e) {
       debugPrint('Biometric LocalAuthException: code=${e.code}, desc=${e.description}');
+      final codeString = e.code.toString();
       
       // Handle specific errors
-      if (e.code == 'NotAvailable') {
+      if (codeString.contains('NotAvailable')) {
         return BiometricResult(
           success: false,
           error: 'Biometric authentication is not available on this device',
         );
-      } else if (e.code == 'NotEnrolled') {
+      } else if (codeString.contains('NotEnrolled')) {
         return BiometricResult(
           success: false,
           error: 'Please set up biometrics in your device settings first',
         );
-      } else if (e.code == 'LockedOut') {
+      } else if (codeString.contains('LockedOut')) {
         return BiometricResult(
           success: false,
           error: 'Biometric authentication is temporarily locked. Please try again later.',
         );
-      } else if (e.code == 'PermanentlyLockedOut') {
+      } else if (codeString.contains('PermanentlyLockedOut')) {
         return BiometricResult(
           success: false,
           error: 'Biometric authentication is permanently locked. Please use your device password.',
         );
-      } else if (e.code == 'UserCanceled') {
+      } else if (codeString.contains('UserCanceled')) {
         return BiometricResult(
           success: false,
           error: 'Authentication was canceled',
