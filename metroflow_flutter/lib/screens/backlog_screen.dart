@@ -142,6 +142,7 @@ class _BacklogScreenState extends State<BacklogScreen> {
   }
 
   Widget _buildHeader() {
+    final colors = AppTheme.colors;
     return Container(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -150,40 +151,104 @@ class _BacklogScreenState extends State<BacklogScreen> {
           Row(
             children: [
               IconButton(
-                icon: const Icon(Icons.arrow_back),
+                icon: Icon(Icons.arrow_back, color: colors.text),
                 onPressed: () => context.go('/main'),
               ),
               const SizedBox(width: 8),
-              const Text(
-                'Backlog',
-                style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Backlog',
+                      style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: colors.text),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Manage backlog tasks and assign them to Epics',
+                      style: TextStyle(fontSize: 14, color: colors.textSecondary),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
           const SizedBox(height: 16),
-          TextField(
-            decoration: InputDecoration(
-              hintText: 'Search backlog...',
-              hintStyle: TextStyle(color: AppTheme.colors.textSecondary),
-              prefixIcon: Icon(Icons.search_outlined, color: AppTheme.colors.textSecondary),
-              suffixIcon: _searchQuery.isNotEmpty
-                  ? IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () {
-                        setState(() => _searchQuery = '');
-                      },
-                    )
-                  : null,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: AppTheme.colors.border),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  decoration: InputDecoration(
+                    hintText: 'Search tasks...',
+                    hintStyle: TextStyle(color: colors.textSecondary),
+                    prefixIcon: Icon(Icons.search_outlined, color: colors.textSecondary),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.close),
+                            onPressed: () {
+                              setState(() => _searchQuery = '');
+                            },
+                          )
+                        : null,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: colors.border),
+                    ),
+                    filled: true,
+                    fillColor: colors.surface,
+                  ),
+                  onChanged: (value) => setState(() => _searchQuery = value),
+                ),
               ),
-              filled: true,
-              fillColor: AppTheme.colors.surface,
-            ),
-            onChanged: (value) => setState(() => _searchQuery = value),
+              const SizedBox(width: 12),
+              _buildActionButton(
+                icon: Icons.upload_file,
+                label: 'Upload Excel',
+                onTap: () => context.go('/main/bulk-create-tasks'),
+              ),
+              const SizedBox(width: 8),
+              _buildActionButton(
+                icon: Icons.add_task,
+                label: 'Add Task',
+                onTap: () => context.go('/main/create-task'),
+              ),
+            ],
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildActionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    final colors = AppTheme.colors;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: colors.surface,
+          border: Border.all(color: colors.border),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: colors.primary, size: 20),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                color: colors.text,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

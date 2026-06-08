@@ -3,13 +3,27 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:metroflow_flutter/theme/app_theme.dart';
 
-final themeProvider = NotifierProvider<ThemeNotifier, ThemeMode>(ThemeNotifier.new);
+class ThemeState {
+  final ThemeMode mode;
+  final bool isLoading;
 
-class ThemeNotifier extends Notifier<ThemeMode> {
+  ThemeState({required this.mode, this.isLoading = false});
+
+  ThemeState copyWith({ThemeMode? mode, bool? isLoading}) {
+    return ThemeState(
+      mode: mode ?? this.mode,
+      isLoading: isLoading ?? this.isLoading,
+    );
+  }
+}
+
+final themeProvider = NotifierProvider<ThemeNotifier, ThemeState>(ThemeNotifier.new);
+
+class ThemeNotifier extends Notifier<ThemeState> {
   @override
-  ThemeMode build() {
+  ThemeState build() {
     _loadTheme();
-    return ThemeMode.light;
+    return ThemeState(mode: ThemeMode.light);
   }
 
   Future<void> _loadTheme() async {
@@ -28,12 +42,17 @@ class ThemeNotifier extends Notifier<ThemeMode> {
           newMode = ThemeMode.light;
       }
     }
-    state = newMode;
+    state = ThemeState(mode: newMode);
     AppTheme.setThemeMode(newMode);
   }
 
   Future<void> toggleTheme(ThemeMode mode) async {
-    state = mode;
+    state = state.copyWith(isLoading: true);
+    
+    // Add a small delay to show the spinner
+    await Future.delayed(const Duration(milliseconds: 300));
+    
+    state = state.copyWith(mode: mode, isLoading: false);
     AppTheme.setThemeMode(mode);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('theme_mode', mode.name);

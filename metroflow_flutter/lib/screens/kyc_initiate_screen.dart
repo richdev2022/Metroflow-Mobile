@@ -51,11 +51,15 @@ class _KycInitiateScreenState extends ConsumerState<KycInitiateScreen> {
     setState(() => _isLoading = true);
     try {
       final api = ApiService();
-      await api.initiateKyc(type, number);
+      final response = await api.initiateKyc(type, number);
+      final responseData = response.data as Map<String, dynamic>;
       if (mounted) {
         context.go('/kyc-otp?type=$type', extra: {
           'type': type,
           'number': number,
+          'phone': responseData['phone'],
+          'firstName': responseData['firstName'],
+          'lastName': responseData['lastName'],
         });
       }
     } catch (e) {

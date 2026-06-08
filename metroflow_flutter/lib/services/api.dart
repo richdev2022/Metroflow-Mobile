@@ -79,21 +79,33 @@ class ApiService {
         }
 
         final message = _extractResponseMessage(error.response?.data) ?? 'Something went wrong';
+        final errorData = error.response?.data;
+        final isPlanUpgradeError = errorData is Map && 
+            errorData['error'] != null && 
+            errorData['error'].toString().toLowerCase().contains('upgrade');
 
+        // Only logout for actual auth failures
         if (error.response?.statusCode == 401 || error.response?.statusCode == 403) {
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.remove('token');
-          await prefs.remove('userId');
-          await prefs.remove('businessId');
-          await prefs.remove('userName');
-          if (logoutHandler != null) {
-            logoutHandler!();
+          // Check if this is a plan upgrade error or other non-auth 401
+          if (!isPlanUpgradeError) {
+            // Check if the error message is something that means token is invalid
+            final errorMsg = (errorData is Map ? errorData['error'] : null)?.toString().toLowerCase() ?? '';
+            if (errorMsg.contains('invalid') || errorMsg.contains('expired') || errorMsg.contains('unauthorized')) {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.remove('token');
+              await prefs.remove('userId');
+              await prefs.remove('businessId');
+              await prefs.remove('userName');
+              if (logoutHandler != null) {
+                logoutHandler!();
+              }
+            }
           }
         }
 
-        // Show error toast
-        if (error.requestOptions.method != 'GET' ||
-            (error.response?.statusCode != 401 && error.response?.statusCode != 403)) {
+        // Show error toast, except for plan upgrade errors which are handled specially
+        if (!isPlanUpgradeError && (error.requestOptions.method != 'GET' ||
+            (error.response?.statusCode != 401 && error.response?.statusCode != 403))) {
           if (error.requestOptions.extra['suppressToast'] == true) {
             return handler.next(error);
           }
@@ -228,11 +240,11 @@ class ApiService {
   }
 
   Future<Response> updateMemberStatus(String id, String status) async {
-    return await _dio.put('/team/$id/status', data: {'status': status});
+    return await _dio.patch('/team/$id/status', data: {'status': status});
   }
 
   Future<Response> updateMemberRole(String id, String role) async {
-    return await _dio.patch('/team/$id/role', data: {'role': role});
+    return await _dio.put('/team/$id/role', data: {'role': role});
   }
 
   Future<Response> deleteMember(String id) async {
@@ -587,6 +599,45 @@ class StorageService {
     return prefs.getString('userName');
   }
 
+  // Biometrics credential storage
+  Future<void> setBiometricsCredentials({
+    required String token,
+    required String userId,
+    required String businessId,
+    required String userName,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('biometrics_token', token);
+    await prefs.setString('biometrics_userId', userId);
+    await prefs.setString('biometrics_businessId', businessId);
+    await prefs.setString('biometrics_userName', userName);
+  }
+
+  Future<Map<String, String>?> getBiometricsCredentials() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('biometrics_token');
+    final userId = prefs.getString('biometrics_userId');
+    final businessId = prefs.getString('biometrics_businessId');
+    final userName = prefs.getString('biometrics_userName');
+    if (token != null && userId != null && businessId != null && userName != null) {
+      return {
+        'token': token,
+        'userId': userId,
+        'businessId': businessId,
+        'userName': userName,
+      };
+    }
+    return null;
+  }
+
+  Future<void> clearBiometricsCredentials() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('biometrics_token');
+    await prefs.remove('biometrics_userId');
+    await prefs.remove('biometrics_businessId');
+    await prefs.remove('biometrics_userName');
+  }
+
   Future<void> setBiometricsEnabled(bool enabled) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('biometricsEnabled', enabled);
@@ -627,13 +678,27 @@ class StorageService {
     return prefs.getBool('hasSeenOnboarding') ?? false;
   }
 
+  Future<void> setLastRoute(String route) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('lastRoute', route);
+  }
+
+  Future<String?> getLastRoute() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('lastRoute');
+  }
+
+  Future<void> removeLastRoute() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('lastRoute');
+  }
+
   Future<void> clearAll() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('token');
     await prefs.remove('userId');
     await prefs.remove('businessId');
     await prefs.remove('userName');
-    await prefs.remove('biometricsEnabled');
-    await prefs.remove('biometricsPromptShown');
+    // Keep biometricsEnabled, biometricsPromptShown, hasSeenOnboarding, lastRoute, and biometrics credentials
   }
 }

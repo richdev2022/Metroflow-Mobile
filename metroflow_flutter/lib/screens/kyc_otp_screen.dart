@@ -23,6 +23,9 @@ class _KycOtpScreenState extends ConsumerState<KycOtpScreen> {
   Timer? _resendTimer;
   String _type = 'bvn';
   String? _number;
+  String? _phone;
+  String? _firstName;
+  String? _lastName;
 
   @override
   void initState() {
@@ -33,12 +36,14 @@ class _KycOtpScreenState extends ConsumerState<KycOtpScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final state = GoRouterState.of(context);
-    final extra = state.extra;
-    final queryType = state.uri.queryParameters['type'];
+    final extra = GoRouterState.of(context).extra;
+    final queryType = GoRouterState.of(context).uri.queryParameters['type'];
     if (extra is Map<String, dynamic>) {
       _type = ((extra['type'] as String?) ?? queryType ?? 'bvn').toLowerCase() == 'nin' ? 'nin' : 'bvn';
       _number = extra['number'] as String?;
+      _phone = extra['phone'] as String?;
+      _firstName = extra['firstName'] as String?;
+      _lastName = extra['lastName'] as String?;
     } else {
       _type = (queryType ?? 'bvn').toLowerCase() == 'nin' ? 'nin' : 'bvn';
     }
@@ -69,13 +74,19 @@ class _KycOtpScreenState extends ConsumerState<KycOtpScreen> {
     final number = _number;
     if (number == null || number.isEmpty) {
       AppToast.show('Please restart verification to request a new OTP');
-      context.go('/kyc-initiate?type=$_type');
+      context.go('/kyc-prompt?type=$_type');
       return;
     }
 
     setState(() => _isResending = true);
     try {
-      await ApiService().initiateKyc(_type, number);
+      final response = await ApiService().initiateKyc(_type, number);
+      final responseData = response.data as Map<String, dynamic>;
+      setState(() {
+        _phone = responseData['phone'];
+        _firstName = responseData['firstName'];
+        _lastName = responseData['lastName'];
+      });
       AppToast.show('OTP resent successfully', type: AppToastType.success);
       _startResendCountdown();
     } catch (e) {
@@ -146,6 +157,50 @@ class _KycOtpScreenState extends ConsumerState<KycOtpScreen> {
                 ],
               ),
               const SizedBox(height: 32),
+              if (_firstName != null || _lastName != null || _phone != null) ...[
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: colors.surface,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: colors.border),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Verification details',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: colors.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      if (_firstName != null || _lastName != null)
+                        Text(
+                          '${_firstName ?? ''} ${_lastName ?? ''}'.trim(),
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: colors.text,
+                          ),
+                        ),
+                      if (_phone != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          'Code sent to $_phone',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: colors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+              ],
               Text(
                 'Enter the 6-digit code sent to your registered phone number or email address.',
                 style: TextStyle(fontSize: 16, color: colors.textSecondary, height: 1.5),

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:dio/dio.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import '../main.dart';
 import '../services/api.dart';
 import '../models/wallet.dart';
 import '../theme/app_theme.dart';
@@ -527,6 +528,8 @@ class _FundWalletWebViewState extends State<_FundWalletWebView> {
   @override
   void initState() {
     super.initState();
+    // Set webview open flag
+    (myAppKey.currentState as dynamic)?.setWebViewOpen(true);
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(
@@ -550,6 +553,13 @@ class _FundWalletWebViewState extends State<_FundWalletWebView> {
         ),
       )
       ..loadRequest(Uri.parse(widget.url));
+  }
+
+  @override
+  void dispose() {
+    // Clear webview open flag
+    (myAppKey.currentState as dynamic)?.setWebViewOpen(false);
+    super.dispose();
   }
 
   Future<void> _handlePaymentComplete(String url) async {

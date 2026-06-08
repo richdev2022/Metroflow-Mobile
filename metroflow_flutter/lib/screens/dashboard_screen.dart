@@ -407,45 +407,75 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             ),
             const SizedBox(height: 24),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (overdueTasks.isNotEmpty) ...[
-                    Text(
-                      'Overdue Tasks',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: colors.text),
-                    ),
-                    const SizedBox(height: 16),
-                    ...overdueTasks.take(3).map((task) {
-                      return _OverdueCard(task: task, colors: colors);
-                    }),
-                    const SizedBox(height: 24),
-                  ],
-                  Text(
-                    'Team Performance',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: colors.text),
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (overdueTasks.isNotEmpty) ...[
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Overdue Tasks',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: colors.text),
+                      ),
+                      TextButton(
+                        onPressed: () => context.go('/main/backlog'),
+                        child: Text(
+                          'View All',
+                          style: TextStyle(
+                            color: colors.primary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 16),
-                  ...List.generate(
-                    sortedMembers.take(5).length,
-                    (index) {
-                      final member = sortedMembers[index];
-                      final stats = memberStats[member.id]!;
-                      final rate = stats['total']! > 0 ? ((stats['completed']! / stats['total']!) * 100).round() : 0;
-                      return _TeamMemberRow(
-                        rank: index + 1,
-                        member: member,
-                        completionRate: rate,
-                        completed: stats['completed']!,
-                        total: stats['total']!,
-                        colors: colors,
-                      );
-                    },
-                  ),
+                  ...overdueTasks.take(3).map((task) {
+                    return _OverdueCard(task: task, colors: colors);
+                  }),
+                  const SizedBox(height: 24),
                 ],
-              ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Top 3 Members',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: colors.text),
+                    ),
+                    TextButton(
+                      onPressed: () => context.go('/main/ranking'),
+                      child: Text(
+                        'View Full Ranking',
+                        style: TextStyle(
+                          color: colors.primary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                ...List.generate(
+                  sortedMembers.take(3).length,
+                  (index) {
+                    final member = sortedMembers[index];
+                    final stats = memberStats[member.id]!;
+                    final rate = stats['total']! > 0 ? ((stats['completed']! / stats['total']!) * 100).round() : 0;
+                    return _TopMemberCard(
+                      rank: index + 1,
+                      member: member,
+                      completionRate: rate,
+                      completed: stats['completed']!,
+                      total: stats['total']!,
+                      colors: colors,
+                    );
+                  },
+                ),
+              ],
             ),
+          ),
           ],
         ),
       ),
@@ -750,7 +780,7 @@ class _OverdueCard extends StatelessWidget {
   }
 }
 
-class _TeamMemberRow extends StatelessWidget {
+class _TopMemberCard extends StatelessWidget {
   final int rank;
   final TeamMember member;
   final int completionRate;
@@ -758,7 +788,7 @@ class _TeamMemberRow extends StatelessWidget {
   final int total;
   final ThemeColors colors;
 
-  const _TeamMemberRow({
+  const _TopMemberCard({
     required this.rank,
     required this.member,
     required this.completionRate,
@@ -766,6 +796,32 @@ class _TeamMemberRow extends StatelessWidget {
     required this.total,
     required this.colors,
   });
+
+  IconData _getRankIcon() {
+    switch (rank) {
+      case 1:
+        return Icons.emoji_events_outlined;
+      case 2:
+        return Icons.emoji_events_outlined;
+      case 3:
+        return Icons.emoji_events_outlined;
+      default:
+        return Icons.person_outline;
+    }
+  }
+
+  Color _getRankIconColor() {
+    switch (rank) {
+      case 1:
+        return const Color(0xFFFFD700); // Gold
+      case 2:
+        return const Color(0xFFC0C0C0); // Silver
+      case 3:
+        return const Color(0xFFCD7F32); // Bronze
+      default:
+        return colors.textSecondary;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -783,40 +839,67 @@ class _TeamMemberRow extends StatelessWidget {
       child: Row(
         children: [
           SizedBox(
-            width: 36,
-            child: Text(
-              '$rank',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: colors.primary),
+            width: 40,
+            child: Icon(
+              _getRankIcon(),
+              color: _getRankIconColor(),
+              size: 32,
             ),
           ),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   member.name,
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: colors.text),
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: colors.text),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  member.role,
-                  style: TextStyle(fontSize: 13, color: colors.textSecondary),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Container(
+                      width: 100,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: colors.surfaceVariant,
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                      child: FractionallySizedBox(
+                        widthFactor: completionRate / 100,
+                        alignment: Alignment.centerLeft,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: rank == 1 ? colors.primary : colors.primary.withValues(alpha: rank == 2 ? 0.7 : 0.5),
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '$completionRate%',
+                      style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                '$completionRate%',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: colors.primary),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: colors.surfaceVariant,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              '$completed/$total Tasks',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: colors.text,
               ),
-              Text(
-                '$completed/$total',
-                style: TextStyle(fontSize: 13, color: colors.textSecondary),
-              ),
-            ],
+            ),
           ),
         ],
       ),

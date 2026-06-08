@@ -122,6 +122,16 @@ class AuthNotifier extends Notifier<AuthState> {
         _storageService.setUserName(userName),
       ]);
 
+      // Save biometrics credentials if enabled
+      if (state.biometricsEnabled) {
+        await _storageService.setBiometricsCredentials(
+          token: token,
+          userId: userId,
+          businessId: businessId,
+          userName: userName,
+        );
+      }
+
       state = state.copyWith(
         token: token,
         userId: userId,
@@ -160,6 +170,16 @@ class AuthNotifier extends Notifier<AuthState> {
           _storageService.setUserName(userName),
         ]);
 
+        // Save biometrics credentials if enabled
+        if (state.biometricsEnabled) {
+          await _storageService.setBiometricsCredentials(
+            token: token,
+            userId: userId,
+            businessId: businessId,
+            userName: userName,
+          );
+        }
+
         state = state.copyWith(
           token: token,
           userId: userId,
@@ -197,6 +217,16 @@ class AuthNotifier extends Notifier<AuthState> {
           _storageService.setUserName(userName),
         ]);
 
+        // Save biometrics credentials if enabled
+        if (state.biometricsEnabled) {
+          await _storageService.setBiometricsCredentials(
+            token: token,
+            userId: userId,
+            businessId: businessId,
+            userName: userName,
+          );
+        }
+
         state = state.copyWith(
           token: token,
           userId: userId,
@@ -217,12 +247,20 @@ class AuthNotifier extends Notifier<AuthState> {
   Future<void> logout() async {
     try {
       _idleTimer?.cancel();
-      await _storageService.clearAll();
+      
+      // Keep biometrics enabled and last route on logout
+      final biometricsEnabled = state.biometricsEnabled;
+      final hasSeenOnboarding = state.hasSeenOnboarding;
+      
+      // Clear everything except biometricsEnabled and hasSeenOnboarding
+      final storage = StorageService();
+      await storage.clearAll();
+      
       state = AuthState(
         isAuthenticated: false,
         isLoading: false,
-        biometricsEnabled: false,
-        hasSeenOnboarding: state.hasSeenOnboarding,
+        biometricsEnabled: biometricsEnabled,
+        hasSeenOnboarding: hasSeenOnboarding,
       );
     } catch (e) {
       debugPrint('Logout failed: $e');
@@ -238,6 +276,19 @@ class AuthNotifier extends Notifier<AuthState> {
     try {
       final result = await BiometricService.enableBiometricsWithResult();
       if (result.success) {
+        // Save current credentials for biometrics login
+        final token = state.token;
+        final userId = state.userId;
+        final businessId = state.businessId;
+        final userName = state.userName;
+        if (token != null && userId != null && businessId != null && userName != null) {
+          await _storageService.setBiometricsCredentials(
+            token: token,
+            userId: userId,
+            businessId: businessId,
+            userName: userName,
+          );
+        }
         state = state.copyWith(biometricsEnabled: true);
       }
       resetIdleTimer();
@@ -251,6 +302,7 @@ class AuthNotifier extends Notifier<AuthState> {
   Future<void> disableBiometrics() async {
     try {
       await BiometricService.disableBiometrics();
+      await _storageService.clearBiometricsCredentials();
       state = state.copyWith(biometricsEnabled: false);
       resetIdleTimer();
     } catch (e) {
@@ -262,12 +314,21 @@ class AuthNotifier extends Notifier<AuthState> {
     try {
       final authResult = await BiometricService.authenticate('Sign in to your account');
       if (authResult.success) {
-        final token = await _storageService.getToken();
-        final userId = await _storageService.getUserId();
-        final businessId = await _storageService.getBusinessId();
-        final userName = await _storageService.getUserName();
+        final credentials = await _storageService.getBiometricsCredentials();
+        if (credentials != null) {
+          final token = credentials['token']!;
+          final userId = credentials['userId']!;
+          final businessId = credentials['businessId']!;
+          final userName = credentials['userName']!;
 
-        if (token != null) {
+          // Restore the credentials to storage
+          await Future.wait([
+            _storageService.setToken(token),
+            _storageService.setUserId(userId),
+            _storageService.setBusinessId(businessId),
+            _storageService.setUserName(userName),
+          ]);
+
           state = state.copyWith(
             token: token,
             userId: userId,
@@ -312,6 +373,17 @@ class AuthNotifier extends Notifier<AuthState> {
       if (userId != null) futures.add(_storageService.setUserId(userId));
       if (businessId != null) futures.add(_storageService.setBusinessId(businessId));
       await Future.wait(futures);
+
+      // Save biometrics credentials if enabled and all data is present
+      if (state.biometricsEnabled && token != null && userId != null && businessId != null) {
+        final userName = state.userName ?? userId;
+        await _storageService.setBiometricsCredentials(
+          token: token,
+          userId: userId,
+          businessId: businessId,
+          userName: userName,
+        );
+      }
 
       state = state.copyWith(
         token: token,

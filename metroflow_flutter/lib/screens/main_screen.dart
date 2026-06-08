@@ -195,7 +195,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final themeMode = ref.watch(themeProvider);
+    final themeState = ref.watch(themeProvider);
     final authNotifier = ref.read(authProvider.notifier);
     final colors = AppTheme.colors;
 
@@ -310,22 +310,36 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       context.push('/main/team');
                     },
                   ),
+                  ListTile(
+                    leading: const Icon(Icons.leaderboard_outlined),
+                    title: const Text('Rankings'),
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      context.push('/main/ranking');
+                    },
+                  ),
                   const Divider(),
                   ListTile(
                     leading: Icon(
-                      themeMode == ThemeMode.dark
+                      themeState.mode == ThemeMode.dark
                           ? Icons.dark_mode_outlined
                           : Icons.light_mode_outlined,
                     ),
                     title: const Text('Dark Mode'),
-                    trailing: Switch(
-                      value: themeMode == ThemeMode.dark,
-                      onChanged: (value) {
-                        ref.read(themeProvider.notifier).toggleTheme(
-                          value ? ThemeMode.dark : ThemeMode.light,
-                        );
-                      },
-                    ),
+                    trailing: themeState.isLoading
+                        ? const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Switch(
+                            value: themeState.mode == ThemeMode.dark,
+                            onChanged: (value) {
+                              ref.read(themeProvider.notifier).toggleTheme(
+                                value ? ThemeMode.dark : ThemeMode.light,
+                              );
+                            },
+                          ),
                   ),
                   const Divider(),
                   ListTile(
@@ -368,25 +382,93 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         type: BottomNavigationBarType.fixed,
         currentIndex: _selectedIndex,
         onTap: (index) => _onItemTapped(index),
-        items: const [
+        backgroundColor: colors.surface,
+        selectedItemColor: colors.text,
+        unselectedItemColor: colors.textSecondary,
+        selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600),
+        items: [
           BottomNavigationBarItem(
-            icon: Icon(Icons.home_outlined),
-            activeIcon: Icon(Icons.home),
+            icon: Container(
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+              decoration: _selectedIndex == 0
+                  ? BoxDecoration(
+                      color: colors.primary,
+                      borderRadius: BorderRadius.circular(12),
+                    )
+                  : null,
+              child: Icon(Icons.home_outlined, color: _selectedIndex == 0 ? Colors.white : null),
+            ),
+            activeIcon: Container(
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+              decoration: BoxDecoration(
+                color: colors.primary,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.home, color: Colors.white),
+            ),
             label: 'Home',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.list_outlined),
-            activeIcon: Icon(Icons.list),
+            icon: Container(
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+              decoration: _selectedIndex == 1
+                  ? BoxDecoration(
+                      color: colors.primary,
+                      borderRadius: BorderRadius.circular(12),
+                    )
+                  : null,
+              child: Icon(Icons.list_outlined, color: _selectedIndex == 1 ? Colors.white : null),
+            ),
+            activeIcon: Container(
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+              decoration: BoxDecoration(
+                color: colors.primary,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.list, color: Colors.white),
+            ),
             label: 'Tasks',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.account_balance_wallet_outlined),
-            activeIcon: Icon(Icons.account_balance_wallet),
+            icon: Container(
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+              decoration: _selectedIndex == 2
+                  ? BoxDecoration(
+                      color: colors.primary,
+                      borderRadius: BorderRadius.circular(12),
+                    )
+                  : null,
+              child: Icon(Icons.account_balance_wallet_outlined, color: _selectedIndex == 2 ? Colors.white : null),
+            ),
+            activeIcon: Container(
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+              decoration: BoxDecoration(
+                color: colors.primary,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.account_balance_wallet, color: Colors.white),
+            ),
             label: 'Wallet',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.payments_outlined),
-            activeIcon: Icon(Icons.payments),
+            icon: Container(
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+              decoration: _selectedIndex == 3
+                  ? BoxDecoration(
+                      color: colors.primary,
+                      borderRadius: BorderRadius.circular(12),
+                    )
+                  : null,
+              child: Icon(Icons.payments_outlined, color: _selectedIndex == 3 ? Colors.white : null),
+            ),
+            activeIcon: Container(
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+              decoration: BoxDecoration(
+                color: colors.primary,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.payments, color: Colors.white),
+            ),
             label: 'Payroll',
           ),
         ],

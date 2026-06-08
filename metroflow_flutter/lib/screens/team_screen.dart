@@ -97,6 +97,123 @@ class _TeamScreenState extends State<TeamScreen> {
     }
   }
 
+  Future<void> _handleUpdateRole(TeamMember member, String newRole) async {
+    try {
+      await ApiService().updateMemberRole(member.id, newRole);
+      await _fetchTeam();
+      if (mounted) Navigator.of(context).pop();
+    } catch (e) {
+      Fluttertoast.showToast(
+        msg: e.toString().replaceAll('Exception: ', ''),
+        backgroundColor: AppColors.error,
+      );
+    }
+  }
+
+  void _showRoleModal(TeamMember member) {
+    String selectedRole = member.role;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final colors = AppTheme.colors;
+            return Padding(
+              padding: const EdgeInsets.all(24),
+              child: Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: colors.surface,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Update Role',
+                          style: TextStyle(
+                            color: colors.text,
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        IconButton(
+                          icon: Icon(Icons.close, color: colors.text),
+                          onPressed: () => Navigator.of(context).pop(),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Select a new role for ${member.name}',
+                      style: TextStyle(
+                        color: colors.textSecondary,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    ...['admin', 'manager', 'member'].map((role) {
+                      final selected = selectedRole == role;
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(10),
+                          onTap: () {
+                            setModalState(() => selectedRole = role);
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+                            decoration: BoxDecoration(
+                              color: selected
+                                  ? colors.primary.withValues(alpha: 0.12)
+                                  : colors.background,
+                              border: Border.all(
+                                color: selected ? colors.primary : colors.border,
+                              ),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(_getRoleIcon(role), color: selected ? colors.primary : colors.textSecondary, size: 20),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    _titleCase(role),
+                                    style: TextStyle(
+                                      color: selected ? colors.primary : colors.text,
+                                      fontWeight: selected ? FontWeight.w500 : FontWeight.normal,
+                                    ),
+                                  ),
+                                ),
+                                if (selected)
+                                  Icon(Icons.check_circle, color: colors.primary),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    }),
+                    const SizedBox(height: 24),
+                    ElevatedButton(
+                      onPressed: () => _handleUpdateRole(member, selectedRole),
+                      child: const Text('Update Role'),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Future<void> _handleDelete(TeamMember member) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -493,6 +610,13 @@ class _TeamScreenState extends State<TeamScreen> {
           const SizedBox(width: 8),
           Row(
             children: [
+              _actionButton(
+                icon: Icons.edit_outlined,
+                color: colors.textSecondary,
+                background: colors.background,
+                onTap: () => _showRoleModal(member),
+              ),
+              const SizedBox(width: 8),
               if (member.status != 'invited')
                 _actionButton(
                   icon: member.status == 'active' ? Icons.pause_outlined : Icons.play_arrow_outlined,

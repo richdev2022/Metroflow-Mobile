@@ -6,6 +6,7 @@ import 'theme/app_theme.dart';
 import 'providers/theme_provider.dart';
 import 'providers/auth_provider.dart';
 import 'services/api.dart';
+import 'services/biometrics.dart';
 import 'components/error_boundary.dart';
 import 'screens/splash_screen.dart';
 import 'screens/login_screen.dart';
@@ -33,8 +34,10 @@ import 'screens/backlog_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/team_screen.dart';
+import 'screens/ranking_screen.dart';
 import 'screens/subscription_screen.dart';
 import 'screens/transaction_detail_screen.dart';
+import 'screens/bulk_create_tasks_screen.dart';
 import 'models/payment_transaction.dart';
 import 'screens/fees_screen.dart';
 import 'screens/activity_logs_screen.dart';
@@ -43,6 +46,9 @@ void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const ProviderScope(child: MyApp()));
 }
+
+// Global key to access MyAppState - use dynamic since _MyAppState is private
+final GlobalKey myAppKey = GlobalKey();
 
 class MyApp extends ConsumerStatefulWidget {
   const MyApp({super.key});
@@ -56,6 +62,17 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   AppLifecycleState _appState = AppLifecycleState.resumed;
   DateTime? _lastKycCheckAt;
   bool? _cachedKycVerified;
+  String? _currentRoute;
+  final _storage = StorageService();
+  bool _shouldPromptBiometricsOnResume = false;
+  bool _isWebViewOpen = false; // New flag to track webview state
+
+  // Public method to set webview state
+  void setWebViewOpen(bool isOpen) {
+    setState(() {
+      _isWebViewOpen = isOpen;
+    });
+  }
 
   String _routeValue(GoRouterState state, String key) {
     final extra = state.extra;
@@ -84,6 +101,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         }
 
         final path = state.uri.path;
+        _currentRoute = path;
 
         if (isAuthenticated) {
           // Check KYC status before allowing access to main
@@ -125,6 +143,12 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
                 path == '/forgot-password' ||
                 path == '/verify-reset-otp' ||
                 path == '/reset-password') {
+              // Check if we have a last route to navigate to
+              final lastRoute = await _storage.getLastRoute();
+              if (lastRoute != null && lastRoute.isNotEmpty && lastRoute != '/login') {
+                await _storage.removeLastRoute(); // Clear it after using
+                return lastRoute;
+              }
               return '/main';
             }
           } catch (e) {
@@ -229,6 +253,10 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
               builder: (context, state) => const CreateTaskScreen(),
             ),
             GoRoute(
+              path: 'bulk-create-tasks',
+              builder: (context, state) => const BulkCreateTasksScreen(),
+            ),
+            GoRoute(
               path: 'task-detail',
               builder: (context, state) => const TaskDetailScreen(),
             ),
@@ -255,6 +283,10 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
             GoRoute(
               path: 'team',
               builder: (context, state) => const TeamScreen(),
+            ),
+            GoRoute(
+              path: 'ranking',
+              builder: (context, state) => const RankingScreen(),
             ),
             GoRoute(
               path: 'subscription',
@@ -306,18 +338,63 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
+  void didChangeAppLifecycleState(AppLifecycleState state) async {
     final authNotifier = ref.read(authProvider.notifier);
+    final authState = ref.read(authProvider);
     
     if (_appState == AppLifecycleState.resumed && 
         (state == AppLifecycleState.inactive || state == AppLifecycleState.paused)) {
-      // App is going to background
+      // App is going to background - store current route and logout ONLY IF NOT IN WEBVIEW
+      if (_currentRoute != null && _currentRoute!.isNotEmpty) {
+        await _storage.setLastRoute(_currentRoute!);
+      }
+      // Skip auto-logout if webview is open!
+      if (!_isWebViewOpen) {
+        await authNotifier.logout();
+        _shouldPromptBiometricsOnResume = true;
+      }
     }
     
     if ((_appState == AppLifecycleState.inactive || _appState == AppLifecycleState.paused) && 
         state == AppLifecycleState.resumed) {
       // App is coming back to foreground
-      authNotifier.resetIdleTimer();
+      if (_shouldPromptBiometricsOnResume && authState.biometricsEnabled && !authState.isAuthenticated) {
+        // Prompt biometrics
+        final hasBiometrics = await BiometricService.isAvailable();
+        if (hasBiometrics && mounted) {
+          // Try to auto-prompt biometrics login
+          try {
+            final success = await authNotifier.loginWithBiometrics();
+            if (success) {
+              // Navigate to last route or main
+              final lastRoute = await _storage.getLastRoute();
+              if (lastRoute != null && lastRoute.isNotEmpty && lastRoute != '/login') {
+                await _storage.removeLastRoute();
+                if (mounted) _router.go(lastRoute);
+              } else {
+                // Check KYC and navigate
+                final api = ApiService();
+                final response = await api.getKycStatus();
+                final data = response.data as Map<String, dynamic>;
+                final user = data['user'] as Map<String, dynamic>?;
+                final bvnVerified = user?['bvnStatus'] == 'verified' || user?['bvn_status'] == 'verified' || data['bvn_verified'] == true;
+                final ninVerified = user?['ninStatus'] == 'verified' || user?['nin_status'] == 'verified' || data['nin_verified'] == true;
+                final isTier1Verified = bvnVerified || ninVerified;
+                if (!isTier1Verified) {
+                  if (mounted) _router.go('/kyc-prompt');
+                } else {
+                  if (mounted) _router.go('/main');
+                }
+              }
+            }
+          } catch (e) {
+            debugPrint('Auto biometric login failed: $e');
+          }
+        }
+        _shouldPromptBiometricsOnResume = false;
+      } else if (authState.isAuthenticated) {
+        authNotifier.resetIdleTimer();
+      }
     }
     
     _appState = state;
@@ -325,7 +402,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    final themeMode = ref.watch(themeProvider);
+    final themeState = ref.watch(themeProvider);
     
     // Listen for auth changes to reset idle timer
     ref.listen<AuthState>(authProvider, (previous, next) {
@@ -341,7 +418,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
           debugShowCheckedModeBanner: false,
           theme: AppTheme.lightTheme,
           darkTheme: AppTheme.darkTheme,
-          themeMode: themeMode,
+          themeMode: themeState.mode,
           routerConfig: _router,
         ),
       ),

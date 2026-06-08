@@ -342,8 +342,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final colors = AppTheme.colors;
-    final themeMode = ref.watch(themeProvider);
-    final isDarkMode = themeMode == ThemeMode.dark;
+    final themeState = ref.watch(themeProvider);
+    final isDarkMode = themeState.mode == ThemeMode.dark;
 
     if (_isLoading) {
       return Scaffold(
@@ -432,14 +432,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       icon: isDarkMode ? Icons.dark_mode_outlined : Icons.light_mode_outlined,
                       title: 'Dark Mode',
                       subtitle: 'Currently ${isDarkMode ? 'enabled' : 'disabled'}',
-                      trailing: Switch(
-                        value: isDarkMode,
-                        onChanged: (value) {
-                          ref
-                              .read(themeProvider.notifier)
-                              .toggleTheme(value ? ThemeMode.dark : ThemeMode.light);
-                        },
-                      ),
+                      trailing: themeState.isLoading
+                          ? const SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : Switch(
+                              value: isDarkMode,
+                              onChanged: (value) {
+                                ref
+                                    .read(themeProvider.notifier)
+                                    .toggleTheme(value ? ThemeMode.dark : ThemeMode.light);
+                              },
+                            ),
                     ),
                     _sectionTitle('Security'),
                     _settingItem(

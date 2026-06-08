@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import '../main.dart';
 import '../services/api.dart';
 import '../models/subscription.dart';
 import '../models/plan.dart';
@@ -875,6 +876,38 @@ class _PaymentWebViewScreen extends StatefulWidget {
 
 class _PaymentWebViewScreenState extends State<_PaymentWebViewScreen> {
   bool _isLoading = true;
+  late final WebViewController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    // Set webview open flag
+    (myAppKey.currentState as dynamic)?.setWebViewOpen(true);
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onNavigationRequest: (request) {
+            final url = request.url;
+            if ((url.contains('success') || url.contains('callback') || url.contains('verify'))) {
+              _handlePaymentComplete(url);
+              return NavigationDecision.prevent;
+            }
+            return NavigationDecision.navigate;
+          },
+          onPageStarted: (_) => setState(() => _isLoading = true),
+          onPageFinished: (_) => setState(() => _isLoading = false),
+        ),
+      )
+      ..loadRequest(Uri.parse(widget.url));
+  }
+
+  @override
+  void dispose() {
+    // Clear webview open flag
+    (myAppKey.currentState as dynamic)?.setWebViewOpen(false);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -896,30 +929,6 @@ class _PaymentWebViewScreenState extends State<_PaymentWebViewScreen> {
         ],
       ),
     );
-  }
-
-  late final WebViewController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onNavigationRequest: (request) {
-            final url = request.url;
-            if ((url.contains('success') || url.contains('callback') || url.contains('verify'))) {
-              _handlePaymentComplete(url);
-              return NavigationDecision.prevent;
-            }
-            return NavigationDecision.navigate;
-          },
-          onPageStarted: (_) => setState(() => _isLoading = true),
-          onPageFinished: (_) => setState(() => _isLoading = false),
-        ),
-      )
-      ..loadRequest(Uri.parse(widget.url));
   }
 
   Future<void> _handlePaymentComplete(String url) async {

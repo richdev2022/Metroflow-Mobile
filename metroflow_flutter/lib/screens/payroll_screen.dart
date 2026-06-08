@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../services/api.dart';
@@ -20,6 +21,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
   bool _showAdjustmentModal = false;
   bool _showEmployeeDetailModal = false;
   bool _showEditEmployeeModal = false;
+  bool _showPlanUpgradeModal = false;
+  bool _planUpgradeRequired = false;
   List<dynamic> _adjustments = [];
   String _salaryInterval = 'monthly';
   String _salaryCustomDate = '';
@@ -34,6 +37,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
   String _adjCurrency = 'NGN';
   String _adjReason = '';
   Map<String, dynamic> _editEmployeeData = {};
+  String? _planUpgradeMessage;
 
   final _searchController = TextEditingController();
   final _adjAmountController = TextEditingController();
@@ -92,6 +96,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
           }).toList();
           if (mounted) {
             setState(() {
+              _planUpgradeRequired = false;
               _employees = payrollData;
               _payrollPage = page;
               final pagination = data is Map ? data['pagination'] as Map<String, dynamic>? : null;
@@ -111,6 +116,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
               root;
           if (mounted) {
             setState(() {
+              _planUpgradeRequired = false;
               _salaryInterval = cfg['salary_interval'] ?? 'monthly';
               _salaryCustomDate = cfg['salary_custom_date'] ?? '';
             });
@@ -118,6 +124,30 @@ class _PayrollScreenState extends State<PayrollScreen> {
         }
       }
     } catch (e) {
+      // Check if this is a plan upgrade error
+      if (e is DioException) {
+        final responseData = e.response?.data;
+        if (responseData is Map) {
+          final errorMessage = responseData['error']?.toString() ?? '';
+          if (errorMessage.toLowerCase().contains('upgrade')) {
+            if (mounted) {
+              setState(() {
+                _planUpgradeMessage = errorMessage;
+                _planUpgradeRequired = true;
+                _showPlanUpgradeModal = true;
+                _showConfigModal = false;
+                _showAdjustmentModal = false;
+                _showEmployeeDetailModal = false;
+                _showEditEmployeeModal = false;
+                _employees = [];
+                _payrollPage = 1;
+                _payrollTotalPages = 1;
+              });
+            }
+            return;
+          }
+        }
+      }
       debugPrint('Failed to fetch payroll data: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -363,67 +393,215 @@ class _PayrollScreenState extends State<PayrollScreen> {
     return const [];
   }
 
+  void _dismissPlanUpgrade() {
+    if (!mounted) return;
+    setState(() => _showPlanUpgradeModal = false);
+    context.go('/main');
+  }
+
+  Widget _buildPlanUpgradeGate() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.workspace_premium_outlined,
+              size: 56,
+              color: AppColors.primary,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Upgrade Required',
+              style: TextStyle(
+                color: AppTheme.colors.text,
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _planUpgradeMessage ?? 'Upgrade your plan to access payroll features.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: AppTheme.colors.textSecondary,
+                fontSize: 15,
+                height: 1.4,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final content = _planUpgradeRequired
+        ? _buildPlanUpgradeGate()
+        : _isLoading && _employees.isEmpty
+            ? const Center(child: CircularProgressIndicator())
+            : SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _buildHeader(),
+                    const SizedBox(height: 24),
+                    _buildSummaryCard(),
+                    const SizedBox(height: 32),
+                    _buildEmployeesSection(),
+                    if (_payrollTotalPages > 1) ...[
+                      const SizedBox(height: 16),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          TextButton(
+                            onPressed: _payrollPage <= 1 ? null : () => _fetchPayrollData(page: _payrollPage - 1),
+                            child: const Text('Previous'),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            child: Text('Page $_payrollPage of $_payrollTotalPages'),
+                          ),
+                          TextButton(
+                            onPressed:
+                                _payrollPage >= _payrollTotalPages ? null : () => _fetchPayrollData(page: _payrollPage + 1),
+                            child: const Text('Next'),
+                          ),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 24),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: () => context.go('/main/bulk-transfer'),
+                        icon: const Icon(Icons.send_outlined),
+                        label: const Text('Initiate Bulk Transfer'),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+
     return Scaffold(
       body: SafeArea(
         child: Stack(
           children: [
-            _isLoading && _employees.isEmpty
-                ? const Center(child: CircularProgressIndicator())
-                : SingleChildScrollView(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _buildHeader(),
-                        const SizedBox(height: 24),
-                        _buildSummaryCard(),
-                        const SizedBox(height: 32),
-                        _buildEmployeesSection(),
-                        if (_payrollTotalPages > 1) ...[
-                          const SizedBox(height: 16),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              TextButton(
-                                onPressed: _payrollPage <= 1
-                                    ? null
-                                    : () => _fetchPayrollData(page: _payrollPage - 1),
-                                child: const Text('Previous'),
-                              ),
-                              Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 12),
-                                child: Text('Page $_payrollPage of $_payrollTotalPages'),
-                              ),
-                              TextButton(
-                                onPressed: _payrollPage >= _payrollTotalPages
-                                    ? null
-                                    : () => _fetchPayrollData(page: _payrollPage + 1),
-                                child: const Text('Next'),
-                              ),
-                            ],
-                          ),
-                        ],
-                        const SizedBox(height: 24),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            onPressed: () => context.go('/main/bulk-transfer'),
-                            icon: const Icon(Icons.send_outlined),
-                            label: const Text('Initiate Bulk Transfer'),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+            content,
             if (_showConfigModal) _buildConfigModal(),
             if (_showEmployeeDetailModal) _buildEmployeeDetailModal(),
             if (_showAdjustmentModal) _buildAdjustmentModal(),
             if (_showEditEmployeeModal) _buildEditEmployeeModal(),
+            if (_showPlanUpgradeModal) _buildPlanUpgradeModal(),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildPlanUpgradeModal() {
+    return Stack(
+      children: [
+        ModalBarrier(
+          color: Colors.black.withValues(alpha: 0.5),
+          onDismiss: _dismissPlanUpgrade,
+        ),
+        Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 400),
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: AppTheme.colors.background,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.2),
+                    blurRadius: 20,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.workspace_premium_outlined,
+                    size: 64,
+                    color: AppColors.primary,
+                  ),
+                  const SizedBox(height: 24),
+                  Text(
+                    'Upgrade Required',
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                      color: AppTheme.colors.text,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    _planUpgradeMessage ?? 'Upgrade your plan to access payroll features.',
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: AppTheme.colors.textSecondary,
+                      height: 1.5,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 32),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextButton(
+                          onPressed: _dismissPlanUpgrade,
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                          ),
+                          child: Text(
+                            'Cancel',
+                            style: TextStyle(
+                              fontSize: 16,
+                              color: AppTheme.colors.textSecondary,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () {
+                            context.go('/main/subscription');
+                            setState(() => _showPlanUpgradeModal = false);
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: const Text(
+                            'Upgrade Plan',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
