@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../services/api.dart';
 import '../models/employee.dart';
+import '../models/bank.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_toast.dart';
 
@@ -39,6 +40,17 @@ class _PayrollScreenState extends State<PayrollScreen> {
   Map<String, dynamic> _editEmployeeData = {};
   String? _planUpgradeMessage;
 
+  // Bank related state
+  List<Bank> _banks = [];
+  bool _banksLoading = false;
+  Bank? _selectedBank;
+  bool _showBankDropdown = false;
+  String _bankSearchQuery = '';
+  final _bankSearchController = TextEditingController();
+
+  // Account lookup state
+  bool _isVerifyingAccount = false;
+
   final _searchController = TextEditingController();
   final _adjAmountController = TextEditingController();
   final _adjReasonController = TextEditingController();
@@ -52,6 +64,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
   void initState() {
     super.initState();
     _fetchPayrollData();
+    _fetchBanks();
   }
 
   @override
@@ -64,7 +77,102 @@ class _PayrollScreenState extends State<PayrollScreen> {
     _editBankAccountController.dispose();
     _editAccountNameController.dispose();
     _editContractStartController.dispose();
+    _bankSearchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _fetchBanks() async {
+    setState(() => _banksLoading = true);
+    try {
+      final api = ApiService();
+      final response = await api.getBanks();
+      if (response.statusCode == 200 && mounted) {
+        final data = response.data;
+        final banksList = data is List ? data : (data['banks'] as List?) ?? (data['data'] as List?) ?? [];
+        setState(() {
+          _banks = banksList.map((bankJson) => Bank.fromJson(bankJson as Map<String, dynamic>)).toList();
+        });
+      }
+    } catch (e) {
+      debugPrint('Failed to fetch banks: $e');
+    } finally {
+      if (mounted) setState(() => _banksLoading = false);
+    }
+  }
+
+  Future<void> _verifyAccount() async {
+    final bankCode = _editEmployeeData['bank_code'] as String?;
+    final accountNumber = _editEmployeeData['bank_account_number'] as String?;
+    if (bankCode == null || bankCode.isEmpty || accountNumber == null || accountNumber.isEmpty) {
+      return;
+    }
+
+    setState(() => _isVerifyingAccount = true);
+    try {
+      final api = ApiService();
+      final response = await api.resolveAccount(bankCode, accountNumber);
+      if (response.statusCode == 200 && mounted) {
+        final data = response.data;
+        final accountName = data['account_name'] as String?;
+        if (accountName != null) {
+          setState(() {
+            _editEmployeeData['account_name'] = accountName;
+            _editAccountNameController.text = accountName;
+          });
+          AppToast.show('Account verified successfully!', type: AppToastType.success);
+        }
+      }
+    } catch (e) {
+      debugPrint('Failed to verify account: $e');
+      AppToast.show('Failed to verify account', type: AppToastType.error);
+    } finally {
+      if (mounted) setState(() => _isVerifyingAccount = false);
+    }
+  }
+
+  Future<void> _selectContractStartDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _editContractStartController.text.isNotEmpty ? DateTime.tryParse(_editContractStartController.text) : DateTime.now(),
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (picked != null && mounted) {
+      final formatted = '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
+      setState(() {
+        _editEmployeeData['contract_start_date'] = formatted;
+        _editContractStartController.text = formatted;
+      });
+    }
+  }
+
+  Future<void> _selectPayrollCustomDateTime() async {
+    final pickedDate = await showDatePicker(
+      context: context,
+      initialDate: _salaryCustomDate.isNotEmpty ? DateTime.tryParse(_salaryCustomDate) : DateTime.now(),
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    
+    if (pickedDate != null && mounted) {
+      final pickedTime = await showTimePicker(
+        context: context,
+        initialTime: _salaryCustomDate.isNotEmpty 
+          ? TimeOfDay.fromDateTime(DateTime.tryParse(_salaryCustomDate) ?? DateTime.now())
+          : TimeOfDay.now(),
+      );
+      
+      if (pickedTime != null && mounted) {
+        final dateTime = DateTime(
+          pickedDate.year,
+          pickedDate.month,
+          pickedDate.day,
+          pickedTime.hour,
+          pickedTime.minute,
+        );
+        setState(() => _salaryCustomDate = dateTime.toIso8601String());
+      }
+    }
   }
 
   Future<void> _fetchPayrollData({bool showLoader = true, int page = 1}) async {
@@ -272,6 +380,11 @@ class _PayrollScreenState extends State<PayrollScreen> {
     _editBankCodeController.text = employee.bankCode ?? '';
     _editAccountNameController.text = employee.accountName ?? '';
     _editContractStartController.text = employee.contractStartDate ?? '';
+    
+    // Find and set selected bank
+    final bankCode = employee.bankCode ?? '';
+    _selectedBank = bankCode.isNotEmpty ? _banks.firstWhere((b) => b.code == bankCode, orElse: () => Bank(code: '', name: '')) : null;
+    
     setState(() {
       _editEmployeeData = {
         'salary': employee.salary.toString(),
@@ -319,20 +432,6 @@ class _PayrollScreenState extends State<PayrollScreen> {
 
   String _formatDateParam(DateTime date) {
     return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
-  }
-
-  Future<void> _selectPayrollCustomDate() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _salaryCustomDate.isNotEmpty
-          ? DateTime.tryParse(_salaryCustomDate) ?? DateTime.now()
-          : DateTime.now(),
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2100),
-    );
-    if (picked != null) {
-      setState(() => _salaryCustomDate = picked.toIso8601String());
-    }
   }
 
   Future<void> _selectPayrollStartDate() async {
@@ -687,14 +786,14 @@ class _PayrollScreenState extends State<PayrollScreen> {
                           const SizedBox(height: 24),
                           InkWell(
                             borderRadius: BorderRadius.circular(12),
-                            onTap: _selectPayrollCustomDate,
+                            onTap: _selectPayrollCustomDateTime,
                             child: InputDecorator(
                               decoration: const InputDecoration(
-                                labelText: 'Custom Payroll Date',
+                                labelText: 'Custom Payroll Date & Time',
                                 border: OutlineInputBorder(),
                                 suffixIcon: Icon(Icons.calendar_today_outlined),
                               ),
-                              child: Text(_salaryCustomDate.isEmpty ? 'Select date' : _salaryCustomDate),
+                              child: Text(_salaryCustomDate.isEmpty ? 'Select date & time' : _salaryCustomDate),
                             ),
                           ),
                         ],
@@ -1071,6 +1170,10 @@ class _PayrollScreenState extends State<PayrollScreen> {
   }
 
   Widget _buildEditEmployeeModal() {
+    final filteredBanks = _banks
+        .where((bank) => bank.name.toLowerCase().contains(_bankSearchQuery.toLowerCase()))
+        .toList();
+
     return Stack(
       children: [
         ModalBarrier(
@@ -1147,13 +1250,34 @@ class _PayrollScreenState extends State<PayrollScreen> {
                           }).toList(),
                         ),
                         const SizedBox(height: 24),
-                        TextField(
-                          decoration: const InputDecoration(
-                            labelText: 'Bank Code',
-                            border: OutlineInputBorder(),
+                        const Text('Select Bank', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                        const SizedBox(height: 12),
+                        InkWell(
+                          onTap: () {
+                            setState(() {
+                              _bankSearchQuery = '';
+                              _bankSearchController.clear();
+                              _showBankDropdown = true;
+                            });
+                          },
+                          child: InputDecorator(
+                            decoration: InputDecoration(
+                              border: const OutlineInputBorder(),
+                              suffixIcon: _banksLoading 
+                                ? const SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.arrow_drop_down_outlined),
+                            ),
+                            child: Text(
+                              _selectedBank?.name.isNotEmpty == true ? _selectedBank!.name : 'Select Bank',
+                              style: TextStyle(
+                                color: _selectedBank?.name.isNotEmpty == true ? AppTheme.colors.text : Colors.grey,
+                              ),
+                            ),
                           ),
-                          onChanged: (val) => setState(() => _editEmployeeData['bank_code'] = val),
-                          controller: _editBankCodeController,
                         ),
                         const SizedBox(height: 24),
                         TextField(
@@ -1162,26 +1286,55 @@ class _PayrollScreenState extends State<PayrollScreen> {
                             border: OutlineInputBorder(),
                           ),
                           keyboardType: TextInputType.number,
-                          onChanged: (val) => setState(() => _editEmployeeData['bank_account_number'] = val),
+                          onChanged: (val) {
+                            setState(() => _editEmployeeData['bank_account_number'] = val);
+                          },
+                          onSubmitted: (_) => _verifyAccount(),
                           controller: _editBankAccountController,
                         ),
-                        const SizedBox(height: 24),
-                        TextField(
-                          decoration: const InputDecoration(
-                            labelText: 'Account Name',
-                            border: OutlineInputBorder(),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: _isVerifyingAccount ? null : _verifyAccount,
+                            icon: _isVerifyingAccount
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.verified_user_outlined),
+                            label: const Text('Verify Account'),
                           ),
-                          onChanged: (val) => setState(() => _editEmployeeData['account_name'] = val),
-                          controller: _editAccountNameController,
                         ),
                         const SizedBox(height: 24),
-                        TextField(
-                          decoration: const InputDecoration(
-                            labelText: 'Contract Start Date (YYYY-MM-DD)',
-                            border: OutlineInputBorder(),
+                        AbsorbPointer(
+                          absorbing: true,
+                          child: TextField(
+                            decoration: const InputDecoration(
+                              labelText: 'Account Name',
+                              border: OutlineInputBorder(),
+                            ),
+                            controller: _editAccountNameController,
+                            enabled: false,
                           ),
-                          onChanged: (val) => setState(() => _editEmployeeData['contract_start_date'] = val),
-                          controller: _editContractStartController,
+                        ),
+                        const SizedBox(height: 24),
+                        InkWell(
+                          onTap: _selectContractStartDate,
+                          child: InputDecorator(
+                            decoration: const InputDecoration(
+                              labelText: 'Contract Start Date',
+                              border: OutlineInputBorder(),
+                              suffixIcon: Icon(Icons.calendar_today_outlined),
+                            ),
+                            child: Text(
+                              _editContractStartController.text.isEmpty ? 'Select Date' : _editContractStartController.text,
+                              style: TextStyle(
+                                color: _editContractStartController.text.isEmpty ? Colors.grey : AppTheme.colors.text,
+                              ),
+                            ),
+                          ),
                         ),
                         const SizedBox(height: 24),
                         SizedBox(
@@ -1199,6 +1352,71 @@ class _PayrollScreenState extends State<PayrollScreen> {
             ),
           ),
         ),
+        if (_showBankDropdown)
+          Stack(
+            children: [
+              ModalBarrier(
+                color: Colors.black.withValues(alpha: 0.3),
+                onDismiss: () => setState(() => _showBankDropdown = false),
+              ),
+              Center(
+                child: Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 24),
+                  constraints: const BoxConstraints(maxHeight: 400),
+                  decoration: BoxDecoration(
+                    color: AppTheme.colors.background,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Colors.black26,
+                        blurRadius: 10,
+                        offset: Offset(0, 5),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: TextField(
+                          controller: _bankSearchController,
+                          decoration: const InputDecoration(
+                            hintText: 'Search banks...',
+                            prefixIcon: Icon(Icons.search),
+                            border: OutlineInputBorder(),
+                          ),
+                          onChanged: (value) {
+                            setState(() => _bankSearchQuery = value);
+                          },
+                        ),
+                      ),
+                      Expanded(
+                          child: ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: filteredBanks.length,
+                            itemBuilder: (context, index) {
+                              final bank = filteredBanks[index];
+                              return ListTile(
+                                title: Text(bank.name),
+                                onTap: () {
+                                  setState(() {
+                                    _selectedBank = bank;
+                                    _editEmployeeData['bank_code'] = bank.code;
+                                    _editBankCodeController.text = bank.code;
+                                    _showBankDropdown = false;
+                                  });
+                                },
+                              );
+                            },
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
       ],
     );
   }
