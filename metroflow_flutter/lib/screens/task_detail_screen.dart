@@ -47,8 +47,9 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
       final response = await api.getComments(_task!.id);
       if (response.statusCode == 200) {
         final data = response.data;
+        final commentsList = data is List ? data : (data['comments'] ?? data['data'] ?? []);
         setState(() {
-          _comments = data['data'] ?? [];
+          _comments = commentsList;
         });
       }
     } catch (e) {

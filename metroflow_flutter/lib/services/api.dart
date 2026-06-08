@@ -191,7 +191,7 @@ class ApiService {
   }
 
   Future<Response> toggleReaction(String id, String type) async {
-    return await _dio.put('/comments/$id/reaction', data: {'type': type});
+    return await _dio.put('/comments/$id/reaction', data: {'type': type}, options: Options(extra: {'suppressToast': true}));
   }
 
   // Assignments API

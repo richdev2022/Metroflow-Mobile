@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../providers/kyc_provider.dart';
+import '../providers/auth_provider.dart';
+import '../services/api.dart';
 import '../theme/app_theme.dart';
 
 class KycPromptScreen extends ConsumerStatefulWidget {
@@ -87,29 +89,77 @@ class _KycPromptScreenState extends ConsumerState<KycPromptScreen> {
                   onTap: () => context.go('/kyc-initiate?type=nin'),
                 ),
                 const SizedBox(height: 40),
-                if (bvnVerified && ninVerified)
-                  DecoratedBox(
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(16),
-                      gradient: LinearGradient(
-                        colors: [colors.primary, AppColors.primaryLight],
-                      ),
-                    ),
-                    child: ElevatedButton(
-                      onPressed: () => context.go('/main'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.transparent,
-                        shadowColor: Colors.transparent,
-                        padding: const EdgeInsets.symmetric(vertical: 18),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                      ),
-                      child: const Text(
-                        'Continue to Home',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
+              if (bvnVerified && ninVerified)
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    gradient: LinearGradient(
+                      colors: [colors.primary, AppColors.primaryLight],
                     ),
                   ),
-                const SizedBox(height: 20),
+                  child: ElevatedButton(
+                    onPressed: () => context.go('/main'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.transparent,
+                      shadowColor: Colors.transparent,
+                      padding: const EdgeInsets.symmetric(vertical: 18),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    ),
+                    child: const Text(
+                      'Continue to Home',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+              if (!bvnVerified || !ninVerified)
+                Column(
+                  children: [
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: () async {
+                          await ref.read(authProvider.notifier).skipKyc();
+                          if (!mounted) return;
+                          context.go('/main');
+                        },
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 18),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            side: BorderSide(color: colors.primary),
+                          ),
+                          backgroundColor: Colors.transparent,
+                          foregroundColor: colors.primary,
+                        ),
+                        child: const Text(
+                          'Skip to Dashboard',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: TextButton(
+                        onPressed: () {
+                          logoutHandler?.call();
+                        },
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 18),
+                        ),
+                        child: Text(
+                          'Logout',
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: AppColors.error,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              const SizedBox(height: 20),
               ],
             ),
           ),

@@ -14,6 +14,7 @@ class AuthState {
   final String? userName;
   final bool biometricsEnabled;
   final bool hasSeenOnboarding;
+  final bool skippedKyc;
 
   AuthState({
     required this.isAuthenticated,
@@ -24,6 +25,7 @@ class AuthState {
     this.userName,
     required this.biometricsEnabled,
     required this.hasSeenOnboarding,
+    this.skippedKyc = false,
   });
 
   AuthState copyWith({
@@ -35,6 +37,7 @@ class AuthState {
     String? userName,
     bool? biometricsEnabled,
     bool? hasSeenOnboarding,
+    bool? skippedKyc,
   }) {
     return AuthState(
       isAuthenticated: isAuthenticated ?? this.isAuthenticated,
@@ -45,6 +48,7 @@ class AuthState {
       userName: userName ?? this.userName,
       biometricsEnabled: biometricsEnabled ?? this.biometricsEnabled,
       hasSeenOnboarding: hasSeenOnboarding ?? this.hasSeenOnboarding,
+      skippedKyc: skippedKyc ?? this.skippedKyc,
     );
   }
 }
@@ -359,6 +363,14 @@ class AuthNotifier extends Notifier<AuthState> {
       resetIdleTimer();
     } catch (e) {
       debugPrint('Failed to complete onboarding: $e');
+    }
+  }
+
+  Future<void> skipKyc() async {
+    try {
+      state = state.copyWith(skippedKyc: true);
+    } catch (e) {
+      debugPrint('Failed to skip KYC: $e');
     }
   }
 
