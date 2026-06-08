@@ -224,6 +224,7 @@ class _BulkCreateTasksScreenState extends ConsumerState<BulkCreateTasksScreen> {
         return {
           ...task.toJson(),
           'epicId': _selectedEpic?.id,
+          'epic': _selectedEpic?.name,
         };
       }).toList();
       await api.createBulkTasks(tasksPayload);

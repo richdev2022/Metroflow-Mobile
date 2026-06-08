@@ -1,8 +1,6 @@
-import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:metroflow_flutter/utils/logger.dart';
 import 'package:metroflow_flutter/utils/app_toast.dart';
 
 const String _apiBaseUrl = 'https://metroflow-backend.netlify.app/api';
@@ -49,35 +47,31 @@ class ApiService {
         options.headers['Content-Type'] = options.data is FormData
             ? Headers.multipartFormDataContentType
             : Headers.jsonContentType;
-        Logger.log('🔍 API Request: ${options.method} ${options.uri}');
-        Logger.log('🔍 Request Headers: ${options.headers}');
-        if (options.data != null) {
-          Logger.log('🔍 Request Body: ${jsonEncode(options.data)}');
-        }
         return handler.next(options);
       },
       onResponse: (response, handler) {
-        Logger.log('📡 API Response: ${response.requestOptions.method} ${response.requestOptions.uri}');
-        Logger.log('📡 Status Code: ${response.statusCode}');
-        Logger.log('📡 Response Body: ${response.data}');
+        final data = response.data;
+        final isSuccess = data is Map && data['success'] == true;
+        final isFailure = data is Map && data['success'] == false;
         
-        // Show success toast for non-GET requests if message exists
-        final successMessage = _extractResponseMessage(response.data);
-        if (response.requestOptions.method != 'GET' &&
-            successMessage != null &&
+        // Show success toast for non-GET requests if success and message exists
+        if (isSuccess && response.requestOptions.method != 'GET' &&
             response.requestOptions.extra['suppressToast'] != true) {
-          AppToast.show(successMessage, type: AppToastType.success);
+          final successMessage = _extractResponseMessage(data);
+          if (successMessage != null) {
+            AppToast.show(successMessage, type: AppToastType.success);
+          }
+        }
+        
+        // Show error toast if success is false
+        if (isFailure && response.requestOptions.extra['suppressToast'] != true) {
+          final errorMessage = _extractResponseMessage(data) ?? 'Something went wrong';
+          AppToast.show(errorMessage, type: AppToastType.error);
         }
         
         return handler.next(response);
       },
       onError: (error, handler) async {
-        Logger.log('❌ API Error: ${error.message}');
-        if (error.response != null) {
-          Logger.log('❌ Error Status Code: ${error.response?.statusCode}');
-          Logger.log('❌ Error Response: ${error.response?.data}');
-        }
-
         final message = _extractResponseMessage(error.response?.data) ?? 'Something went wrong';
         final errorData = error.response?.data;
         final isPlanUpgradeError = errorData is Map && 
@@ -244,7 +238,7 @@ class ApiService {
   }
 
   Future<Response> updateMemberRole(String id, String role) async {
-    return await _dio.put('/team/$id/role', data: {'role': role});
+    return await _dio.patch('/team/$id/role', data: {'role': role});
   }
 
   Future<Response> deleteMember(String id) async {

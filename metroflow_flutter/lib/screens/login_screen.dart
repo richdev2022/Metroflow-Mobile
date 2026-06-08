@@ -121,8 +121,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     });
 
     try {
-      final success = await ref.read(authProvider.notifier).enableBiometrics();
-      if (success) {
+      final result = await ref.read(authProvider.notifier).enableBiometricsWithResult();
+      if (result.success) {
         await BiometricService.markPromptAsShown();
         if (mounted) {
           setState(() {
@@ -134,7 +134,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         }
       } else {
         if (mounted) {
-          await _showAlert('Error', 'Failed to enable biometric login');
+          await _showAlert('Error', result.error ?? 'Failed to enable biometric login');
         }
       }
     } catch (e) {

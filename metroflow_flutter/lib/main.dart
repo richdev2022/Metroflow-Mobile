@@ -66,6 +66,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   final _storage = StorageService();
   bool _shouldPromptBiometricsOnResume = false;
   bool _isWebViewOpen = false; // New flag to track webview state
+  DateTime? _appPausedAt; // Track when app went to background
 
   // Public method to set webview state
   void setWebViewOpen(bool isOpen) {
@@ -327,6 +328,8 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
     // Set logout handler
     setLogoutHandler(() {
+      final authNotifier = ref.read(authProvider.notifier);
+      authNotifier.logout();
       _router.go('/login');
     });
   }
@@ -341,59 +344,84 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) async {
     final authNotifier = ref.read(authProvider.notifier);
     final authState = ref.read(authProvider);
+    bool wasWebViewOpen = _isWebViewOpen; // Store before modifying
     
     if (_appState == AppLifecycleState.resumed && 
         (state == AppLifecycleState.inactive || state == AppLifecycleState.paused)) {
-      // App is going to background - store current route and logout ONLY IF NOT IN WEBVIEW
+      // App is going to background - store timestamp and last route
       if (_currentRoute != null && _currentRoute!.isNotEmpty) {
         await _storage.setLastRoute(_currentRoute!);
       }
-      // Skip auto-logout if webview is open!
-      if (!_isWebViewOpen) {
-        await authNotifier.logout();
-        _shouldPromptBiometricsOnResume = true;
-      }
+      _appPausedAt = DateTime.now(); // Save when app was paused
     }
     
     if ((_appState == AppLifecycleState.inactive || _appState == AppLifecycleState.paused) && 
         state == AppLifecycleState.resumed) {
       // App is coming back to foreground
-      if (_shouldPromptBiometricsOnResume && authState.biometricsEnabled && !authState.isAuthenticated) {
-        // Prompt biometrics
-        final hasBiometrics = await BiometricService.isAvailable();
-        if (hasBiometrics && mounted) {
-          // Try to auto-prompt biometrics login
-          try {
-            final success = await authNotifier.loginWithBiometrics();
-            if (success) {
-              // Navigate to last route or main
-              final lastRoute = await _storage.getLastRoute();
-              if (lastRoute != null && lastRoute.isNotEmpty && lastRoute != '/login') {
-                await _storage.removeLastRoute();
-                if (mounted) _router.go(lastRoute);
-              } else {
-                // Check KYC and navigate
-                final api = ApiService();
-                final response = await api.getKycStatus();
-                final data = response.data as Map<String, dynamic>;
-                final user = data['user'] as Map<String, dynamic>?;
-                final bvnVerified = user?['bvnStatus'] == 'verified' || user?['bvn_status'] == 'verified' || data['bvn_verified'] == true;
-                final ninVerified = user?['ninStatus'] == 'verified' || user?['nin_status'] == 'verified' || data['nin_verified'] == true;
-                final isTier1Verified = bvnVerified || ninVerified;
-                if (!isTier1Verified) {
-                  if (mounted) _router.go('/kyc-prompt');
-                } else {
-                  if (mounted) _router.go('/main');
-                }
-              }
-            }
-          } catch (e) {
-            debugPrint('Auto biometric login failed: $e');
+      if (wasWebViewOpen) {
+        // If we were in a payment webview, refresh app data when returning
+        setState(() {
+          _isWebViewOpen = false;
+        });
+        // Refresh by re-checking auth and resetting state
+        if (authState.isAuthenticated) {
+          // Refresh the auth provider's data or trigger a refresh of all screens
+          // Also navigate back to main to ensure fresh data
+          if (mounted) {
+            _router.go('/main');
           }
         }
-        _shouldPromptBiometricsOnResume = false;
-      } else if (authState.isAuthenticated) {
-        authNotifier.resetIdleTimer();
+      } else {
+        // Check if app was paused for more than 5 minutes
+        if (_appPausedAt != null && DateTime.now().difference(_appPausedAt!) > const Duration(minutes: 5)) {
+          // More than 5 minutes - logout and prompt for biometrics
+          if (authState.isAuthenticated && !_isWebViewOpen) {
+            await authNotifier.logout();
+            _shouldPromptBiometricsOnResume = true;
+          }
+        } else {
+          // Less than 5 minutes - reset idle timer and stay logged in
+          if (authState.isAuthenticated) {
+            authNotifier.resetIdleTimer();
+          }
+        }
+        
+        // Prompt biometrics if needed
+        if (_shouldPromptBiometricsOnResume && authState.biometricsEnabled && !authState.isAuthenticated) {
+          // Prompt biometrics
+          final hasBiometrics = await BiometricService.isAvailable();
+          if (hasBiometrics && mounted) {
+            // Try to auto-prompt biometrics login
+            try {
+              final success = await authNotifier.loginWithBiometrics();
+              if (success) {
+                // Navigate to last route or main
+                final lastRoute = await _storage.getLastRoute();
+                if (lastRoute != null && lastRoute.isNotEmpty && lastRoute != '/login') {
+                  await _storage.removeLastRoute();
+                  if (mounted) _router.go(lastRoute);
+                } else {
+                  // Check KYC and navigate
+                  final api = ApiService();
+                  final response = await api.getKycStatus();
+                  final data = response.data as Map<String, dynamic>;
+                  final user = data['user'] as Map<String, dynamic>?;
+                  final bvnVerified = user?['bvnStatus'] == 'verified' || user?['bvn_status'] == 'verified' || data['bvn_verified'] == true;
+                  final ninVerified = user?['ninStatus'] == 'verified' || user?['nin_status'] == 'verified' || data['nin_verified'] == true;
+                  final isTier1Verified = bvnVerified || ninVerified;
+                  if (!isTier1Verified) {
+                    if (mounted) _router.go('/kyc-prompt');
+                  } else {
+                    if (mounted) _router.go('/main');
+                  }
+                }
+              }
+            } catch (e) {
+              debugPrint('Auto biometric login failed: $e');
+            }
+          }
+          _shouldPromptBiometricsOnResume = false;
+        }
       }
     }
     

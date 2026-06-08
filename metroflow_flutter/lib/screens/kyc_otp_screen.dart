@@ -90,7 +90,7 @@ class _KycOtpScreenState extends ConsumerState<KycOtpScreen> {
       AppToast.show('OTP resent successfully', type: AppToastType.success);
       _startResendCountdown();
     } catch (e) {
-      AppToast.show(e.toString().replaceAll('Exception: ', ''));
+      debugPrint('Failed: $e');
     } finally {
       if (mounted) setState(() => _isResending = false);
     }
@@ -119,7 +119,7 @@ class _KycOtpScreenState extends ConsumerState<KycOtpScreen> {
         }
       }
     } catch (e) {
-      AppToast.show(e.toString().replaceAll('Exception: ', ''));
+      debugPrint('Failed: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

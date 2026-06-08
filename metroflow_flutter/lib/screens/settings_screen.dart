@@ -171,7 +171,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       if (mounted) Navigator.of(context).pop();
       await _fetchData();
     } catch (e) {
-      _showError(e);
+      debugPrint('Failed: $e');
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -193,7 +193,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         _showOtpModal();
       }
     } catch (e) {
-      _showError(e);
+      debugPrint('Failed: $e');
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -214,7 +214,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       if (mounted) Navigator.of(context).pop();
       await _fetchData();
     } catch (e) {
-      _showError(e);
+      debugPrint('Failed: $e');
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -225,7 +225,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     try {
       await ApiService().updateOtpPreference(preference);
     } catch (e) {
-      _showError(e);
+      debugPrint('Failed to update OTP preference: $e');
     }
   }
 

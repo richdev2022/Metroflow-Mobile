@@ -302,6 +302,7 @@ class AuthNotifier extends Notifier<AuthState> {
   Future<void> disableBiometrics() async {
     try {
       await BiometricService.disableBiometrics();
+      await BiometricService.resetPromptStatus();
       await _storageService.clearBiometricsCredentials();
       state = state.copyWith(biometricsEnabled: false);
       resetIdleTimer();

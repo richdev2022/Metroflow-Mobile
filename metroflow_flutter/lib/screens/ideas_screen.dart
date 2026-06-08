@@ -343,7 +343,7 @@ class _CreateIdeaModal extends StatelessWidget {
   }
 }
 
-class _DocModal extends StatelessWidget {
+class _DocModal extends StatefulWidget {
   final Idea idea;
   final List<dynamic> docs;
   final bool isFetchingDocs;
@@ -359,14 +359,22 @@ class _DocModal extends StatelessWidget {
   });
 
   @override
+  State<_DocModal> createState() => _DocModalState();
+}
+
+class _DocModalState extends State<_DocModal> {
+  final Map<int, bool> _expandedDocs = {};
+  static const int _maxLines = 8;
+
+  @override
   Widget build(BuildContext context) {
     return Container(
       constraints: BoxConstraints(
         maxHeight: MediaQuery.of(context).size.height * 0.85,
       ),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+      decoration: BoxDecoration(
+        color: AppTheme.colors.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -384,7 +392,7 @@ class _DocModal extends StatelessWidget {
                         style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
                       ),
                       Text(
-                        idea.title,
+                        widget.idea.title,
                         style: TextStyle(fontSize: 14, color: AppTheme.colors.textSecondary),
                       ),
                     ],
@@ -399,22 +407,23 @@ class _DocModal extends StatelessWidget {
           ),
           const Divider(height: 1),
           Expanded(
-            child: isFetchingDocs
+            child: widget.isFetchingDocs
                 ? const Center(child: Padding(
                     padding: EdgeInsets.all(40.0),
                     child: CircularProgressIndicator(),
                   ))
-                : docs.isNotEmpty
+                : widget.docs.isNotEmpty
                     ? ListView.builder(
                         padding: const EdgeInsets.symmetric(horizontal: 24),
-                        itemCount: docs.length,
+                        itemCount: widget.docs.length,
                         itemBuilder: (context, index) {
-                          final doc = docs[index];
+                          final doc = widget.docs[index];
+                          final isExpanded = _expandedDocs[index] ?? false;
                           return Container(
                             margin: const EdgeInsets.only(bottom: 20),
                             padding: const EdgeInsets.all(20),
                             decoration: BoxDecoration(
-                              color: AppTheme.colors.surface,
+                              color: AppTheme.colors.background,
                               borderRadius: BorderRadius.circular(20),
                               border: Border.all(color: AppTheme.colors.border),
                             ),
@@ -434,22 +443,25 @@ class _DocModal extends StatelessWidget {
                                     color: AppTheme.colors.textSecondary,
                                     height: 1.6,
                                   ),
+                                  maxLines: isExpanded ? null : _maxLines,
+                                  overflow: isExpanded ? TextOverflow.visible : TextOverflow.ellipsis,
                                 ),
-                                const SizedBox(height: 16),
-                                const Divider(height: 1),
-                                const SizedBox(height: 12),
                                 Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                   children: [
+                                    TextButton(
+                                      onPressed: () => setState(() => _expandedDocs[index] = !isExpanded),
+                                      child: Text(isExpanded ? 'Read Less' : 'Read More', style: const TextStyle(color: AppColors.primary)),
+                                    ),
+                                    const Spacer(),
                                     Text(
-                                      'Generated on ${doc['createdAt'] != null ? DateTime.tryParse(doc['createdAt'])?.toLocal().toString().split(' ')[0] ?? '' : ''}',
+                                      doc['createdAt'] != null ? DateTime.tryParse(doc['createdAt'])?.toLocal().toString().split(' ')[0] ?? '' : '',
                                       style: const TextStyle(fontSize: 12, color: Colors.grey),
                                     ),
                                     IconButton(
                                       onPressed: () => SharePlus.instance.share(
                                         ShareParams(
-                                          title: doc['title'] ?? idea.title,
-                                          text: '${doc['title'] ?? idea.title}\n\n${doc['content'] ?? ''}',
+                                          title: doc['title'] ?? widget.idea.title,
+                                          text: '${doc['title'] ?? widget.idea.title}\n\n${doc['content'] ?? ''}',
                                         ),
                                       ),
                                       icon: const Icon(Icons.share_outlined, color: AppColors.primary),
@@ -482,7 +494,7 @@ class _DocModal extends StatelessWidget {
             child: SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: isGeneratingDoc ? null : onGenerate,
+                onPressed: widget.isGeneratingDoc ? null : widget.onGenerate,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.primary,
                   padding: const EdgeInsets.symmetric(vertical: 16),
@@ -490,10 +502,10 @@ class _DocModal extends StatelessWidget {
                     borderRadius: BorderRadius.circular(16),
                   ),
                 ),
-                child: isGeneratingDoc
+                child: widget.isGeneratingDoc
                     ? const CircularProgressIndicator(color: Colors.white)
                     : Text(
-                        docs.isNotEmpty ? 'Regenerate Documentation' : 'Generate Documentation',
+                        widget.docs.isNotEmpty ? 'Regenerate Documentation' : 'Generate Documentation',
                         style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                       ),
               ),

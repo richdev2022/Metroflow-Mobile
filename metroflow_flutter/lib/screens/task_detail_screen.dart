@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:fluttertoast/fluttertoast.dart';
+
 import '../services/api.dart';
 import '../models/task.dart';
 import '../models/team_member.dart';
 import '../theme/app_theme.dart';
+import '../utils/app_toast.dart';
 
 class TaskDetailScreen extends ConsumerStatefulWidget {
   const TaskDetailScreen({super.key});
@@ -88,10 +89,7 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
       setState(() => _commentController.clear());
       await _fetchTaskDetails();
     } catch (e) {
-      Fluttertoast.showToast(
-        msg: 'Failed to add comment',
-        backgroundColor: AppColors.error,
-      );
+      debugPrint('Failed to add comment: $e');
     } finally {
       setState(() => _isSubmittingComment = false);
     }
@@ -120,10 +118,7 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
         _task = _copyTask(task, assignedTo: assignedTo);
       });
     } catch (e) {
-      Fluttertoast.showToast(
-        msg: 'Failed to update assignment',
-        backgroundColor: AppColors.error,
-      );
+      debugPrint('Failed to update assignment: $e');
     }
   }
 
@@ -132,10 +127,7 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
       await ApiService().toggleReaction(commentId, type);
       await _fetchTaskDetails();
     } catch (e) {
-      Fluttertoast.showToast(
-        msg: 'Failed to update reaction',
-        backgroundColor: AppColors.error,
-      );
+      debugPrint('Failed to update reaction: $e');
     }
   }
 
@@ -148,10 +140,7 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
         _task = _copyTask(_task!, status: status);
       });
     } catch (e) {
-      Fluttertoast.showToast(
-        msg: 'Failed to update status',
-        backgroundColor: AppColors.error,
-      );
+      debugPrint('Failed to update status: $e');
     }
   }
 
@@ -253,6 +242,38 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
     );
   }
 
+  Future<void> _handleDeleteTask() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Task'),
+        content: const Text('Are you sure you want to delete this task?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      final api = ApiService();
+      await api.deleteTask(_task!.id);
+      if (mounted) {
+        AppToast.show('Task deleted successfully', type: AppToastType.success);
+        context.go('/main/backlog');
+      }
+    } catch (e) {
+      debugPrint('Failed to delete task: $e');
+    }
+  }
+
   Widget _buildHeader() {
     return Row(
       children: [
@@ -263,6 +284,10 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
         IconButton(
           onPressed: () => context.go('/main/create-task', extra: _task),
           icon: Icon(Icons.edit_outlined, color: AppTheme.colors.textSecondary),
+        ),
+        IconButton(
+          onPressed: _handleDeleteTask,
+          icon: const Icon(Icons.delete_outline, color: AppColors.error),
         ),
       ],
     );
@@ -302,6 +327,16 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
     );
   }
 
+  String _formatDate(String? dateString) {
+    if (dateString == null || dateString.isEmpty) return '';
+    try {
+      final date = DateTime.parse(dateString).toLocal();
+      return '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
+    } catch (e) {
+      return dateString;
+    }
+  }
+
   Widget _buildMetaRow(Task task) {
     return Container(
       decoration: BoxDecoration(
@@ -311,24 +346,43 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
       ),
       child: Column(
         children: [
-          if (task.endDate.isNotEmpty)
+          if (task.startDate.isNotEmpty)
             ListTile(
-              leading: const Icon(Icons.calendar_today_outlined),
-              title: const Text('Due Date', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              leading: const Icon(Icons.date_range_outlined),
+              title: const Text('Start Date', style: TextStyle(fontSize: 12, color: Colors.grey)),
               subtitle: Text(
-                DateTime.tryParse(task.endDate)?.toLocal().toString().split(' ')[0] ?? task.endDate,
+                _formatDate(task.startDate),
                 style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
               ),
             ),
-          if (task.dueDate != null && task.dueDate!.isNotEmpty) ...[
+          if (task.endDate.isNotEmpty) ...[
             const Divider(height: 1),
             ListTile(
               leading: const Icon(Icons.calendar_today_outlined),
-              title: const Text('Due Date', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              title: const Text('End Date', style: TextStyle(fontSize: 12, color: Colors.grey)),
               subtitle: Text(
-                task.dueDate!,
+                _formatDate(task.endDate),
                 style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
               ),
+            ),
+          ],
+          if (task.dueDate != null && task.dueDate!.isNotEmpty) ...[
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.access_time_outlined),
+              title: const Text('Due Date', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              subtitle: Text(
+                _formatDate(task.dueDate),
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+          if (task.sprint != null) ...[
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.view_list_outlined),
+              title: const Text('Sprint', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              subtitle: Text(task.sprint!, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
             ),
           ],
           if (task.epic != null) ...[
@@ -337,6 +391,17 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
               leading: const Icon(Icons.folder_outlined),
               title: const Text('Epic', style: TextStyle(fontSize: 12, color: Colors.grey)),
               subtitle: Text(task.epic!, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+            ),
+          ],
+          if (task.createdAt.isNotEmpty) ...[
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.info_outline),
+              title: const Text('Created At', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              subtitle: Text(
+                _formatDate(task.createdAt),
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              ),
             ),
           ],
         ],

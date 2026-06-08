@@ -165,7 +165,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                               submittedNumber = number;
                               if (dialogContext.mounted) Navigator.of(dialogContext).pop();
                             } catch (e) {
-                              AppToast.show(e.toString().replaceAll('Exception: ', ''));
+                              debugPrint('Failed to initiate KYC: $e');
                             } finally {
                               if (dialogContext.mounted) setDialogState(() => isSubmitting = false);
                             }
@@ -383,7 +383,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         currentIndex: _selectedIndex,
         onTap: (index) => _onItemTapped(index),
         backgroundColor: colors.surface,
-        selectedItemColor: colors.text,
+        selectedItemColor: colors.primary,
         unselectedItemColor: colors.textSecondary,
         selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600),
         items: [

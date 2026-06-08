@@ -177,199 +177,21 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       });
 
     return SafeArea(
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(24),
-              margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-              decoration: BoxDecoration(
-                color: colors.surface,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: colors.border),
-                boxShadow: [
-                  BoxShadow(
-                    color: colors.text.withValues(alpha: 0.05),
-                    blurRadius: 16,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Filters',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: colors.text),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Team Member',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: colors.textSecondary),
-                  ),
-                  const SizedBox(height: 8),
-                  _SearchableDropdown(
-                    items: [
-                      const DropdownMenuItem(
-                        value: 'all',
-                        child: Text('All'),
-                      ),
-                      ..._teamMembers.map((member) {
-                        return DropdownMenuItem(
-                          value: member.id,
-                          child: Text(member.name),
-                        );
-                      }),
-                    ],
-                    value: _selectedMember,
-                    onChanged: (value) {
-                      setState(() => _selectedMember = value.toString());
-                      _fetchData();
-                    },
-                    colors: colors,
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Epic',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: colors.textSecondary),
-                  ),
-                  const SizedBox(height: 8),
-                  _SearchableDropdown(
-                    items: [
-                      const DropdownMenuItem(
-                        value: 'all',
-                        child: Text('All Epics'),
-                      ),
-                      ..._epics.map((epic) {
-                        return DropdownMenuItem(
-                          value: epic['id'].toString(),
-                          child: Text(epic['name'] as String),
-                        );
-                      }),
-                    ],
-                    value: _selectedEpic,
-                    onChanged: (value) {
-                      setState(() => _selectedEpic = value.toString());
-                      _fetchData();
-                    },
-                    colors: colors,
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Date Range',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: colors.textSecondary),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _DateButton(
-                          date: _startDate,
-                          placeholder: 'Start Date',
-                          onTap: _selectStartDate,
-                          colors: colors,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text('to', style: TextStyle(color: colors.textSecondary)),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _DateButton(
-                          date: _endDate,
-                          placeholder: 'End Date',
-                          onTap: _selectEndDate,
-                          colors: colors,
-                        ),
-                      ),
-                      if (_startDate.isNotEmpty || _endDate.isNotEmpty) ...[
-                        const SizedBox(width: 8),
-                        IconButton(
-                          icon: Icon(Icons.close, color: colors.textSecondary, size: 20),
-                          onPressed: _clearFilters,
-                        ),
-                      ],
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  _ActionCard(
-                    icon: Icons.archive_outlined,
-                    label: 'Backlog',
-                    onTap: () => context.go('/main/backlog'),
-                    colors: colors,
-                  ),
-                  _ActionCard(
-                    icon: Icons.lightbulb_outlined,
-                    label: 'Ideas',
-                    onTap: () => context.go('/main/ideas'),
-                    colors: colors,
-                  ),
-                  _ActionCard(
-                    icon: Icons.receipt_long_outlined,
-                    label: 'Logs',
-                    onTap: () => context.go('/main/activity-logs'),
-                    colors: colors,
-                  ),
-                  _ActionCard(
-                    icon: Icons.people_outlined,
-                    label: 'Team',
-                    onTap: () => context.go('/main/team'),
-                    colors: colors,
-                  ),
-                  _StatCard(
-                    icon: Icons.list_outlined,
-                    value: '$totalTasks',
-                    label: 'Total Tasks',
-                    iconBgColor: colors.primary.withValues(alpha: 0.2),
-                    iconColor: colors.primary,
-                    colors: colors,
-                  ),
-                  _StatCard(
-                    icon: Icons.check_circle_outlined,
-                    value: '$completedTasks',
-                    label: 'Completed',
-                    iconBgColor: colors.success.withValues(alpha: 0.2),
-                    iconColor: colors.success,
-                    colors: colors,
-                  ),
-                  _StatCard(
-                    icon: Icons.timer_outlined,
-                    value: '$inProgressTasks',
-                    label: 'In Progress',
-                    iconBgColor: colors.warning.withValues(alpha: 0.2),
-                    iconColor: colors.warning,
-                    colors: colors,
-                  ),
-                  _StatCard(
-                    icon: Icons.warning_amber_rounded,
-                    value: '${overdueTasks.length}',
-                    label: 'Overdue',
-                    iconBgColor: colors.error.withValues(alpha: 0.2),
-                    iconColor: colors.error,
-                    colors: colors,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Container(
+      child: RefreshIndicator(
+        onRefresh: () => _fetchData(false),
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: double.infinity,
                 padding: const EdgeInsets.all(24),
+                margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
                 decoration: BoxDecoration(
                   color: colors.surface,
-                  border: Border.all(color: colors.border),
                   borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: colors.border),
                   boxShadow: [
                     BoxShadow(
                       color: colors.text.withValues(alpha: 0.05),
@@ -382,101 +204,283 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Completion Rate',
+                      'Filters',
                       style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: colors.text),
                     ),
                     const SizedBox(height: 16),
+                    Text(
+                      'Team Member',
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: colors.textSecondary),
+                    ),
+                    const SizedBox(height: 8),
+                    _SearchableDropdown(
+                      items: [
+                        const DropdownMenuItem(
+                          value: 'all',
+                          child: Text('All'),
+                        ),
+                        ..._teamMembers.map((member) {
+                          return DropdownMenuItem(
+                            value: member.id,
+                            child: Text(member.name),
+                          );
+                        }),
+                      ],
+                      value: _selectedMember,
+                      onChanged: (value) {
+                        setState(() => _selectedMember = value.toString());
+                        _fetchData();
+                      },
+                      colors: colors,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Epic',
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: colors.textSecondary),
+                    ),
+                    const SizedBox(height: 8),
+                    _SearchableDropdown(
+                      items: [
+                        const DropdownMenuItem(
+                          value: 'all',
+                          child: Text('All Epics'),
+                        ),
+                        ..._epics.map((epic) {
+                          return DropdownMenuItem(
+                            value: epic['id'].toString(),
+                            child: Text(epic['name'] as String),
+                          );
+                        }),
+                      ],
+                      value: _selectedEpic,
+                      onChanged: (value) {
+                        setState(() => _selectedEpic = value.toString());
+                        _fetchData();
+                      },
+                      colors: colors,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Date Range',
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: colors.textSecondary),
+                    ),
+                    const SizedBox(height: 8),
                     Row(
                       children: [
                         Expanded(
-                          child: _GradientProgressBar(
-                            progress: totalTasks > 0 ? completionPercentage / 100 : 0,
+                          child: _DateButton(
+                            date: _startDate,
+                            placeholder: 'Start Date',
+                            onTap: _selectStartDate,
                             colors: colors,
                           ),
                         ),
-                        const SizedBox(width: 12),
-                        Text(
-                          '$completionPercentage%',
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: colors.primary),
+                        const SizedBox(width: 8),
+                        Text('to', style: TextStyle(color: colors.textSecondary)),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _DateButton(
+                            date: _endDate,
+                            placeholder: 'End Date',
+                            onTap: _selectEndDate,
+                            colors: colors,
+                          ),
                         ),
+                        if (_startDate.isNotEmpty || _endDate.isNotEmpty) ...[
+                          const SizedBox(width: 8),
+                          IconButton(
+                            icon: Icon(Icons.close, color: colors.textSecondary, size: 20),
+                            onPressed: _clearFilters,
+                          ),
+                        ],
                       ],
                     ),
                   ],
                 ),
               ),
-            ),
-            const SizedBox(height: 24),
-            Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (overdueTasks.isNotEmpty) ...[
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Overdue Tasks',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: colors.text),
-                      ),
-                      TextButton(
-                        onPressed: () => context.go('/main/backlog'),
-                        child: Text(
-                          'View All',
-                          style: TextStyle(
-                            color: colors.primary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  ...overdueTasks.take(3).map((task) {
-                    return _OverdueCard(task: task, colors: colors);
-                  }),
-                  const SizedBox(height: 24),
-                ],
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              const SizedBox(height: 24),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
                   children: [
-                    Text(
-                      'Top 3 Members',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: colors.text),
+                    _ActionCard(
+                      icon: Icons.archive_outlined,
+                      label: 'Backlog',
+                      onTap: () => context.go('/main/backlog'),
+                      colors: colors,
                     ),
-                    TextButton(
-                      onPressed: () => context.go('/main/ranking'),
-                      child: Text(
-                        'View Full Ranking',
-                        style: TextStyle(
-                          color: colors.primary,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
+                    _ActionCard(
+                      icon: Icons.lightbulb_outlined,
+                      label: 'Ideas',
+                      onTap: () => context.go('/main/ideas'),
+                      colors: colors,
+                    ),
+                    _ActionCard(
+                      icon: Icons.receipt_long_outlined,
+                      label: 'Logs',
+                      onTap: () => context.go('/main/activity-logs'),
+                      colors: colors,
+                    ),
+                    _ActionCard(
+                      icon: Icons.people_outlined,
+                      label: 'Team',
+                      onTap: () => context.go('/main/team'),
+                      colors: colors,
+                    ),
+                    _StatCard(
+                      icon: Icons.list_outlined,
+                      value: '$totalTasks',
+                      label: 'Total Tasks',
+                      iconBgColor: colors.primary.withValues(alpha: 0.2),
+                      iconColor: colors.primary,
+                      colors: colors,
+                    ),
+                    _StatCard(
+                      icon: Icons.check_circle_outlined,
+                      value: '$completedTasks',
+                      label: 'Completed',
+                      iconBgColor: colors.success.withValues(alpha: 0.2),
+                      iconColor: colors.success,
+                      colors: colors,
+                    ),
+                    _StatCard(
+                      icon: Icons.timer_outlined,
+                      value: '$inProgressTasks',
+                      label: 'In Progress',
+                      iconBgColor: colors.warning.withValues(alpha: 0.2),
+                      iconColor: colors.warning,
+                      colors: colors,
+                    ),
+                    _StatCard(
+                      icon: Icons.warning_amber_rounded,
+                      value: '${overdueTasks.length}',
+                      label: 'Overdue',
+                      iconBgColor: colors.error.withValues(alpha: 0.2),
+                      iconColor: colors.error,
+                      colors: colors,
                     ),
                   ],
                 ),
-                const SizedBox(height: 16),
-                ...List.generate(
-                  sortedMembers.take(3).length,
-                  (index) {
-                    final member = sortedMembers[index];
-                    final stats = memberStats[member.id]!;
-                    final rate = stats['total']! > 0 ? ((stats['completed']! / stats['total']!) * 100).round() : 0;
-                    return _TopMemberCard(
-                      rank: index + 1,
-                      member: member,
-                      completionRate: rate,
-                      completed: stats['completed']!,
-                      total: stats['total']!,
-                      colors: colors,
-                    );
-                  },
+              ),
+              const SizedBox(height: 24),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Container(
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: colors.surface,
+                    border: Border.all(color: colors.border),
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: colors.text.withValues(alpha: 0.05),
+                        blurRadius: 16,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Completion Rate',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: colors.text),
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _GradientProgressBar(
+                              progress: totalTasks > 0 ? completionPercentage / 100 : 0,
+                              colors: colors,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            '$completionPercentage%',
+                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: colors.primary),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(height: 24),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (overdueTasks.isNotEmpty) ...[
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'Overdue Tasks',
+                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: colors.text),
+                          ),
+                          TextButton(
+                            onPressed: () => context.go('/main/backlog'),
+                            child: Text(
+                              'View All',
+                              style: TextStyle(
+                                color: colors.primary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      ...overdueTasks.take(3).map((task) {
+                        return _OverdueCard(task: task, colors: colors);
+                      }),
+                      const SizedBox(height: 24),
+                    ],
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Top 3 Members',
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: colors.text),
+                        ),
+                        TextButton(
+                          onPressed: () => context.go('/main/ranking'),
+                          child: Text(
+                            'View Full Ranking',
+                            style: TextStyle(
+                              color: colors.primary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    ...List.generate(
+                      sortedMembers.take(3).length,
+                      (index) {
+                        final member = sortedMembers[index];
+                        final stats = memberStats[member.id]!;
+                        final rate = stats['total']! > 0 ? ((stats['completed']! / stats['total']!) * 100).round() : 0;
+                        return _TopMemberCard(
+                          rank: index + 1,
+                          member: member,
+                          completionRate: rate,
+                          completed: stats['completed']!,
+                          total: stats['total']!,
+                          colors: colors,
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          ],
         ),
       ),
     );

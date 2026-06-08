@@ -184,7 +184,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
       if (mounted) setState(() => _showConfigModal = false);
       await _fetchPayrollData();
     } catch (e) {
-      AppToast.show(e.toString().replaceAll('Exception: ', ''));
+      debugPrint('Failed: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -221,7 +221,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
       await _fetchAdjustments(_selectedEmployee!.id);
       await _fetchPayrollData();
     } catch (e) {
-      AppToast.show(e.toString().replaceAll('Exception: ', ''));
+      debugPrint('Failed: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -254,7 +254,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
         await _fetchPayrollData();
       }
     } catch (e) {
-      AppToast.show(e.toString().replaceAll('Exception: ', ''));
+      debugPrint('Failed to delete adjustment: $e');
     }
   }
 
@@ -303,7 +303,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
       if (mounted) setState(() => _showEditEmployeeModal = false);
       await _fetchPayrollData();
     } catch (e) {
-      AppToast.show(e.toString().replaceAll('Exception: ', ''));
+      debugPrint('Failed: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -438,53 +438,66 @@ class _PayrollScreenState extends State<PayrollScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return Scaffold(
+        body: SafeArea(
+          child: Center(
+            child: CircularProgressIndicator(color: AppTheme.colors.primary),
+          ),
+        ),
+      );
+    }
+
     final content = _planUpgradeRequired
         ? _buildPlanUpgradeGate()
-        : _isLoading && _employees.isEmpty
-            ? const Center(child: CircularProgressIndicator())
-            : SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _buildHeader(),
-                    const SizedBox(height: 24),
-                    _buildSummaryCard(),
-                    const SizedBox(height: 32),
-                    _buildEmployeesSection(),
-                    if (_payrollTotalPages > 1) ...[
-                      const SizedBox(height: 16),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          TextButton(
-                            onPressed: _payrollPage <= 1 ? null : () => _fetchPayrollData(page: _payrollPage - 1),
-                            child: const Text('Previous'),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            child: Text('Page $_payrollPage of $_payrollTotalPages'),
-                          ),
-                          TextButton(
-                            onPressed:
-                                _payrollPage >= _payrollTotalPages ? null : () => _fetchPayrollData(page: _payrollPage + 1),
-                            child: const Text('Next'),
-                          ),
-                        ],
-                      ),
-                    ],
-                    const SizedBox(height: 24),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: () => context.go('/main/bulk-transfer'),
-                        icon: const Icon(Icons.send_outlined),
-                        label: const Text('Initiate Bulk Transfer'),
-                      ),
+        : RefreshIndicator(
+            onRefresh: () => _fetchPayrollData(showLoader: false),
+            color: AppTheme.colors.primary,
+            child: SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildHeader(),
+                  const SizedBox(height: 24),
+                  _buildSummaryCard(),
+                  const SizedBox(height: 32),
+                  _buildEmployeesSection(),
+                  if (_payrollTotalPages > 1) ...[
+                    const SizedBox(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        TextButton(
+                          onPressed: _payrollPage <= 1 ? null : () => _fetchPayrollData(page: _payrollPage - 1),
+                          child: const Text('Previous'),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Text('Page $_payrollPage of $_payrollTotalPages'),
+                        ),
+                        TextButton(
+                          onPressed:
+                              _payrollPage >= _payrollTotalPages ? null : () => _fetchPayrollData(page: _payrollPage + 1),
+                          child: const Text('Next'),
+                        ),
+                      ],
                     ),
                   ],
-                ),
-              );
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () => context.go('/main/bulk-transfer'),
+                      icon: const Icon(Icons.send_outlined),
+                      label: const Text('Initiate Bulk Transfer'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
 
     return Scaffold(
       body: SafeArea(

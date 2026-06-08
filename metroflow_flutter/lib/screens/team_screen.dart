@@ -619,8 +619,8 @@ class _TeamScreenState extends State<TeamScreen> {
               const SizedBox(width: 8),
               if (member.status != 'invited')
                 _actionButton(
-                  icon: member.status == 'active' ? Icons.pause_outlined : Icons.play_arrow_outlined,
-                  color: colors.textSecondary,
+                  icon: member.status == 'active' ? Icons.toggle_on_outlined : Icons.toggle_off_outlined,
+                  color: member.status == 'active' ? AppColors.primary : colors.textSecondary,
                   background: colors.background,
                   onTap: () => _handleToggleStatus(member),
                 ),
