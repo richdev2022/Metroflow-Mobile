@@ -99,13 +99,14 @@ class AuthNotifier extends Notifier<AuthState> {
       // If token exists, validate it with backend
       if (token != null) {
         try {
-          await _apiService.getKycStatus();
+          await _apiService.getKycStatus(
+            options: Options(extra: {'suppressToast': true}),
+          );
         } catch (e) {
-          // If API call fails with auth error, token is invalid
+          // If API call fails, token is invalid
           debugPrint('Token validation failed: $e');
           isTokenValid = false;
-          // Clear invalid token
-          await _storageService.clearAll();
+          // Clear invalid token (logout will handle this, but just in case)
         }
       }
 

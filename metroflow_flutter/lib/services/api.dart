@@ -319,8 +319,8 @@ class ApiService {
     return await _dio.post('/kyc/verify-otp', data: {'otp': otp});
   }
 
-  Future<Response> getKycStatus() async {
-    return await _dio.get('/kyc/status');
+  Future<Response> getKycStatus({Options? options}) async {
+    return await _dio.get('/kyc/status', options: options);
   }
 
   Future<Response> submitBusinessKyc(Map<String, dynamic> data, {XFile? proofFile}) async {

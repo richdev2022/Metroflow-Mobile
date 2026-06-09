@@ -350,6 +350,16 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       authNotifier.logout();
       _router.go('/login');
     });
+    
+    // Listen for auth state changes to navigate to login when needed
+    ref.listen<AuthState>(authProvider, (previous, next) {
+      if (previous?.isAuthenticated == true && next.isAuthenticated == false) {
+        // User was logged in, now logged out - navigate to login
+        if (mounted) {
+          _router.go('/login');
+        }
+      }
+    });
   }
 
   @override
