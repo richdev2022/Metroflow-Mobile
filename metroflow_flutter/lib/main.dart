@@ -361,7 +361,6 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) async {
     final authNotifier = ref.read(authProvider.notifier);
-    final authState = ref.read(authProvider);
     bool wasWebViewOpen = _isWebViewOpen; // Store before modifying
     
     if (_appState == AppLifecycleState.resumed && 
@@ -375,14 +374,19 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     
     if ((_appState == AppLifecycleState.inactive || _appState == AppLifecycleState.paused) && 
         state == AppLifecycleState.resumed) {
-      // App is coming back to foreground
+      // App is coming back to foreground - first re-check auth
+      await authNotifier.checkAuth(); // Re-check auth to validate token
+      
+      // Get updated auth state
+      final updatedAuthState = ref.read(authProvider);
+      
       if (wasWebViewOpen) {
         // If we were in a payment webview, refresh app data when returning
         setState(() {
           _isWebViewOpen = false;
         });
         // Refresh by re-checking auth and resetting state
-        if (authState.isAuthenticated) {
+        if (updatedAuthState.isAuthenticated) {
           // Refresh the auth provider's data or trigger a refresh of all screens
           // Also navigate back to main to ensure fresh data
           if (mounted) {
@@ -393,19 +397,19 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         // Check if app was paused for more than 5 minutes
         if (_appPausedAt != null && DateTime.now().difference(_appPausedAt!) > const Duration(minutes: 5)) {
           // More than 5 minutes - logout and prompt for biometrics
-          if (authState.isAuthenticated && !_isWebViewOpen) {
+          if (updatedAuthState.isAuthenticated && !_isWebViewOpen) {
             await authNotifier.logout();
             _shouldPromptBiometricsOnResume = true;
           }
         } else {
           // Less than 5 minutes - reset idle timer and stay logged in
-          if (authState.isAuthenticated) {
+          if (updatedAuthState.isAuthenticated) {
             authNotifier.resetIdleTimer();
           }
         }
         
         // Prompt biometrics if needed
-        if (_shouldPromptBiometricsOnResume && authState.biometricsEnabled && !authState.isAuthenticated) {
+        if (_shouldPromptBiometricsOnResume && updatedAuthState.biometricsEnabled && !updatedAuthState.isAuthenticated) {
           // Prompt biometrics
           final hasBiometrics = await BiometricService.isAvailable();
           if (hasBiometrics && mounted) {

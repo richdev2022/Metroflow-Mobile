@@ -3,6 +3,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:metroflow_flutter/utils/app_toast.dart';
 import 'package:flutter/material.dart';
+import 'package:metroflow_flutter/providers/auth_provider.dart';
 
 const String _apiBaseUrl = 'https://metroflow-backend.netlify.app/api';
 
@@ -60,11 +61,17 @@ class ApiService {
   }
 
   Future<void> _handleSessionExpired() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('token');
-    await prefs.remove('userId');
-    await prefs.remove('businessId');
-    await prefs.remove('userName');
+    // Use auth notifier to logout properly
+    if (authNotifierInstance != null) {
+      await authNotifierInstance!.logout();
+    } else {
+      // Fallback if notifier isn't available yet
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('token');
+      await prefs.remove('userId');
+      await prefs.remove('businessId');
+      await prefs.remove('userName');
+    }
     showSessionExpiredModal();
   }
 

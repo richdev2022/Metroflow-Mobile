@@ -53,6 +53,9 @@ class AuthState {
   }
 }
 
+// Global variable to hold the auth notifier instance (set in main.dart)
+AuthNotifier? authNotifierInstance;
+
 final authProvider = NotifierProvider<AuthNotifier, AuthState>(AuthNotifier.new);
 
 class AuthNotifier extends Notifier<AuthState> {
@@ -62,7 +65,9 @@ class AuthNotifier extends Notifier<AuthState> {
 
   @override
   AuthState build() {
-    _checkAuth();
+    // Set global instance
+    authNotifierInstance = this;
+    checkAuth();
     return AuthState(
       isAuthenticated: false,
       isLoading: true,
@@ -80,7 +85,7 @@ class AuthNotifier extends Notifier<AuthState> {
     }
   }
 
-  Future<void> _checkAuth() async {
+  Future<void> checkAuth() async {
     try {
       final token = await _storageService.getToken();
       final userId = await _storageService.getUserId();
@@ -89,14 +94,29 @@ class AuthNotifier extends Notifier<AuthState> {
       final biometricsEnabled = await BiometricService.isEnabled();
       final hasSeenOnboarding = await _storageService.getHasSeenOnboarding();
 
+      bool isTokenValid = token != null;
+      
+      // If token exists, validate it with backend
+      if (token != null) {
+        try {
+          await _apiService.getKycStatus();
+        } catch (e) {
+          // If API call fails with auth error, token is invalid
+          debugPrint('Token validation failed: $e');
+          isTokenValid = false;
+          // Clear invalid token
+          await _storageService.clearAll();
+        }
+      }
+
       state = state.copyWith(
-        token: token,
-        userId: userId,
-        businessId: businessId,
-        userName: userName,
+        token: isTokenValid ? token : null,
+        userId: isTokenValid ? userId : null,
+        businessId: isTokenValid ? businessId : null,
+        userName: isTokenValid ? userName : null,
         biometricsEnabled: biometricsEnabled,
         hasSeenOnboarding: hasSeenOnboarding,
-        isAuthenticated: token != null,
+        isAuthenticated: isTokenValid,
         isLoading: false,
       );
     } catch (e) {
