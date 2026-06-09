@@ -72,7 +72,7 @@ class ApiService {
       await prefs.remove('businessId');
       await prefs.remove('userName');
     }
-    showSessionExpiredModal();
+    // Don't show dialog - auth state listener will navigate to login
   }
 
   void _initializeDio() {
