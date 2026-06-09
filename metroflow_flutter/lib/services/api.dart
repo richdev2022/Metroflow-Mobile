@@ -61,9 +61,9 @@ class ApiService {
   }
 
   Future<void> _handleSessionExpired() async {
-    // Use auth notifier to logout properly
+    // Use auth notifier to logout properly and disable biometrics
     if (authNotifierInstance != null) {
-      await authNotifierInstance!.logout();
+      await authNotifierInstance!.logout(disableBiometrics: true);
     } else {
       // Fallback if notifier isn't available yet
       final prefs = await SharedPreferences.getInstance();
@@ -71,6 +71,13 @@ class ApiService {
       await prefs.remove('userId');
       await prefs.remove('businessId');
       await prefs.remove('userName');
+      // Also clear biometrics in fallback
+      await prefs.remove('biometrics_token');
+      await prefs.remove('biometrics_userId');
+      await prefs.remove('biometrics_businessId');
+      await prefs.remove('biometrics_userName');
+      await prefs.remove('biometricsEnabled');
+      await prefs.remove('biometricsPromptShown');
     }
     // Don't show dialog - auth state listener will navigate to login
   }

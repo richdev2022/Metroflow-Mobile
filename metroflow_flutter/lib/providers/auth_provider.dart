@@ -269,22 +269,29 @@ class AuthNotifier extends Notifier<AuthState> {
     }
   }
 
-  Future<void> logout() async {
+  Future<void> logout({bool disableBiometrics = false}) async {
     try {
       _idleTimer?.cancel();
       
-      // Keep biometrics enabled and last route on logout
-      final biometricsEnabled = state.biometricsEnabled;
       final hasSeenOnboarding = state.hasSeenOnboarding;
+      bool newBiometricsEnabled = state.biometricsEnabled;
       
-      // Clear everything except biometricsEnabled and hasSeenOnboarding
+      // Clear everything except hasSeenOnboarding
       final storage = StorageService();
       await storage.clearAll();
+      
+      // If we should disable biometrics, also clear biometric credentials and disable it
+      if (disableBiometrics) {
+        newBiometricsEnabled = false;
+        await BiometricService.disableBiometrics();
+        await BiometricService.resetPromptStatus();
+        await storage.clearBiometricsCredentials();
+      }
       
       state = AuthState(
         isAuthenticated: false,
         isLoading: false,
-        biometricsEnabled: biometricsEnabled,
+        biometricsEnabled: newBiometricsEnabled,
         hasSeenOnboarding: hasSeenOnboarding,
       );
     } catch (e) {
@@ -347,9 +354,22 @@ class AuthNotifier extends Notifier<AuthState> {
           final businessId = credentials['businessId']!;
           final userName = credentials['userName']!;
 
-          // Restore the credentials to storage
+          // First validate the token with backend
+          try {
+            // Temporarily set the token for validation
+            await _storageService.setToken(token);
+            await _apiService.getKycStatus(
+              options: Options(extra: {'suppressToast': true}),
+            );
+          } catch (e) {
+            // Token is invalid - disable biometrics and logout
+            debugPrint('Stored biometric token is invalid: $e');
+            await logout(disableBiometrics: true);
+            return false;
+          }
+
+          // Token is valid - restore all credentials
           await Future.wait([
-            _storageService.setToken(token),
             _storageService.setUserId(userId),
             _storageService.setBusinessId(businessId),
             _storageService.setUserName(userName),
