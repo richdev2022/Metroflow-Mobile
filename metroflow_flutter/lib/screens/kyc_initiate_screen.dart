@@ -25,7 +25,6 @@ class _KycInitiateScreenState extends ConsumerState<KycInitiateScreen> {
     if (_type == null) {
       final extraType = extra is Map<String, dynamic> ? extra['type'] as String? : null;
       _type = (queryType ?? extraType ?? 'bvn').toLowerCase() == 'nin' ? 'nin' : 'bvn';
-      setState(() {});
     }
   }
 

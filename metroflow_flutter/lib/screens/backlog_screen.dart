@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:file_picker/file_picker.dart';
 import '../services/api.dart';
 import '../models/task.dart';
 import '../theme/app_theme.dart';
+import './bulk_create_tasks_screen.dart';
 
 class BacklogScreen extends StatefulWidget {
   const BacklogScreen({super.key});
@@ -19,6 +21,83 @@ class _BacklogScreenState extends State<BacklogScreen> {
   bool _hasMore = true;
   int _page = 1;
   String _searchQuery = '';
+
+  void _showImportModal() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Import Tasks from Excel'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Download the Excel template from the web version, fill it out, then upload here.',
+              style: TextStyle(fontSize: 14),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Format: Title (required), Description, Sprint, Start Date, End Date',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () async {
+                  final result = await FilePicker.platform.pickFiles(
+                    type: FileType.custom,
+                    allowedExtensions: ['xlsx', 'xls'],
+                  );
+
+                  if (result == null) return;
+
+                  try {
+                    final bytes = result.files.single.bytes;
+                    if (bytes == null) {
+                      if (!mounted) return;
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Failed to read file')),
+                        );
+                      }
+                      return;
+                    }
+                    final tasks = await BulkCreateTasksScreen.parseExcelFile(bytes);
+                    if (!mounted) return;
+                    if (context.mounted) {
+                      Navigator.of(context).pop();
+                      context.go('/main/bulk-create-tasks', extra: tasks);
+                    }
+                  } catch (e) {
+                    if (!mounted) return;
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Failed to parse Excel: $e')),
+                      );
+                    }
+                  }
+                },
+                icon: const Icon(Icons.upload_file, size: 18),
+                label: const Text('Upload Excel File'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.colors.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -203,8 +282,8 @@ class _BacklogScreenState extends State<BacklogScreen> {
               const SizedBox(width: 12),
               _buildActionButton(
                 icon: Icons.upload_file,
-                label: 'Upload Excel',
-                onTap: () => context.go('/main/bulk-create-tasks'),
+                label: 'Import Tasks',
+                onTap: _showImportModal,
               ),
               const SizedBox(width: 8),
               _buildActionButton(

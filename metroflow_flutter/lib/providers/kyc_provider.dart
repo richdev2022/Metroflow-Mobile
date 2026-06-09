@@ -38,18 +38,25 @@ class KycNotifier extends Notifier<KycState> {
     // Listen to auth provider changes
     ref.listen<AuthState>(authProvider, (previous, next) {
       if (next.isAuthenticated && next.token != null) {
-        fetchKycStatus();
-      } else {
+        Future.microtask(() => fetchKycStatus());
+      } else if (previous?.isAuthenticated == true && !next.isAuthenticated) {
         // Reset KYC state if logged out
-        state = KycState();
+        Future.microtask(() => state = KycState());
       }
     });
     
-    // Check if user is already authenticated and fetch KYC status
-    final authState = ref.read(authProvider);
-    if (authState.isAuthenticated && authState.token != null) {
-      fetchKycStatus();
-    }
+    // Schedule a microtask to check auth state after initial build
+    Future.microtask(() {
+      try {
+        final authState = ref.read(authProvider);
+        if (authState.isAuthenticated && authState.token != null) {
+          fetchKycStatus();
+        }
+      } catch (e) {
+        // Ignore if provider isn't initialized yet
+        debugPrint('KYC provider: auth not yet initialized: $e');
+      }
+    });
     
     return KycState();
   }

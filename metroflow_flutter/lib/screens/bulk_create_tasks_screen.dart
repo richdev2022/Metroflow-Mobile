@@ -9,13 +9,40 @@ import '../models/team_member.dart';
 import '../theme/app_theme.dart';
 
 class BulkCreateTasksScreen extends ConsumerStatefulWidget {
-  const BulkCreateTasksScreen({super.key});
+  final List<BulkCreateTask>? initialTasks;
+
+  const BulkCreateTasksScreen({super.key, this.initialTasks});
 
   @override
   ConsumerState<BulkCreateTasksScreen> createState() => _BulkCreateTasksScreenState();
+
+  static Future<List<BulkCreateTask>> parseExcelFile(List<int> bytes) async {
+    final excel = xlsx.Excel.decodeBytes(bytes);
+    final sheet = excel.sheets.values.first;
+    final rows = sheet.rows;
+
+    if (rows.isEmpty) return [];
+
+    final newTasks = <BulkCreateTask>[];
+    for (var i = 1; i < rows.length; i++) {
+      final row = rows[i];
+      if (row.isEmpty) continue;
+      if (row[0]?.value == null) continue;
+      newTasks.add(BulkCreateTask(
+        title: row[0]?.value?.toString() ?? '',
+        description: row[1]?.value?.toString(),
+        sprint: row[2]?.value?.toString(),
+        startDate: row[3]?.value?.toString(),
+        endDate: row[4]?.value?.toString(),
+        assignedTo: [],
+        images: [],
+      ));
+    }
+    return newTasks;
+  }
 }
 
-class _BulkCreateTask {
+class BulkCreateTask {
   final String title;
   final String? description;
   final String? epic;
@@ -25,7 +52,7 @@ class _BulkCreateTask {
   final List<String>? assignedTo;
   final List<String>? images;
 
-  _BulkCreateTask({
+  BulkCreateTask({
     required this.title,
     this.description,
     this.epic,
@@ -49,7 +76,7 @@ class _BulkCreateTask {
 }
 
 class _BulkCreateTasksScreenState extends ConsumerState<BulkCreateTasksScreen> {
-  final List<_BulkCreateTask> _tasks = [];
+  final List<BulkCreateTask> _tasks = [];
   bool _isLoading = false;
   bool _isFetching = true;
   List<TeamMember> _teamMembers = [];
@@ -65,7 +92,11 @@ class _BulkCreateTasksScreenState extends ConsumerState<BulkCreateTasksScreen> {
   void initState() {
     super.initState();
     _fetchData();
-    _tasks.add(_createEmptyTask());
+    if (widget.initialTasks != null && widget.initialTasks!.isNotEmpty) {
+      _tasks.addAll(widget.initialTasks!);
+    } else {
+      _tasks.add(_createEmptyTask());
+    }
   }
 
   @override
@@ -109,8 +140,8 @@ class _BulkCreateTasksScreenState extends ConsumerState<BulkCreateTasksScreen> {
     }
   }
 
-  _BulkCreateTask _createEmptyTask() {
-    return _BulkCreateTask(
+  BulkCreateTask _createEmptyTask() {
+    return BulkCreateTask(
       title: '',
       description: '',
       epic: null,
@@ -140,28 +171,7 @@ class _BulkCreateTasksScreenState extends ConsumerState<BulkCreateTasksScreen> {
         }
         return;
       }
-      final excel = xlsx.Excel.decodeBytes(bytes);
-      final sheet = excel.sheets.values.first;
-      final rows = sheet.rows;
-
-      if (rows.isEmpty) return;
-
-      final newTasks = <_BulkCreateTask>[];
-      for (var i = 1; i < rows.length; i++) {
-        final row = rows[i];
-        if (row.isEmpty) continue;
-        if (row[0] == null) continue;
-        newTasks.add(_BulkCreateTask(
-          title: row[0]?.value?.toString() ?? '',
-          description: row[1]?.value?.toString(),
-          epic: row[2]?.value?.toString(),
-          sprint: row[3]?.value?.toString(),
-          startDate: row[4]?.value?.toString(),
-          endDate: row[5]?.value?.toString(),
-          assignedTo: [],
-          images: [],
-        ));
-      }
+      final newTasks = await BulkCreateTasksScreen.parseExcelFile(bytes);
 
       setState(() {
         _tasks.addAll(newTasks);
@@ -187,7 +197,7 @@ class _BulkCreateTasksScreenState extends ConsumerState<BulkCreateTasksScreen> {
     });
   }
 
-  void _updateTask(int index, _BulkCreateTask task) {
+  void _updateTask(int index, BulkCreateTask task) {
     setState(() {
       _tasks[index] = task;
     });
@@ -1006,8 +1016,8 @@ class _BulkCreateTasksScreenState extends ConsumerState<BulkCreateTasksScreen> {
 
 class _TaskFormCard extends StatefulWidget {
   final int index;
-  final _BulkCreateTask task;
-  final ValueChanged<_BulkCreateTask> onUpdate;
+  final BulkCreateTask task;
+  final ValueChanged<BulkCreateTask> onUpdate;
   final VoidCallback onRemove;
   final List<TeamMember> teamMembers;
 
@@ -1052,7 +1062,7 @@ class _TaskFormCardState extends State<_TaskFormCard> {
   }
 
   void _update() {
-    widget.onUpdate(_BulkCreateTask(
+    widget.onUpdate(BulkCreateTask(
       title: _titleController.text,
       description: _descriptionController.text.isEmpty ? null : _descriptionController.text,
       epic: widget.task.epic,

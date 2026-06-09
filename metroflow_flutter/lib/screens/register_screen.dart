@@ -591,7 +591,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                             child: Padding(
                               padding: const EdgeInsets.symmetric(vertical: 16),
                               child: Text(
-                                selectedIndustry ?? 'Business Industry (Optional)',
+                                selectedIndustry ?? 'Business Industry',
                                 style: TextStyle(
                                   fontSize: 16,
                                   color: selectedIndustry != null

@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:metroflow_flutter/theme/app_theme.dart';
 import 'package:metroflow_flutter/services/api.dart';
 import 'package:metroflow_flutter/models/task.dart';
 import 'package:metroflow_flutter/models/epic.dart';
+import 'package:metroflow_flutter/screens/bulk_create_tasks_screen.dart';
 
 class TasksScreen extends ConsumerStatefulWidget {
   const TasksScreen({super.key});
@@ -29,6 +31,83 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
   int total = 0;
   final ScrollController scrollController = ScrollController();
   final TextEditingController searchController = TextEditingController();
+
+  void _showImportModal() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Import Tasks from Excel'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Download the Excel template from the web version, fill it out, then upload here.',
+              style: TextStyle(fontSize: 14),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Format: Title (required), Description, Sprint, Start Date, End Date',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () async {
+                  final result = await FilePicker.platform.pickFiles(
+                    type: FileType.custom,
+                    allowedExtensions: ['xlsx', 'xls'],
+                  );
+
+                  if (result == null) return;
+
+                  try {
+                    final bytes = result.files.single.bytes;
+                    if (bytes == null) {
+                      if (!mounted) return;
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Failed to read file')),
+                        );
+                      }
+                      return;
+                    }
+                    final tasks = await BulkCreateTasksScreen.parseExcelFile(bytes);
+                    if (!mounted) return;
+                    if (context.mounted) {
+                      Navigator.of(context).pop();
+                      context.go('/main/bulk-create-tasks', extra: tasks);
+                    }
+                  } catch (e) {
+                    if (!mounted) return;
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Failed to parse Excel: $e')),
+                      );
+                    }
+                  }
+                },
+                icon: const Icon(Icons.upload_file, size: 18),
+                label: const Text('Upload Excel File'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.colors.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -237,6 +316,40 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
     }
   }
 
+  Widget _buildActionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    final colors = AppTheme.colors;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: colors.surface,
+          border: Border.all(color: colors.border),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: colors.primary, size: 20),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: TextStyle(
+                color: colors.text,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = AppTheme.colors;
@@ -286,17 +399,27 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
                           'Tasks',
                           style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: colors.text),
                         ),
-                        GestureDetector(
-                          onTap: () => context.go('/main/create-task'),
-                          child: Container(
-                            width: 48,
-                            height: 48,
-                            decoration: BoxDecoration(
-                              color: colors.primary,
-                              shape: BoxShape.circle,
+                        Row(
+                          children: [
+                            _buildActionButton(
+                              icon: Icons.upload_file,
+                              label: 'Import Tasks',
+                              onTap: _showImportModal,
                             ),
-                            child: const Icon(Icons.add, color: Colors.white, size: 24),
-                          ),
+                            const SizedBox(width: 8),
+                            GestureDetector(
+                              onTap: () => context.go('/main/create-task'),
+                              child: Container(
+                                width: 48,
+                                height: 48,
+                                decoration: BoxDecoration(
+                                  color: colors.primary,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(Icons.add, color: Colors.white, size: 24),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),

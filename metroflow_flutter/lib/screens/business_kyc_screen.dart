@@ -1,18 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import '../services/api.dart';
+import '../providers/auth_provider.dart';
+import '../providers/kyc_provider.dart';
 import '../theme/app_theme.dart';
 
-class BusinessKycScreen extends StatefulWidget {
+class BusinessKycScreen extends ConsumerStatefulWidget {
   const BusinessKycScreen({super.key});
 
   @override
-  State<BusinessKycScreen> createState() => _BusinessKycScreenState();
+  ConsumerState<BusinessKycScreen> createState() => _BusinessKycScreenState();
 }
 
-class _BusinessKycScreenState extends State<BusinessKycScreen> {
+class _BusinessKycScreenState extends ConsumerState<BusinessKycScreen> {
   final _countryController = TextEditingController();
   final _stateController = TextEditingController();
   final _cityController = TextEditingController();
@@ -37,6 +40,12 @@ class _BusinessKycScreenState extends State<BusinessKycScreen> {
     if (file != null) {
       setState(() => _proofFile = file);
     }
+  }
+
+  Future<void> _handleSkip() async {
+    await ref.read(authProvider.notifier).skipKyc();
+    if (!mounted) return;
+    context.go('/main');
   }
 
   Future<void> _handleSubmit() async {
@@ -80,69 +89,90 @@ class _BusinessKycScreenState extends State<BusinessKycScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final bvnVerified = ref.watch(kycProvider.select((state) => state.status?.user.bvnStatus == 'verified'));
+    final ninVerified = ref.watch(kycProvider.select((state) => state.status?.user.ninStatus == 'verified'));
+
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextButton(
-                onPressed: () => context.go('/kyc-otp'),
-                child: const Text('\u2190 Back', style: TextStyle(fontSize: 16, color: Color(0xFF1e40af))),
-              ),
-              const SizedBox(height: 24),
-              const Text('Business KYC Verification',
-                  style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color(0xFF1e40af))),
-              const SizedBox(height: 8),
-              const Text(
-                'Provide your business address and proof of address document',
-                style: TextStyle(fontSize: 16, color: Color(0xFF6b7280), height: 1.5),
-              ),
-              const SizedBox(height: 32),
-              _buildField('Country', _countryController, hint: 'Nigeria'),
-              _buildField('State', _stateController, hint: 'Lagos'),
-              _buildField('City', _cityController, hint: 'Lagos'),
-              _buildField('Street', _streetController, hint: 'Adeola Odeku Street'),
-              _buildField('House Number', _houseNumberController, hint: '123', isNumber: true),
-              const SizedBox(height: 16),
-              InkWell(
-                onTap: _pickFile,
-                child: Container(
-                  padding: const EdgeInsets.all(24),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: const Color(0xFF1e40af), width: 2, style: BorderStyle.solid),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Column(
-                    children: [
-                      Text(
-                        _proofFile != null ? '\u{1F4C4} ${_proofFile!.name}' : 'Upload Proof of Address',
-                        style: const TextStyle(color: Color(0xFF1e40af), fontSize: 16, fontWeight: FontWeight.w600),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _proofFile != null ? 'Tap to change file' : '(Utility Bill or Bank Statement)',
-                        style: const TextStyle(color: Color(0xFF6b7280), fontSize: 12),
-                      ),
-                    ],
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: MediaQuery.of(context).size.height - 48),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const SizedBox(height: 24),
+                const Text('Business KYC Verification',
+                    style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color(0xFF1e40af))),
+                const SizedBox(height: 8),
+                const Text(
+                  'Provide your business address and proof of address document',
+                  style: TextStyle(fontSize: 16, color: Color(0xFF6b7280), height: 1.5),
+                ),
+                const SizedBox(height: 32),
+                _buildField('Country', _countryController, hint: 'Nigeria'),
+                _buildField('State', _stateController, hint: 'Lagos'),
+                _buildField('City', _cityController, hint: 'Lagos'),
+                _buildField('Street', _streetController, hint: 'Adeola Odeku Street'),
+                _buildField('House Number', _houseNumberController, hint: '123', isNumber: true),
+                const SizedBox(height: 16),
+                InkWell(
+                  onTap: _pickFile,
+                  child: Container(
+                    padding: const EdgeInsets.all(24),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: const Color(0xFF1e40af), width: 2, style: BorderStyle.solid),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      children: [
+                        Text(
+                          _proofFile != null ? '\u{1F4C4} ${_proofFile!.name}' : 'Upload Proof of Address',
+                          style: const TextStyle(color: Color(0xFF1e40af), fontSize: 16, fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _proofFile != null ? 'Tap to change file' : '(Utility Bill or Bank Statement)',
+                          style: const TextStyle(color: Color(0xFF6b7280), fontSize: 12),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 32),
-              ElevatedButton(
-                onPressed: _isLoading ? null : _handleSubmit,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF1e40af),
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                const SizedBox(height: 32),
+                ElevatedButton(
+                  onPressed: _isLoading ? null : _handleSubmit,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1e40af),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  child: _isLoading
+                      ? const CircularProgressIndicator(color: Colors.white)
+                      : Text(_isLoading ? 'Submitting...' : 'Submit for Review',
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
                 ),
-                child: _isLoading
-                    ? const CircularProgressIndicator(color: Colors.white)
-                    : Text(_isLoading ? 'Submitting...' : 'Submit for Review',
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-              ),
-            ],
+                const SizedBox(height: 12),
+                if (bvnVerified || ninVerified)
+                  SizedBox(
+                    width: double.infinity,
+                    child: TextButton(
+                      onPressed: _handleSkip,
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                      ),
+                      child: const Text(
+                        'Skip to Dashboard',
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: AppColors.error,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),

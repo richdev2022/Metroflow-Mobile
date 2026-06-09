@@ -1,7 +1,11 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as path;
+import 'package:url_launcher/url_launcher.dart';
 import '../services/api.dart';
 import '../models/idea.dart';
 import '../models/product_documentation.dart';
@@ -241,11 +245,32 @@ class _IdeaDetailScreenState extends ConsumerState<IdeaDetailScreen> {
   Future<void> _handleDownloadPdf(ProductDocumentation doc) async {
     try {
       final api = ApiService();
-      await api.getDocumentationPdf(doc.id);
+      final response = await api.getDocumentationPdf(doc.id);
       
-      // For now, we'll just show a toast, actual file saving would need more setup
-      AppToast.show('PDF download initiated!', type: AppToastType.success);
+      if (response.statusCode == 200) {
+        final dir = await getTemporaryDirectory();
+        final fileName = '${doc.title.replaceAll(' ', '_')}_${DateTime.now().millisecondsSinceEpoch}.pdf';
+        final filePath = path.join(dir.path, fileName);
+        final file = File(filePath);
+        await file.writeAsBytes(response.data);
+        
+        // Open the PDF file
+        if (await canLaunchUrl(Uri.file(filePath))) {
+          await launchUrl(Uri.file(filePath), mode: LaunchMode.externalApplication);
+        } else {
+          // If can't open, share it instead
+          await SharePlus.instance.share(
+            ShareParams(
+              text: doc.title,
+              files: [XFile(filePath, mimeType: 'application/pdf')],
+            ),
+          );
+        }
+        
+        AppToast.show('PDF downloaded successfully!', type: AppToastType.success);
+      }
     } catch (e) {
+      debugPrint('Download PDF failed: $e');
       AppToast.show(e.toString().replaceAll('Exception: ', ''), type: AppToastType.error);
     }
   }

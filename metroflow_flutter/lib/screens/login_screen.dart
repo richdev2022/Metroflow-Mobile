@@ -27,6 +27,20 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     super.initState();
     _checkBiometrics();
     _loadUserName();
+    _autoTriggerBiometrics();
+  }
+
+  Future<void> _autoTriggerBiometrics() async {
+    // Wait for the next frame to ensure the UI is built
+    await Future.delayed(Duration.zero);
+    if (!mounted) return;
+    
+    final biometricsEnabled = ref.read(authProvider).biometricsEnabled;
+    final hasBiometrics = await BiometricService.isAvailable();
+    
+    if (biometricsEnabled && hasBiometrics && mounted) {
+      await _handleBiometricLogin();
+    }
   }
 
   Future<void> _loadUserName() async {

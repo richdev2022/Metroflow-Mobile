@@ -90,6 +90,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     
     _router = GoRouter(
+      navigatorKey: navigatorKey,
       initialLocation: '/',
       redirect: (context, state) async {
         final authState = ref.read(authProvider);
@@ -105,6 +106,20 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         _currentRoute = path;
 
         if (isAuthenticated) {
+          final authState = ref.read(authProvider);
+          if (authState.skippedKyc) {
+            if (path.startsWith('/onboarding') ||
+                path == '/login' ||
+                path == '/register' ||
+                path == '/verify-otp' ||
+                path == '/forgot-password' ||
+                path == '/verify-reset-otp' ||
+                path == '/reset-password') {
+              return '/main';
+            }
+            return null;
+          }
+
           // Check KYC status before allowing access to main
           try {
             final now = DateTime.now();
@@ -255,7 +270,10 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
             ),
             GoRoute(
               path: 'bulk-create-tasks',
-              builder: (context, state) => const BulkCreateTasksScreen(),
+              builder: (context, state) {
+                final initialTasks = state.extra as List<BulkCreateTask>?;
+                return BulkCreateTasksScreen(initialTasks: initialTasks);
+              },
             ),
             GoRoute(
               path: 'task-detail',

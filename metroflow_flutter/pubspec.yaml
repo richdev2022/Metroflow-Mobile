@@ -27,6 +27,8 @@ dependencies:
   web: ^1.1.1
   excel: ^4.0.3
   file_picker: ^10.1.0
+  path_provider: ^2.1.5
+  path: ^1.9.0
 
 dev_dependencies:
   flutter_test:

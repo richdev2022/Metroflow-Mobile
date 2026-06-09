@@ -2,13 +2,42 @@ import 'package:dio/dio.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:metroflow_flutter/utils/app_toast.dart';
+import 'package:flutter/material.dart';
 
 const String _apiBaseUrl = 'https://metroflow-backend.netlify.app/api';
+
+// Global key to access navigator context
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void Function()? logoutHandler;
 
 void setLogoutHandler(void Function() handler) {
   logoutHandler = handler;
+}
+
+void showSessionExpiredModal() {
+  final context = navigatorKey.currentContext;
+  if (context == null) return;
+
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => AlertDialog(
+      title: const Text('Session Expired'),
+      content: const Text('Your session has expired. Please log in again to continue.'),
+      actions: [
+        ElevatedButton(
+          onPressed: () {
+            Navigator.of(context).pop();
+            if (logoutHandler != null) {
+              logoutHandler!();
+            }
+          },
+          child: const Text('Log In'),
+        ),
+      ],
+    ),
+  );
 }
 
 class ApiService {
@@ -30,6 +59,15 @@ class ApiService {
     return null;
   }
 
+  Future<void> _handleSessionExpired() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('token');
+    await prefs.remove('userId');
+    await prefs.remove('businessId');
+    await prefs.remove('userName');
+    showSessionExpiredModal();
+  }
+
   void _initializeDio() {
     _dio = Dio(BaseOptions(
       baseUrl: _apiBaseUrl,
@@ -49,10 +87,20 @@ class ApiService {
             : Headers.jsonContentType;
         return handler.next(options);
       },
-      onResponse: (response, handler) {
+      onResponse: (response, handler) async {
         final data = response.data;
         final isSuccess = data is Map && data['success'] == true;
         final isFailure = data is Map && data['success'] == false;
+
+        // Check for token error even in 200 OK responses
+        if (isFailure) {
+          final errorMsg = (data['error'] as String?)?.toLowerCase() ?? '';
+          if (errorMsg.contains('invalid') || errorMsg.contains('expired')) {
+            await _handleSessionExpired();
+            // Don't show toast for token errors
+            return handler.next(response);
+          }
+        }
         
         // Show success toast for non-GET requests if success and message exists
         if (isSuccess && response.requestOptions.method != 'GET' &&
@@ -63,7 +111,7 @@ class ApiService {
           }
         }
         
-        // Show error toast if success is false
+        // Show error toast if success is false (and not token error)
         if (isFailure && response.requestOptions.extra['suppressToast'] != true) {
           final errorMessage = _extractResponseMessage(data) ?? 'Something went wrong';
           AppToast.show(errorMessage, type: AppToastType.error);
@@ -85,14 +133,8 @@ class ApiService {
             // Check if the error message is something that means token is invalid
             final errorMsg = (errorData is Map ? errorData['error'] : null)?.toString().toLowerCase() ?? '';
             if (errorMsg.contains('invalid') || errorMsg.contains('expired') || errorMsg.contains('unauthorized')) {
-              final prefs = await SharedPreferences.getInstance();
-              await prefs.remove('token');
-              await prefs.remove('userId');
-              await prefs.remove('businessId');
-              await prefs.remove('userName');
-              if (logoutHandler != null) {
-                logoutHandler!();
-              }
+              await _handleSessionExpired();
+              return handler.next(error);
             }
           }
         }
@@ -191,7 +233,7 @@ class ApiService {
   }
 
   Future<Response> toggleReaction(String id, String type) async {
-    return await _dio.put('/comments/$id/reaction', data: {'type': type}, options: Options(extra: {'suppressToast': true}));
+    return await _dio.post('/comments/$id/reaction', data: {'type': type}, options: Options(extra: {'suppressToast': true}));
   }
 
   // Assignments API
@@ -539,7 +581,10 @@ class ApiService {
   }
 
   Future<Response> getDocumentationPdf(String id) async {
-    return await _dio.get('/product-documentation/$id/pdf');
+    return await _dio.get(
+      '/product-documentation/$id/pdf',
+      options: Options(responseType: ResponseType.bytes, extra: {'suppressToast': true}),
+    );
   }
 }
 
