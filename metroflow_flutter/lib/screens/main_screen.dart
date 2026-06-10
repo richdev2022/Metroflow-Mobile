@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -202,16 +203,23 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     return Scaffold(
       key: _scaffoldKey,
       appBar: AppBar(
+        backgroundColor: colors.primary,
+        foregroundColor: Colors.white,
+        systemOverlayStyle: const SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: Brightness.light,
+          statusBarBrightness: Brightness.dark,
+        ),
         title: Text(_pageTitles[_selectedIndex]),
         leading: IconButton(
-          icon: const Icon(Icons.menu),
+          icon: const Icon(Icons.menu, color: Colors.white),
           onPressed: () => _scaffoldKey.currentState?.openDrawer(),
         ),
         actions: [
           if (_selectedIndex == 0)
             IconButton(
               tooltip: 'Profile',
-              icon: const Icon(Icons.person_outline),
+              icon: const Icon(Icons.person_outline, color: Colors.white),
               onPressed: () => context.push('/main/profile'),
             ),
         ],
