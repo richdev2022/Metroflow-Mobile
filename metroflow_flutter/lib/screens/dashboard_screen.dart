@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:metroflow_flutter/theme/app_theme.dart';
 import 'package:metroflow_flutter/services/api.dart';
 import 'package:metroflow_flutter/models/team_member.dart';
+import 'package:fl_chart/fl_chart.dart';
 
 class DashboardScreen extends ConsumerStatefulWidget {
   const DashboardScreen({super.key});
@@ -13,7 +14,7 @@ class DashboardScreen extends ConsumerStatefulWidget {
 }
 
 class _DashboardScreenState extends ConsumerState<DashboardScreen> {
-  List<dynamic> _tasks = [];
+  List<dynamic> _allTasks = [];
   List<TeamMember> _teamMembers = [];
   List<dynamic> _epics = [];
   bool _isLoading = true;
@@ -21,6 +22,60 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   String _selectedEpic = 'all';
   String _startDate = '';
   String _endDate = '';
+
+  List<dynamic> get _filteredTasks {
+    return _allTasks.where((task) {
+      // Filter by member
+      bool matchesMember = true;
+      if (_selectedMember != 'all') {
+        final assignedTo = task['assignedTo'] as List?;
+        matchesMember = assignedTo?.contains(_selectedMember) ?? false;
+      }
+
+      // Filter by epic
+      bool matchesEpic = true;
+      if (_selectedEpic != 'all') {
+        final taskEpicId = task['epicId']?.toString();
+        matchesEpic = taskEpicId == _selectedEpic;
+      }
+
+      // Filter by start date
+      bool matchesStartDate = true;
+      if (_startDate.isNotEmpty) {
+        final taskDateStr = task['startDate'] as String? ?? task['dueDate'] as String? ?? task['endDate'] as String?;
+        if (taskDateStr != null) {
+          try {
+            final taskDate = DateTime.parse(taskDateStr);
+            final filterStartDate = DateTime.parse(_startDate);
+            matchesStartDate = taskDate.isAfter(filterStartDate.subtract(const Duration(days: 1)));
+          } catch (e) {
+            matchesStartDate = false;
+          }
+        } else {
+          matchesStartDate = false;
+        }
+      }
+
+      // Filter by end date
+      bool matchesEndDate = true;
+      if (_endDate.isNotEmpty) {
+        final taskDateStr = task['endDate'] as String? ?? task['dueDate'] as String? ?? task['startDate'] as String?;
+        if (taskDateStr != null) {
+          try {
+            final taskDate = DateTime.parse(taskDateStr);
+            final filterEndDate = DateTime.parse(_endDate);
+            matchesEndDate = taskDate.isBefore(filterEndDate.add(const Duration(days: 1)));
+          } catch (e) {
+            matchesEndDate = false;
+          }
+        } else {
+          matchesEndDate = false;
+        }
+      }
+
+      return matchesMember && matchesEpic && matchesStartDate && matchesEndDate;
+    }).toList();
+  }
 
   @override
   void initState() {
@@ -35,19 +90,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     try {
       final api = ApiService();
 
+      // Fetch ALL tasks without filters, we'll filter locally
       final tasksParams = <String, dynamic>{'limit': '10000'};
-      if (_selectedMember != 'all') {
-        tasksParams['assignedTo'] = _selectedMember;
-      }
-      if (_selectedEpic != 'all') {
-        tasksParams['epicId'] = _selectedEpic;
-      }
-      if (_startDate.isNotEmpty) {
-        tasksParams['startDate'] = _startDate;
-      }
-      if (_endDate.isNotEmpty) {
-        tasksParams['endDate'] = _endDate;
-      }
 
       final tasksResponse = await api.getTasks(params: tasksParams);
       final teamResponse = await api.getTeam();
@@ -56,7 +100,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       if (mounted) {
         setState(() {
           if (tasksResponse.data != null && tasksResponse.data['success'] == true) {
-            _tasks = tasksResponse.data['data']['tasks'] ?? [];
+            _allTasks = tasksResponse.data['data']['tasks'] ?? [];
+            debugPrint('All tasks loaded: ${_allTasks.length}');
+            debugPrint('Filtered tasks: ${_filteredTasks.length}');
           }
           if (teamResponse.data != null && teamResponse.data['success'] == true) {
             _teamMembers = (teamResponse.data['data'] as List?)
@@ -94,7 +140,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       _startDate = '';
       _endDate = '';
     });
-    _fetchData();
   }
 
   Future<void> _selectStartDate() async {
@@ -108,7 +153,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       setState(() {
         _startDate = '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
       });
-      _fetchData();
     }
   }
 
@@ -123,8 +167,78 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       setState(() {
         _endDate = '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
       });
-      _fetchData();
     }
+  }
+
+  List<PieChartSectionData> _buildPieChartSections(
+    ThemeColors colors,
+    int totalTasks,
+    int completedTasks,
+    int inProgressTasks,
+    int overdueTasks,
+  ) {
+    final pendingTasks = totalTasks - completedTasks - inProgressTasks - overdueTasks;
+    if (totalTasks == 0) {
+      return [
+        PieChartSectionData(
+          value: 1,
+          color: colors.surfaceVariant,
+          title: '0',
+          radius: 80,
+          titleStyle: const TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
+      ];
+    }
+    return [
+      PieChartSectionData(
+        value: completedTasks.toDouble(),
+        color: colors.success,
+        title: '$completedTasks',
+        radius: 80,
+        titleStyle: const TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
+      ),
+      PieChartSectionData(
+        value: inProgressTasks.toDouble(),
+        color: colors.warning,
+        title: '$inProgressTasks',
+        radius: 80,
+        titleStyle: const TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
+      ),
+      PieChartSectionData(
+        value: overdueTasks.toDouble(),
+        color: colors.error,
+        title: '$overdueTasks',
+        radius: 80,
+        titleStyle: const TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
+      ),
+      PieChartSectionData(
+        value: pendingTasks.toDouble(),
+        color: colors.textSecondary,
+        title: '$pendingTasks',
+        radius: 80,
+        titleStyle: const TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
+      ),
+    ];
   }
 
   @override
@@ -139,17 +253,35 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       );
     }
 
-    final totalTasks = _tasks.length;
-    final completedTasks = _tasks.where((t) => t['status'] == 'completed').length;
-    final inProgressTasks = _tasks.where((t) => t['status'] == 'in_progress').length;
-    final overdueTasks = _tasks.where((t) => t['isOverdue'] == true).toList();
+    bool isTaskOverdue(dynamic task) {
+      // If API provides isOverdue, use that
+      if (task['isOverdue'] == true) return true;
+      
+      // Otherwise calculate from due date
+      final dueDateStr = task['dueDate'] as String? ?? task['endDate'] as String?;
+      if (dueDateStr == null) return false;
+      
+      try {
+        final dueDate = DateTime.parse(dueDateStr);
+        final now = DateTime.now();
+        final today = DateTime(now.year, now.month, now.day);
+        return dueDate.isBefore(today) && task['status'] != 'completed';
+      } catch (e) {
+        return false;
+      }
+    }
+
+    final totalTasks = _filteredTasks.length;
+    final completedTasks = _filteredTasks.where((t) => t['status'] == 'completed').length;
+    final inProgressTasks = _filteredTasks.where((t) => t['status'] == 'in_progress').length;
+    final overdueTasks = _filteredTasks.where(isTaskOverdue).toList();
     final completionPercentage = totalTasks > 0 ? ((completedTasks / totalTasks) * 100).round() : 0;
 
     final Map<String, Map<String, int>> memberStats = {};
     for (var member in _teamMembers) {
       memberStats[member.id] = {'total': 0, 'completed': 0};
     }
-    for (var task in _tasks) {
+    for (var task in _filteredTasks) {
       final assignedTo = task['assignedTo'] as List?;
       if (assignedTo != null) {
         for (var userId in assignedTo) {
@@ -229,7 +361,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                       value: _selectedMember,
                       onChanged: (value) {
                         setState(() => _selectedMember = value.toString());
-                        _fetchData();
                       },
                       colors: colors,
                     ),
@@ -255,7 +386,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                       value: _selectedEpic,
                       onChanged: (value) {
                         setState(() => _selectedEpic = value.toString());
-                        _fetchData();
                       },
                       colors: colors,
                     ),
@@ -329,39 +459,70 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                       onTap: () => context.go('/main/team'),
                       colors: colors,
                     ),
-                    _StatCard(
-                      icon: Icons.list_outlined,
-                      value: '$totalTasks',
-                      label: 'Total Tasks',
-                      iconBgColor: colors.primary.withValues(alpha: 0.2),
-                      iconColor: colors.primary,
-                      colors: colors,
-                    ),
-                    _StatCard(
-                      icon: Icons.check_circle_outlined,
-                      value: '$completedTasks',
-                      label: 'Completed',
-                      iconBgColor: colors.success.withValues(alpha: 0.2),
-                      iconColor: colors.success,
-                      colors: colors,
-                    ),
-                    _StatCard(
-                      icon: Icons.timer_outlined,
-                      value: '$inProgressTasks',
-                      label: 'In Progress',
-                      iconBgColor: colors.warning.withValues(alpha: 0.2),
-                      iconColor: colors.warning,
-                      colors: colors,
-                    ),
-                    _StatCard(
-                      icon: Icons.warning_amber_rounded,
-                      value: '${overdueTasks.length}',
-                      label: 'Overdue',
-                      iconBgColor: colors.error.withValues(alpha: 0.2),
-                      iconColor: colors.error,
-                      colors: colors,
-                    ),
                   ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Container(
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: colors.surface,
+                    border: Border.all(color: colors.border),
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: colors.text.withValues(alpha: 0.05),
+                        blurRadius: 16,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Task Status',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: colors.text),
+                      ),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        height: 250,
+                        child: PieChart(
+                          PieChartData(
+                            sections: _buildPieChartSections(colors, totalTasks, completedTasks, inProgressTasks, overdueTasks.length),
+                            borderData: FlBorderData(show: false),
+                            sectionsSpace: 2,
+                            centerSpaceRadius: 40,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Wrap(
+                        spacing: 16,
+                        runSpacing: 8,
+                        children: [
+                          _LegendItem(
+                            color: colors.success,
+                            label: 'Completed ($completedTasks)',
+                          ),
+                          _LegendItem(
+                            color: colors.warning,
+                            label: 'In Progress ($inProgressTasks)',
+                          ),
+                          _LegendItem(
+                            color: colors.error,
+                            label: 'Overdue (${overdueTasks.length})',
+                          ),
+                          _LegendItem(
+                            color: colors.textSecondary,
+                            label: 'Pending (${totalTasks - completedTasks - inProgressTasks - overdueTasks.length})',
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
               const SizedBox(height: 24),
@@ -548,27 +709,20 @@ class _SearchableDropdownState extends State<_SearchableDropdown> {
   @override
   Widget build(BuildContext context) {
     return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
         color: widget.colors.surfaceVariant,
         border: Border.all(color: widget.colors.border),
         borderRadius: BorderRadius.circular(8),
       ),
-      child: DropdownButtonFormField(
+      child: DropdownButton(
         items: widget.items,
         onChanged: widget.onChanged,
-        initialValue: widget.value,
-        decoration: InputDecoration(
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-          border: InputBorder.none,
-          enabledBorder: InputBorder.none,
-          focusedBorder: InputBorder.none,
-          errorBorder: InputBorder.none,
-          disabledBorder: InputBorder.none,
-          suffixIcon: Icon(Icons.arrow_drop_down, color: widget.colors.primary),
-        ),
+        value: widget.value,
         isExpanded: true,
-        icon: const SizedBox.shrink(),
+        icon: Icon(Icons.arrow_drop_down, color: widget.colors.primary),
         dropdownColor: widget.colors.surface,
+        underline: const SizedBox(),
       ),
     );
   }
@@ -680,59 +834,7 @@ class _ActionCard extends StatelessWidget {
   }
 }
 
-class _StatCard extends StatelessWidget {
-  final IconData icon;
-  final String value;
-  final String label;
-  final Color iconBgColor;
-  final Color iconColor;
-  final ThemeColors colors;
 
-  const _StatCard({
-    required this.icon,
-    required this.value,
-    required this.label,
-    required this.iconBgColor,
-    required this.iconColor,
-    required this.colors,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: (MediaQuery.of(context).size.width - 24 * 2 - 12) / 2,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: colors.surface,
-        border: Border.all(color: colors.border),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(color: colors.text.withValues(alpha: 0.08), offset: const Offset(0, 4), blurRadius: 12),
-        ],
-      ),
-      child: Column(
-        children: [
-          Container(
-            width: 52,
-            height: 52,
-            decoration: BoxDecoration(color: iconBgColor, borderRadius: BorderRadius.circular(14)),
-            child: Icon(icon, color: iconColor, size: 24),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            value,
-            style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: colors.text),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            label,
-            style: TextStyle(fontSize: 13, color: colors.textSecondary, fontWeight: FontWeight.w500),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 class _OverdueCard extends StatelessWidget {
   final dynamic task;
@@ -907,6 +1009,38 @@ class _TopMemberCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _LegendItem extends StatelessWidget {
+  final Color color;
+  final String label;
+
+  const _LegendItem({
+    required this.color,
+    required this.label,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 16,
+          height: 16,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(4),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 12),
+        ),
+      ],
     );
   }
 }

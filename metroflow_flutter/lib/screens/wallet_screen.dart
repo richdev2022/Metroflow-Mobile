@@ -19,7 +19,6 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   bool isKycLoading = true;
   bool isTransferLoading = false;
   bool isOtpLoading = false;
-  bool isBusinessLoading = false;
   bool isVirtualAccountLoading = false;
   Map<String, dynamic> kycStatus = {'ninVerified': false, 'bvnVerified': false};
   Map<String, dynamic> wallets = {};
@@ -32,14 +31,12 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   String amount = '';
   String remark = '';
   String otpCode = '';
-  String businessAccountNumber = '';
-  String businessName = '';
+  String selectedAccountType = 'Personal';
 
   bool showTransferModal = false;
   bool showOtpModal = false;
   bool showVirtualAccountModal = false;
   bool showBankSearchModal = false;
-  bool showBusinessModal = false;
 
   @override
   void initState() {
@@ -121,7 +118,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
     setState(() => isVirtualAccountLoading = true);
     try {
       final api = ApiService();
-      await api.createVirtualAccount();
+      await api.createVirtualAccount(selectedAccountType);
       if (mounted) {
         setState(() => showVirtualAccountModal = false);
         await fetchWalletData();
@@ -149,9 +146,20 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
       final api = ApiService();
       final response = await api.resolveAccount(selectedBankCode, accountNumber);
       if (response.data['success'] == true && mounted) {
-        setState(() {
-          accountName = response.data['data']['account_name'];
-        });
+        final data = response.data['data'];
+        String? name;
+        if (data is Map) {
+          if (data['account_name'] != null) {
+            name = data['account_name'];
+          } else if (data['responseBody'] != null && data['responseBody']['accountName'] != null) {
+            name = data['responseBody']['accountName'];
+          }
+        }
+        if (name != null) {
+          setState(() {
+            accountName = name!;
+          });
+        }
       }
     } catch (e) {
       debugPrint('Failed to resolve account: $e');
@@ -256,56 +264,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
     });
   }
 
-  Future<void> handleCreateBusinessAccount() async {
-    setState(() => isBusinessLoading = true);
-    try {
-      final businessVerified = kycStatus['businessVerified'] ?? false;
-      if (!businessVerified) {
-        if (mounted) context.go('/main/business-kyc');
-        return;
-      }
-      if (mounted) {
-        setState(() => showBusinessModal = true);
-      }
-    } catch (e) {
-      debugPrint('Failed to check KYC status: $e');
-    } finally {
-      if (mounted) {
-        setState(() => isBusinessLoading = false);
-      }
-    }
-  }
 
-  Future<void> handleSubmitBusinessAccount() async {
-    if (businessAccountNumber.isEmpty || businessName.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please fill in all fields')),
-        );
-      }
-      return;
-    }
-
-    setState(() => isBusinessLoading = true);
-    try {
-      final api = ApiService();
-      await api.createBusinessWallet(businessAccountNumber, businessName);
-      if (mounted) {
-        setState(() {
-          showBusinessModal = false;
-          businessAccountNumber = '';
-          businessName = '';
-        });
-        await fetchWalletData();
-      }
-    } catch (e) {
-      debugPrint('Failed to create business account: $e');
-    } finally {
-      if (mounted) {
-        setState(() => isBusinessLoading = false);
-      }
-    }
-  }
 
   String _formatCurrency(dynamic wallet) {
     if (wallet == null) return '₦0.00';
@@ -324,155 +283,195 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   }
 
   Widget _buildWalletCard(dynamic wallet, String label, String walletType) {
-    final hasVirtualAccount = wallet != null && wallet['virtual_account_number'] != null;
-    final isBusinessWallet = walletType == 'business';
-    final businessVerified = kycStatus['businessVerified'] ?? false;
+    final hasWallet = wallet != null;
+    final virtualAccounts = (wallet?['virtual_accounts'] as List?) ?? [];
+    final hasVirtualAccounts = virtualAccounts.isNotEmpty;
     final colors = AppTheme.colors;
 
-    return Stack(
-      children: [
-        Container(
-          margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [colors.primary, colors.primaryLight],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(16),
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [colors.primary, colors.primaryLight],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 14, color: Colors.white)),
+          const SizedBox(height: 8),
+          Text(
+            _formatCurrency(wallet),
+            style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: TextStyle(fontSize: 14, color: colors.primaryLight)),
-              const SizedBox(height: 8),
-              Text(
-                _formatCurrency(wallet),
-                style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white),
-              ),
-              if (hasVirtualAccount) ...[
-                const SizedBox(height: 24),
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('Account Number:', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                          Text(wallet['virtual_account_number'],
-                              style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('Bank:', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                          Text(wallet['bank_name'] ?? 'Squad (GTBank)',
-                              style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500)),
-                        ],
-                      ),
-                      if (wallet['account_name'] != null) ...[
-                        const SizedBox(height: 8),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          if (hasVirtualAccounts) ...[
+            const SizedBox(height: 24),
+            ...virtualAccounts.map((account) {
+                      final isActive = account['is_active'] == true;
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: isActive
+                              ? Colors.white.withValues(alpha: 0.2)
+                              : Colors.red.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: isActive ? Colors.transparent : Colors.red,
+                            width: 2,
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text('Account Name:', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                            Expanded(
-                              child: Text(
-                                wallet['account_name'],
-                                style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500),
-                                textAlign: TextAlign.right,
-                                overflow: TextOverflow.ellipsis,
-                              ),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text('Account Number:', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                                Text(
+                                  account['virtual_account_number'] ?? '',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
                             ),
+                            const SizedBox(height: 8),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text('Bank:', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                                Text(
+                                  _getBankName(account),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (account['account_name'] != null) ...[
+                              const SizedBox(height: 8),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Text('Account Name:', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                                  Expanded(
+                                    child: Text(
+                                      account['account_name'] ?? '',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                      textAlign: TextAlign.right,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                            const SizedBox(height: 8),
+                            if (!isActive)
+                              Row(
+                                children: [
+                                  const Icon(Icons.warning, color: Colors.red, size: 16),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      'Do not use this account. It is currently inactive.',
+                                      style: TextStyle(
+                                        color: Colors.red[300],
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            if (isActive)
+                              Row(
+                                children: [
+                                  const Icon(Icons.check_circle, color: Colors.green, size: 16),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'Active - Use this account',
+                                    style: TextStyle(
+                                      color: Colors.green[300],
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
                           ],
                         ),
-                      ],
-                    ],
+                      );
+                    }),
+          ],
+          const SizedBox(height: 20),
+          if (hasWallet)
+            Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: TextButton(
+                      onPressed: hasVirtualAccounts ? () => context.go('/main/fund-wallet', extra: {'walletType': walletType}) : null,
+                      child: const Text('Fund Wallet', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: TextButton(
+                      onPressed: hasVirtualAccounts ? () => openTransferModal(walletType) : null,
+                      child: const Text('Transfer', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                    ),
                   ),
                 ),
               ],
-              const SizedBox(height: 20),
-              if (hasVirtualAccount || !isBusinessWallet)
-                Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: TextButton(
-                          onPressed: hasVirtualAccount ? () => context.go('/main/fund-wallet', extra: {'walletType': walletType}) : null,
-                          child: const Text('Fund Wallet', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: TextButton(
-                          onPressed: hasVirtualAccount ? () => openTransferModal(walletType) : null,
-                          child: const Text('Transfer', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-            ],
-          ),
-        ),
-        if (isBusinessWallet && !hasVirtualAccount)
-          Container(
-            margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [colors.primary, colors.primaryLight],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(16),
             ),
-            child: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.lock, size: 32, color: Colors.white),
-                  const SizedBox(height: 8),
-                  const Text('Business Account Locked',
-                      style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 12),
-                  if (!businessVerified)
-                    Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: TextButton(
-                        onPressed: () => context.go('/main/business-kyc'),
-                        child: const Text('Submit Proof of Address',
-                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-      ],
+        ],
+      ),
     );
+  }
+
+  String _getBankName(dynamic account) {
+    // Try to get bank name from provider metadata if available
+    final provider = account['payment_provider'];
+    final providerMetadata = account['provider_metadata'];
+    if (provider == 'monnify' && providerMetadata is Map) {
+      final responseBody = providerMetadata['responseBody'];
+      if (responseBody is Map) {
+        final accounts = responseBody['accounts'] as List?;
+        if (accounts != null && accounts.isNotEmpty) {
+          final firstAccount = accounts.first as Map;
+          return firstAccount['bankName'] ?? 'Monnify';
+        }
+      }
+    }
+    // Default to bank code or provider
+    final bankCode = account['bank_code'];
+    if (bankCode == '058') return 'GTBank';
+    if (bankCode == '035') return 'Wema Bank';
+    if (bankCode == '232') return 'Sterling Bank';
+    return provider ?? 'Unknown Bank';
   }
 
   Widget _buildQuickAction(IconData icon, String label, VoidCallback onTap) {
@@ -707,9 +706,9 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
           color: Colors.black.withValues(alpha: 0.5),
         ),
         DraggableScrollableSheet(
-          initialChildSize: 0.5,
-          minChildSize: 0.4,
-          maxChildSize: 0.7,
+          initialChildSize: 0.6,
+          minChildSize: 0.5,
+          maxChildSize: 0.8,
           builder: (context, scrollController) {
             return Container(
               decoration: BoxDecoration(
@@ -734,8 +733,12 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('Create a virtual account to receive payments directly into your wallet.',
+                            Text('Select the type of virtual account to create.',
                                 style: TextStyle(fontSize: 16, color: colors.textSecondary, height: 1.5)),
+                            const SizedBox(height: 24),
+                            _buildAccountTypeOption('Personal', 'Personal Wallet', colors),
+                            const SizedBox(height: 12),
+                            _buildAccountTypeOption('Business', 'Business Wallet', colors),
                             const SizedBox(height: 32),
                             SizedBox(
                               width: double.infinity,
@@ -757,6 +760,42 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
           },
         ),
       ],
+    );
+  }
+
+  Widget _buildAccountTypeOption(String type, String label, ThemeColors colors) {
+    final isSelected = selectedAccountType == type;
+    return GestureDetector(
+      onTap: () => setState(() => selectedAccountType = type),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: isSelected ? colors.primary.withValues(alpha: 0.1) : colors.surface,
+          border: Border.all(
+            color: isSelected ? colors.primary : colors.border,
+            width: 2,
+          ),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+              color: isSelected ? colors.primary : colors.textSecondary,
+            ),
+            const SizedBox(width: 12),
+            Text(
+              label,
+              style: TextStyle(
+                color: colors.text,
+                fontSize: 16,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -866,78 +905,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
     );
   }
 
-  Widget _buildBusinessModal(ThemeColors colors) {
-    return Stack(
-      children: [
-        ModalBarrier(
-          color: Colors.black.withValues(alpha: 0.5),
-        ),
-        DraggableScrollableSheet(
-          initialChildSize: 0.6,
-          minChildSize: 0.5,
-          maxChildSize: 0.8,
-          builder: (context, scrollController) {
-            return Container(
-              decoration: BoxDecoration(
-                color: colors.background,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('Create Business Virtual Account',
-                            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: colors.text)),
-                        IconButton(
-                            icon: Icon(Icons.close, color: colors.text),
-                            onPressed: () => setState(() => showBusinessModal = false)),
-                      ],
-                    ),
-                    const SizedBox(height: 24),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        controller: scrollController,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _buildField('GTBank Account Number', TextField(
-                              decoration: InputDecoration(hintText: 'Enter your GTBank account number', hintStyle: TextStyle(color: colors.textSecondary)),
-                              style: TextStyle(color: colors.text, fontSize: 16),
-                              keyboardType: TextInputType.number,
-                              onChanged: (value) => setState(() => businessAccountNumber = value),
-                            )),
-                            const SizedBox(height: 20),
-                            _buildField('Business Name', TextField(
-                              decoration: InputDecoration(hintText: 'Enter your business name', hintStyle: TextStyle(color: colors.textSecondary)),
-                              style: TextStyle(color: colors.text, fontSize: 16),
-                              onChanged: (value) => setState(() => businessName = value),
-                            )),
-                            const SizedBox(height: 24),
-                            SizedBox(
-                              width: double.infinity,
-                              child: ElevatedButton(
-                                onPressed: isBusinessLoading ? null : handleSubmitBusinessAccount,
-                                child: isBusinessLoading
-                                    ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                                    : const Text('Create Business Account'),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
-      ],
-    );
-  }
+
 
   Widget _buildField(String label, Widget child) {
     final colors = AppTheme.colors;
@@ -1112,25 +1080,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                       ),
                     ),
                     const SizedBox(height: 16),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: colors.surface,
-                          border: Border.all(color: colors.primary, width: 2, style: BorderStyle.solid),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: TextButton.icon(
-                          onPressed: handleCreateBusinessAccount,
-                          icon: Icon(Icons.business, color: colors.primary),
-                          label: const Text('Complete KYC to Create Business Virtual Account',
-                                  style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w600),
-                                  textAlign: TextAlign.center),
-                        ),
-                      ),
-                    ),
+
                     const SizedBox(height: 100),
                   ],
                 ),
@@ -1141,7 +1091,6 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
           if (showOtpModal) _buildOtpModal(colors),
           if (showVirtualAccountModal) _buildVirtualAccountModal(colors),
           if (showBankSearchModal) _buildBankSearchModal(colors),
-          if (showBusinessModal) _buildBusinessModal(colors),
         ],
       ),
     );

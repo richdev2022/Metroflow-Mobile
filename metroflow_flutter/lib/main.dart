@@ -21,7 +21,7 @@ import 'screens/kyc_prompt_screen.dart';
 import 'screens/kyc_initiate_screen.dart';
 import 'screens/kyc_otp_screen.dart';
 import 'screens/business_kyc_screen.dart';
-import 'screens/create_business_wallet_screen.dart';
+
 import 'screens/fund_wallet_screen.dart';
 import 'screens/bulk_transfer_screen.dart';
 import 'screens/transfers_screen.dart';
@@ -248,10 +248,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
               path: 'business-kyc',
               builder: (context, state) => const BusinessKycScreen(),
             ),
-            GoRoute(
-              path: 'create-business-wallet',
-              builder: (context, state) => const CreateBusinessWalletScreen(),
-            ),
+
             GoRoute(
               path: 'fund-wallet',
               builder: (context, state) {

@@ -352,24 +352,25 @@ class ApiService {
     return await _dio.get('/wallet');
   }
 
-  Future<Response> fundWallet(double amount, String walletType) async {
-    return await _dio.post('/wallet/fund/card', data: {'amount': amount, 'wallet_type': walletType});
-  }
-
-  Future<Response> createBusinessWallet(String gtbAccountNumber, String businessName, {String? kycReferenceId}) async {
-    return await _dio.post('/wallet/business/create', data: {
-      'gtb_account_number': gtbAccountNumber,
-      'business_name': businessName,
-      'kycReferenceId': kycReferenceId,
-    });
+  Future<Response> fundWallet(double amount, String walletId, {String? redirectUrl}) async {
+    final data = <String, dynamic>{
+      'amount': amount,
+      'wallet_id': walletId,
+    };
+    if (redirectUrl != null) {
+      data['redirect_url'] = redirectUrl;
+    }
+    return await _dio.post('/wallet/fund/card', data: data);
   }
 
   Future<Response> verifyWalletFunding(String reference) async {
     return await verifyWalletPayment(reference);
   }
 
-  Future<Response> createVirtualAccount() async {
-    return await _dio.post('/wallet/create-virtual-account');
+  Future<Response> createVirtualAccount(String accountType) async {
+    return await _dio.post('/wallet/create-virtual-account', data: {
+      'accountType': accountType,
+    });
   }
 
   Future<Response> verifyWalletPayment(String reference, {bool suppressToast = false}) async {

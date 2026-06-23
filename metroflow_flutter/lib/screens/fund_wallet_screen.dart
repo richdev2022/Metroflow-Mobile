@@ -72,7 +72,10 @@ class _FundWalletScreenState extends ConsumerState<FundWalletScreen> {
     setState(() => _isLoading = true);
     try {
       final api = ApiService();
-      final response = await api.fundWallet(double.parse(amountText), widget.walletType);
+      final response = await api.fundWallet(
+        double.parse(amountText),
+        _selectedWallet!.id,
+      );
       if (response.statusCode == 200) {
         final data = response.data;
         if (data['payment_url'] != null) {
@@ -405,6 +408,27 @@ bool _isAlreadyVerifiedError(Object error) {
       normalized.contains('success');
 }
 
+String _getBankName(VirtualAccount? account) {
+  if (account == null) return '';
+  final provider = account.paymentProvider;
+  final providerMetadata = account.providerMetadata;
+  if (provider == 'monnify' && providerMetadata is Map<String, dynamic>) {
+    final responseBody = providerMetadata['responseBody'];
+    if (responseBody is Map) {
+      final accounts = responseBody['accounts'] as List?;
+      if (accounts != null && accounts.isNotEmpty) {
+        final firstAccount = accounts.first as Map;
+        return firstAccount['bankName'] ?? 'Monnify';
+      }
+    }
+  }
+  final bankCode = account.bankCode;
+  if (bankCode == '058') return 'GTBank';
+  if (bankCode == '035') return 'Wema Bank';
+  if (bankCode == '232') return 'Sterling Bank';
+  return provider ?? 'Unknown Bank';
+}
+
 class _BankInfoModal extends StatelessWidget {
   final Wallet? wallet;
   final VoidCallback onClose;
@@ -413,6 +437,10 @@ class _BankInfoModal extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final activeAccount = wallet?.virtualAccounts.firstWhere(
+      (a) => a.isActive == true,
+      orElse: () => wallet?.virtualAccounts.isNotEmpty == true ? wallet!.virtualAccounts.first : VirtualAccount(),
+    );
     return Container(
       constraints: BoxConstraints(
         maxHeight: MediaQuery.of(context).size.height * 0.7,
@@ -448,15 +476,15 @@ class _BankInfoModal extends StatelessWidget {
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 24),
-                _buildDetailItem('BANK NAME', wallet?.bankName ?? 'Squad (GTBank)'),
+                _buildDetailItem('BANK NAME', _getBankName(activeAccount)),
                 const SizedBox(height: 20),
                 _buildDetailItem(
                   'ACCOUNT NUMBER',
-                  wallet?.virtualAccountNumber ?? 'N/A',
+                  activeAccount?.virtualAccountNumber ?? 'N/A',
                   isBig: true,
                 ),
                 const SizedBox(height: 20),
-                _buildDetailItem('ACCOUNT NAME', wallet?.accountName ?? 'Metroflow Wallet'),
+                _buildDetailItem('ACCOUNT NAME', activeAccount?.accountName ?? 'Metroflow Wallet'),
               ],
             ),
           ),
@@ -493,7 +521,10 @@ class _BankInfoModal extends StatelessWidget {
                         style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, letterSpacing: 1)),
                   ),
                   IconButton(
-                    onPressed: () => AppToast.show('Copied'),
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: value));
+                      AppToast.show('Copied');
+                    },
                     icon: const Icon(Icons.copy_outlined, color: AppColors.primary),
                   ),
                 ],

@@ -208,9 +208,20 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
         recipient.recipientAccount,
       );
       if (response.data['success'] == true && mounted) {
-        setState(() {
-          _updateRecipient(recipientId, 'recipientName', response.data['data']['account_name']);
-        });
+        final data = response.data['data'];
+        String? name;
+        if (data is Map) {
+          if (data['account_name'] != null) {
+            name = data['account_name'];
+          } else if (data['responseBody'] != null && data['responseBody']['accountName'] != null) {
+            name = data['responseBody']['accountName'];
+          }
+        }
+        if (name != null) {
+          setState(() {
+            _updateRecipient(recipientId, 'recipientName', name!);
+          });
+        }
       }
     } catch (e) {
       if (mounted) {
