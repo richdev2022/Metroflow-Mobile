@@ -1,9 +1,9 @@
 import 'package:dio/dio.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:metroflow_flutter/utils/app_toast.dart';
+import 'package:metricorex_flutter/utils/app_toast.dart';
 import 'package:flutter/material.dart';
-import 'package:metroflow_flutter/providers/auth_provider.dart';
+import 'package:metricorex_flutter/providers/auth_provider.dart';
 
 const String _apiBaseUrl = 'https://metroflow-backend.netlify.app/api';
 
@@ -50,7 +50,7 @@ class ApiService {
 
   late final Dio _dio;
 
-  String? _extractResponseMessage(dynamic data) {
+  static String? extractResponseMessage(dynamic data) {
     if (data is Map) {
       final message = data['message'] ?? data['error'];
       if (message is String && message.trim().isNotEmpty) return message;
@@ -58,6 +58,17 @@ class ApiService {
     }
     if (data is String && data.trim().isNotEmpty) return data;
     return null;
+  }
+
+  static String extractErrorMessage(dynamic error) {
+    if (error is DioException) {
+      final responseData = error.response?.data;
+      final msg = extractResponseMessage(responseData);
+      if (msg != null) return msg;
+    }
+    final msg = extractResponseMessage(error);
+    if (msg != null) return msg;
+    return 'Something went wrong';
   }
 
   Future<void> _handleSessionExpired() async {
@@ -119,7 +130,7 @@ class ApiService {
         // Show success toast for non-GET requests if success and message exists
         if (isSuccess && response.requestOptions.method != 'GET' &&
             response.requestOptions.extra['suppressToast'] != true) {
-          final successMessage = _extractResponseMessage(data);
+          final successMessage = extractResponseMessage(data);
           if (successMessage != null) {
             AppToast.show(successMessage, type: AppToastType.success);
           }
@@ -127,14 +138,14 @@ class ApiService {
         
         // Show error toast if success is false (and not token error)
         if (isFailure && response.requestOptions.extra['suppressToast'] != true) {
-          final errorMessage = _extractResponseMessage(data) ?? 'Something went wrong';
+          final errorMessage = extractResponseMessage(data) ?? 'Something went wrong';
           AppToast.show(errorMessage, type: AppToastType.error);
         }
         
         return handler.next(response);
       },
       onError: (error, handler) async {
-        final message = _extractResponseMessage(error.response?.data) ?? 'Something went wrong';
+        final message = extractResponseMessage(error.response?.data) ?? 'Something went wrong';
         final errorData = error.response?.data;
         final isPlanUpgradeError = errorData is Map && 
             errorData['error'] != null && 
@@ -386,34 +397,34 @@ class ApiService {
     return await _dio.get('/transfers/banks');
   }
 
-  Future<Response> resolveAccount(String bankCode, String accountNumber) async {
+  Future<Response> resolveAccount(String bankCode, String accountNumber, {bool suppressToast = false}) async {
     return await _dio.post('/transfers/account-lookup', data: {
       'bank_code': bankCode,
       'account_number': accountNumber,
-    });
+    }, options: Options(extra: {'suppressToast': suppressToast}));
   }
 
-  Future<Response> lookupTransferAccount(String bankCode, String accountNumber) async {
+  Future<Response> lookupTransferAccount(String bankCode, String accountNumber, {bool suppressToast = false}) async {
     return await _dio.post('/transfers/lookup', data: {
       'bank_code': bankCode,
       'account_number': accountNumber,
-    });
+    }, options: Options(extra: {'suppressToast': suppressToast}));
   }
 
   Future<Response> requestTransferOtp({String? walletId}) async {
     return await _dio.post('/transfers/otp/request', data: {'wallet_id': walletId});
   }
 
-  Future<Response> singleTransfer(Map<String, dynamic> data) async {
-    return await _dio.post('/transfers/single', data: data);
+  Future<Response> singleTransfer(Map<String, dynamic> data, {bool suppressToast = true}) async {
+    return await _dio.post('/transfers/single', data: data, options: Options(extra: {'suppressToast': suppressToast}));
   }
 
-  Future<Response> bulkTransfer(Map<String, dynamic> data) async {
-    return await _dio.post('/transfers/bulk', data: data);
+  Future<Response> bulkTransfer(Map<String, dynamic> data, {bool suppressToast = true}) async {
+    return await _dio.post('/transfers/bulk', data: data, options: Options(extra: {'suppressToast': suppressToast}));
   }
 
-  Future<Response> bulkTransferV2(Map<String, dynamic> data) async {
-    return await _dio.post('/transfers/bulk', data: data);
+  Future<Response> bulkTransferV2(Map<String, dynamic> data, {bool suppressToast = true}) async {
+    return await _dio.post('/transfers/bulk', data: data, options: Options(extra: {'suppressToast': suppressToast}));
   }
 
   Future<Response> getTransfers({Map<String, dynamic>? params}) async {

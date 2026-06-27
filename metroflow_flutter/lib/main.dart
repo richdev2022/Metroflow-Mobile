@@ -26,6 +26,7 @@ import 'screens/fund_wallet_screen.dart';
 import 'screens/bulk_transfer_screen.dart';
 import 'screens/transfers_screen.dart';
 import 'screens/transfer_detail_screen.dart';
+import 'screens/transfer_success_screen.dart';
 import 'screens/create_task_screen.dart';
 import 'screens/task_detail_screen.dart';
 import 'screens/ideas_screen.dart';
@@ -41,6 +42,7 @@ import 'screens/bulk_create_tasks_screen.dart';
 import 'models/payment_transaction.dart';
 import 'screens/fees_screen.dart';
 import 'screens/activity_logs_screen.dart';
+import 'screens/board_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -309,6 +311,10 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
               builder: (context, state) => const SubscriptionScreen(),
             ),
             GoRoute(
+              path: 'board',
+              builder: (context, state) => const BoardScreen(),
+            ),
+            GoRoute(
               path: 'fees',
               builder: (context, state) => const FeesScreen(),
             ),
@@ -326,6 +332,18 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
                 final extra = state.extra;
                 if (extra is! Transfer) return const TransfersScreen();
                 return TransferDetailScreen(transfer: extra);
+              },
+            ),
+            GoRoute(
+              path: 'transfer-success',
+              builder: (context, state) {
+                final extra = state.extra as Map<String, dynamic>?;
+                final bulkResponse = extra?['bulkResponse'] as BulkTransferResponse?;
+                final singleResponse = extra?['singleResponse'] as SingleTransferResponse?;
+                return TransferSuccessScreen(
+                  bulkResponse: bulkResponse,
+                  singleResponse: singleResponse,
+                );
               },
             ),
             GoRoute(
@@ -471,7 +489,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     return ErrorBoundary(
       child: IdleTimeoutHandler(
         child: MaterialApp.router(
-          title: 'Metroflow',
+          title: 'Metricorex',
           debugShowCheckedModeBanner: false,
           theme: AppTheme.lightTheme,
           darkTheme: AppTheme.darkTheme,

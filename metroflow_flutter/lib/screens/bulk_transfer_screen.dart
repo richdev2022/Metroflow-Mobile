@@ -1,12 +1,14 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:metroflow_flutter/theme/app_theme.dart';
-import 'package:metroflow_flutter/services/api.dart';
-import 'package:metroflow_flutter/models/employee.dart';
-import 'package:metroflow_flutter/models/epic.dart';
-import 'package:metroflow_flutter/models/bank.dart';
-import 'package:metroflow_flutter/models/wallet.dart';
+import 'package:metricorex_flutter/theme/app_theme.dart';
+import 'package:metricorex_flutter/services/api.dart';
+import 'package:metricorex_flutter/models/employee.dart';
+import 'package:metricorex_flutter/models/epic.dart';
+import 'package:metricorex_flutter/models/bank.dart';
+import 'package:metricorex_flutter/models/wallet.dart';
+import 'package:metricorex_flutter/models/transfer.dart';
 
 class BulkTransferScreen extends ConsumerStatefulWidget {
   const BulkTransferScreen({super.key});
@@ -31,11 +33,45 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
   bool _loading = true;
   bool _showOtpModal = false;
   bool _submitting = false;
+  String _bankSearchQuery = '';
+  final _bankSearchController = TextEditingController();
+  int _otpCountdown = 30;
+  Timer? _otpTimer;
+  bool _canResendOtp = false;
 
   @override
   void initState() {
     super.initState();
     _fetchData();
+  }
+
+  void _startOtpCountdown() {
+    setState(() {
+      _otpCountdown = 30;
+      _canResendOtp = false;
+    });
+    _otpTimer?.cancel();
+    _otpTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      setState(() {
+        if (_otpCountdown > 0) {
+          _otpCountdown--;
+        } else {
+          _canResendOtp = true;
+          timer.cancel();
+        }
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _bankSearchController.dispose();
+    _otpTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _fetchData() async {
@@ -206,6 +242,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
       final response = await api.resolveAccount(
         recipient.recipientBank,
         recipient.recipientAccount,
+        suppressToast: true,
       );
       if (response.data['success'] == true && mounted) {
         final data = response.data['data'];
@@ -222,6 +259,11 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
             _updateRecipient(recipientId, 'recipientName', name!);
           });
         }
+      } else if (mounted) {
+        final errorMessage = response.data['message'] ?? response.data['error'] ?? 'Failed to resolve account';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(errorMessage)),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -271,6 +313,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
       await api.requestTransferOtp(walletId: wallet['id']);
       if (mounted) {
         setState(() => _showOtpModal = true);
+        _startOtpCountdown();
       }
     } catch (e) {
       if (mounted) {
@@ -305,109 +348,135 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
       return;
     }
 
+    if (_transferType == 'epic' && _selectedEpic == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please select an Epic')),
+        );
+      }
+      return;
+    }
+
+    if (_transferType == 'epic') {
+      final hasEmptyFields = _recipients.any((r) =>
+          r.recipientAccount.isEmpty || r.recipientBank.isEmpty || r.amount.isEmpty);
+      if (hasEmptyFields) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Please fill in all recipient details')),
+          );
+        }
+        return;
+      }
+      
+      // Check minimum amount for epic transfers
+      final hasInvalidAmount = _recipients.any((r) => (double.tryParse(r.amount) ?? 0) < 100);
+      if (hasInvalidAmount) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('All amounts must be at least 100')),
+          );
+        }
+        return;
+      }
+    }
+    
+    // Check minimum amount for salary transfers
+    if (_transferType == 'salary') {
+      final hasInvalidAmount = _employees.any((emp) => (emp.netSalary as num) < 100);
+      if (hasInvalidAmount) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('All salaries must be at least 100')),
+          );
+        }
+        return;
+      }
+    }
+
     setState(() => _submitting = true);
     try {
       final api = ApiService();
-      List<Map<String, dynamic>> transfersData;
       
-      if (_transferType == 'salary') {
-        transfersData = _employees.map((emp) {
-          return {
-            'recipient_account': emp.bankAccountNumber ?? '',
-            'recipient_bank': emp.bankCode ?? '',
-            'recipient_name': emp.name,
-            'amount': emp.netSalary,
-            'remark': 'Salary Payment',
-            'source_type': 'salary',
-            'source_id': '',
-          };
-        }).toList();
+      // Check if it's single transfer mode
+      if (_transferType == 'epic' && _transferMode == 'single') {
+        final recipient = _recipients.first;
+        final payload = {
+          'bankCode': recipient.recipientBank,
+          'accountNumber': recipient.recipientAccount,
+          'accountName': recipient.recipientName,
+          'amount': double.tryParse(recipient.amount) ?? 0,
+          'remark': recipient.remark,
+          'otp': _otp,
+          'wallet_id': wallet['id'],
+        };
+        
+        final response = await api.singleTransfer(payload);
+        final singleResponse = SingleTransferResponse.fromJson(response.data);
+        
+        if (mounted) {
+          setState(() {
+            _submitting = false;
+            _showOtpModal = false;
+          });
+          context.push('/main/transfer-success', extra: {
+            'singleResponse': singleResponse,
+          });
+        }
       } else {
-        transfersData = _recipients.map((r) {
-          return {
-            'recipient_account': r.recipientAccount,
-            'recipient_bank': r.recipientBank,
-            'recipient_name': r.recipientName,
-            'amount': double.tryParse(r.amount) ?? 0,
-            'remark': r.remark,
-            'source_type': 'epic',
-            'source_id': _selectedEpic?.id ?? '',
-          };
-        }).toList();
-      }
-
-      final payload = _transferType == 'salary'
-          ? {
-              'type': 'salary',
-              'otp': _otp,
-              'source_wallet_id': wallet['id'],
-              'items': transfersData,
-              'transfers': transfersData,
-              'data': {
-                'items': transfersData,
-                'transfers': transfersData,
-              },
-            }
-          : {
-              'type': 'manual',
-              'otp': _otp,
-              'source_wallet_id': wallet['id'],
-              'items': transfersData,
-              'transfers': transfersData,
-              'data': {
-                'items': transfersData,
-                'transfers': transfersData,
-              },
+        // Bulk transfer (Salary or Epic bulk)
+        List<Map<String, dynamic>> items;
+        
+        if (_transferType == 'salary') {
+          items = _employees.map((emp) {
+            return {
+              'amount': emp.netSalary,
+              'bankCode': emp.bankCode ?? '',
+              'accountNumber': emp.bankAccountNumber ?? '',
+              'accountName': emp.name,
+              'remark': 'Salary Payment',
             };
-
-      final response = await api.bulkTransferV2(payload);
-      final backendMessage = response.data is Map
-          ? response.data['message'] as String?
-          : null;
-
-      if (mounted) {
-        showDialog(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Success'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Transfer initiated successfully'),
-                if (backendMessage != null && backendMessage.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    backendMessage,
-                    style: TextStyle(color: AppTheme.colors.textSecondary),
-                  ),
-                ],
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.of(ctx).pop();
-                  context.pop();
-                },
-                child: const Text('OK'),
-              ),
-            ],
-          ),
-        );
+          }).toList();
+        } else {
+          items = _recipients.map((r) {
+            return {
+              'amount': double.tryParse(r.amount) ?? 0,
+              'bankCode': r.recipientBank.trim(),
+              'accountNumber': r.recipientAccount.trim(),
+              'accountName': r.recipientName.trim(),
+              'remark': r.remark,
+            };
+          }).toList();
+        }
+        
+        final payload = {
+          'type': _transferType == 'salary' ? 'Salary' : 'Epic',
+          'otp': _otp,
+          'source_wallet_id': wallet['id'],
+          'data': {
+            'items': items,
+          },
+        };
+        
+        final response = await api.bulkTransferV2(payload);
+        final bulkResponse = BulkTransferResponse.fromJson(response.data);
+        
+        if (mounted) {
+          setState(() {
+            _submitting = false;
+            _showOtpModal = false;
+          });
+          context.push('/main/transfer-success', extra: {
+            'bulkResponse': bulkResponse,
+          });
+        }
       }
     } catch (e) {
       if (mounted) {
+        setState(() => _submitting = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Transfer failed: ${e.toString()}')),
         );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _submitting = false;
-          _showOtpModal = false;
-        });
       }
     }
   }
@@ -807,7 +876,13 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
           _buildField(
             'Bank',
             GestureDetector(
-              onTap: () => setState(() => _showBankPicker = true),
+              onTap: () {
+                setState(() {
+                  _bankSearchQuery = '';
+                  _bankSearchController.clear();
+                  _showBankPicker = true;
+                });
+              },
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 decoration: BoxDecoration(
@@ -862,7 +937,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
             'Amount',
             TextField(
               decoration: InputDecoration(
-                hintText: 'Enter amount',
+                hintText: 'Enter amount (min: 100)',
                 hintStyle: TextStyle(color: colors.textSecondary),
               ),
               style: TextStyle(color: colors.text, fontSize: 16),
@@ -1097,6 +1172,10 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
   }
 
   Widget _buildBankPicker(ThemeColors colors) {
+    final filteredBanks = _banks
+        .where((bank) => bank.name.toLowerCase().contains(_bankSearchQuery.toLowerCase()))
+        .toList();
+
     return Stack(
       children: [
         ModalBarrier(
@@ -1134,12 +1213,36 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
                       ],
                     ),
                     const SizedBox(height: 16),
+                    TextField(
+                      controller: _bankSearchController,
+                      decoration: InputDecoration(
+                        hintText: 'Search banks...',
+                        prefixIcon: Icon(Icons.search, color: colors.textSecondary),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: colors.border),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: colors.border),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: colors.primary),
+                        ),
+                      ),
+                      style: TextStyle(color: colors.text),
+                      onChanged: (value) {
+                        setState(() => _bankSearchQuery = value);
+                      },
+                    ),
+                    const SizedBox(height: 16),
                     Expanded(
                       child: ListView.builder(
                         controller: scrollController,
-                        itemCount: _banks.length,
+                        itemCount: filteredBanks.length,
                         itemBuilder: (context, index) {
-                          final bank = _banks[index];
+                          final bank = filteredBanks[index];
                           return GestureDetector(
                             onTap: () {
                               setState(() {
@@ -1180,6 +1283,10 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
         ),
       ],
     );
+  }
+
+  Future<void> _handleResendOtp() async {
+    await _handleRequestOtp();
   }
 
   Widget _buildOtpModal(ThemeColors colors) {
@@ -1236,6 +1343,33 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
                               maxLength: 6,
                               textAlign: TextAlign.center,
                               onChanged: (value) => setState(() => _otp = value),
+                            ),
+                            const SizedBox(height: 8),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  _canResendOtp
+                                      ? 'Didn\'t receive OTP?'
+                                      : 'Resend OTP in $_otpCountdown seconds',
+                                  style: TextStyle(
+                                    color: colors.textSecondary,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                if (_canResendOtp)
+                                  TextButton(
+                                    onPressed: _submitting ? null : _handleResendOtp,
+                                    child: Text(
+                                      'Resend OTP',
+                                      style: TextStyle(
+                                        color: colors.primary,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             ),
                             const SizedBox(height: 24),
                             SizedBox(
