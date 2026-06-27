@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:metroflow_flutter/providers/auth_provider.dart';
-import 'package:metroflow_flutter/services/api.dart';
-import 'package:metroflow_flutter/theme/app_theme.dart';
+import '../providers/auth_provider.dart';
+import '../services/api.dart';
+import '../theme/app_theme.dart';
 
 class VerifyOtpScreen extends ConsumerStatefulWidget {
   const VerifyOtpScreen({super.key, required this.email});

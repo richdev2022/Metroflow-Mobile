@@ -63,7 +63,7 @@ class _KycInitiateScreenState extends ConsumerState<KycInitiateScreen> {
       }
     } catch (e) {
       debugPrint('KYC initiate error: $e');
-      AppToast.show(e.toString().replaceAll('Exception: ', ''));
+      AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

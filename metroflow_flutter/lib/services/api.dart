@@ -1,9 +1,9 @@
 import 'package:dio/dio.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:metricorex_flutter/utils/app_toast.dart';
+import '../utils/app_toast.dart';
 import 'package:flutter/material.dart';
-import 'package:metricorex_flutter/providers/auth_provider.dart';
+import '../providers/auth_provider.dart';
 
 const String _apiBaseUrl = 'https://metroflow-backend.netlify.app/api';
 

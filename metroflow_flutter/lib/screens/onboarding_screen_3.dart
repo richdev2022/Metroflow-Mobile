@@ -38,7 +38,7 @@ class OnboardingScreen3 extends ConsumerWidget {
                     child: const Icon(Icons.account_balance_wallet, size: 48, color: AppColors.warning),
                   ),
                   const SizedBox(height: 8),
-                  const Text('Metroflow', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: AppColors.primary)),
+                  const Text('Metricorex', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: AppColors.primary)),
                   const SizedBox(height: 16),
                   const Text('Automated HR & Payroll', style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
                   const SizedBox(height: 4),

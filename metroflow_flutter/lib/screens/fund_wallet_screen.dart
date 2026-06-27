@@ -484,7 +484,7 @@ class _BankInfoModal extends StatelessWidget {
                   isBig: true,
                 ),
                 const SizedBox(height: 20),
-                _buildDetailItem('ACCOUNT NAME', activeAccount?.accountName ?? 'Metroflow Wallet'),
+                _buildDetailItem('ACCOUNT NAME', activeAccount?.accountName ?? 'Metricorex Wallet'),
               ],
             ),
           ),

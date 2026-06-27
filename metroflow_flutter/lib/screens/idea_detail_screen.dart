@@ -271,7 +271,7 @@ class _IdeaDetailScreenState extends ConsumerState<IdeaDetailScreen> {
       }
     } catch (e) {
       debugPrint('Download PDF failed: $e');
-      AppToast.show(e.toString().replaceAll('Exception: ', ''), type: AppToastType.error);
+      AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
     }
   }
 

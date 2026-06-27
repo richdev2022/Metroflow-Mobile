@@ -248,7 +248,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    'Metroflow',
+                    'Metricorex',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 28,
@@ -262,6 +262,13 @@ class _MainScreenState extends ConsumerState<MainScreen> {
               child: ListView(
                 padding: EdgeInsets.zero,
                 children: [
+                  ListTile(
+                    leading: const Icon(Icons.dashboard_outlined),
+                    title: const Text('Board'),
+                    onTap: () {
+                      context.go('/main/board');
+                    },
+                  ),
                   ListTile(
                     leading: const Icon(Icons.person_outline),
                     title: const Text('Profile'),

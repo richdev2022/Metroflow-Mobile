@@ -39,6 +39,6 @@ app.*.symbols
 app.*.map.json
 
 # Android Studio will place build artifacts here
-/metroflow_flutter/android/app/debug
-/metroflow_flutter/android/app/profile
-/metroflow_flutter/android/app/release
+/Metricorex_flutter/android/app/debug
+/Metricorex_flutter/android/app/profile
+/Metricorex_flutter/android/app/release

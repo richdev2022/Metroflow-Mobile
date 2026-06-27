@@ -145,7 +145,7 @@ class _OnboardingPage1 extends StatelessWidget {
             child: const Icon(Icons.business_center, size: 48, color: AppColors.primary),
           ),
           const SizedBox(height: 8),
-          const Text('Metroflow',
+          const Text('Metricorex',
               style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: AppColors.primary)),
           const SizedBox(height: 32),
           const Text(
@@ -206,7 +206,7 @@ class _OnboardingPage2 extends StatelessWidget {
             child: const Icon(Icons.people, size: 48, color: AppColors.success),
           ),
           const SizedBox(height: 8),
-          const Text('Metroflow',
+          const Text('Metricorex',
               style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: AppColors.primary)),
           const SizedBox(height: 16),
           const Text(
@@ -308,7 +308,7 @@ class _OnboardingPage3 extends StatelessWidget {
             child: const Icon(Icons.account_balance_wallet, size: 48, color: AppColors.warning),
           ),
           const SizedBox(height: 8),
-          const Text('Metroflow',
+          const Text('Metricorex',
               style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: AppColors.primary)),
           const SizedBox(height: 16),
           const Text('Automated HR & Payroll',

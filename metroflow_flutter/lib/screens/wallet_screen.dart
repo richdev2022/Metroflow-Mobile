@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:metroflow_flutter/theme/app_theme.dart';
-import 'package:metroflow_flutter/services/api.dart';
-import 'package:metroflow_flutter/models/bank.dart';
+import '../theme/app_theme.dart';
+import '../services/api.dart';
+import '../models/bank.dart';
 
 
 class WalletScreen extends ConsumerStatefulWidget {
@@ -144,7 +144,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
     setState(() => isTransferLoading = true);
     try {
       final api = ApiService();
-      final response = await api.resolveAccount(selectedBankCode, accountNumber);
+      final response = await api.resolveAccount(selectedBankCode, accountNumber, suppressToast: true);
       if (response.data['success'] == true && mounted) {
         final data = response.data['data'];
         String? name;
@@ -160,9 +160,20 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
             accountName = name!;
           });
         }
+      } else if (mounted) {
+        // Handle failure case
+        final errorMessage = response.data['message'] ?? response.data['error'] ?? 'Failed to verify account';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(errorMessage)),
+        );
       }
     } catch (e) {
       debugPrint('Failed to resolve account: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to verify account: $e')),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() => isTransferLoading = false);
@@ -292,21 +303,45 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
       margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [colors.primary, colors.primaryLight],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        color: colors.surface,
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: colors.border),
+        boxShadow: [
+          BoxShadow(
+            color: colors.text.withValues(alpha: 0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: const TextStyle(fontSize: 14, color: Colors.white)),
-          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(label, style: TextStyle(fontSize: 14, color: colors.textSecondary, fontWeight: FontWeight.w500)),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: colors.primaryBg,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  hasWallet ? 'Active' : 'Inactive',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: colors.primary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
           Text(
             _formatCurrency(wallet),
-            style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white),
+            style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: colors.text),
           ),
           if (hasVirtualAccounts) ...[
             const SizedBox(height: 24),
@@ -317,12 +352,12 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
                           color: isActive
-                              ? Colors.white.withValues(alpha: 0.2)
-                              : Colors.red.withValues(alpha: 0.2),
+                              ? colors.surfaceVariant
+                              : colors.errorBg.withValues(alpha: 0.3),
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(
-                            color: isActive ? Colors.transparent : Colors.red,
-                            width: 2,
+                            color: isActive ? colors.border : colors.error,
+                            width: 1,
                           ),
                         ),
                         child: Column(
@@ -331,11 +366,11 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                const Text('Account Number:', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                                Text('Account Number:', style: TextStyle(color: colors.textSecondary, fontSize: 12, fontWeight: FontWeight.w500)),
                                 Text(
                                   account['virtual_account_number'] ?? '',
-                                  style: const TextStyle(
-                                    color: Colors.white,
+                                  style: TextStyle(
+                                    color: colors.text,
                                     fontSize: 16,
                                     fontWeight: FontWeight.bold,
                                   ),
@@ -346,11 +381,11 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                const Text('Bank:', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                                Text('Bank:', style: TextStyle(color: colors.textSecondary, fontSize: 12, fontWeight: FontWeight.w500)),
                                 Text(
                                   _getBankName(account),
-                                  style: const TextStyle(
-                                    color: Colors.white,
+                                  style: TextStyle(
+                                    color: colors.text,
                                     fontSize: 14,
                                     fontWeight: FontWeight.w500,
                                   ),
@@ -362,12 +397,12 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
-                                  const Text('Account Name:', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                                  Text('Account Name:', style: TextStyle(color: colors.textSecondary, fontSize: 12, fontWeight: FontWeight.w500)),
                                   Expanded(
                                     child: Text(
                                       account['account_name'] ?? '',
-                                      style: const TextStyle(
-                                        color: Colors.white,
+                                      style: TextStyle(
+                                        color: colors.text,
                                         fontSize: 14,
                                         fontWeight: FontWeight.w500,
                                       ),
@@ -382,13 +417,13 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                             if (!isActive)
                               Row(
                                 children: [
-                                  const Icon(Icons.warning, color: Colors.red, size: 16),
+                                  Icon(Icons.warning, color: colors.error, size: 16),
                                   const SizedBox(width: 8),
                                   Expanded(
                                     child: Text(
                                       'Do not use this account. It is currently inactive.',
                                       style: TextStyle(
-                                        color: Colors.red[300],
+                                        color: colors.error,
                                         fontSize: 12,
                                         fontWeight: FontWeight.w600,
                                       ),
@@ -399,12 +434,12 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                             if (isActive)
                               Row(
                                 children: [
-                                  const Icon(Icons.check_circle, color: Colors.green, size: 16),
+                                  Icon(Icons.check_circle, color: colors.success, size: 16),
                                   const SizedBox(width: 8),
                                   Text(
                                     'Active - Use this account',
                                     style: TextStyle(
-                                      color: Colors.green[300],
+                                      color: colors.success,
                                       fontSize: 12,
                                       fontWeight: FontWeight.w600,
                                     ),
@@ -421,27 +456,31 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
             Row(
               children: [
                 Expanded(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: TextButton(
-                      onPressed: hasVirtualAccounts ? () => context.go('/main/fund-wallet', extra: {'walletType': walletType}) : null,
-                      child: const Text('Fund Wallet', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                  child: ElevatedButton.icon(
+                    onPressed: hasVirtualAccounts ? () => context.go('/main/fund-wallet', extra: {'walletType': walletType}) : null,
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('Fund Wallet', style: TextStyle(fontWeight: FontWeight.w600)),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: TextButton(
-                      onPressed: hasVirtualAccounts ? () => openTransferModal(walletType) : null,
-                      child: const Text('Transfer', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                  child: OutlinedButton.icon(
+                    onPressed: hasVirtualAccounts ? () => openTransferModal(walletType) : null,
+                    icon: const Icon(Icons.send, size: 18),
+                    label: const Text('Transfer', style: TextStyle(fontWeight: FontWeight.w600)),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      side: BorderSide(color: colors.primary),
+                      foregroundColor: colors.primary,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
                   ),
                 ),

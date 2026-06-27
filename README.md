@@ -1,4 +1,4 @@
-# Metroflow Pay - Flutter App
+# Metricorex Pay - Flutter App
 
 ## Getting Started
 
@@ -9,7 +9,7 @@
 ### Installation
 1. Navigate to Flutter project:
    ```bash
-   cd metroflow_flutter
+   cd Metricorex_flutter
    ```
 
 2. Install dependencies:
@@ -39,7 +39,7 @@
 
 ### Project Structure
 ```
-metroflow_flutter/
+Metricorex_flutter/
 ├── lib/
 │   ├── screens/          # All screen components
 │   ├── services/         # API & Biometrics services

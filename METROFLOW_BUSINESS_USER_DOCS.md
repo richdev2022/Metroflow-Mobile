@@ -1,4 +1,4 @@
-# MetroFlow Mobile Version Documentation
+# Metricorex Mobile Version Documentation
 
 ## Table of Contents
 

@@ -1,4 +1,4 @@
-# Metroflow-Mobile Development Setup
+# Metricorex-Mobile Development Setup
 
 ## Prerequisites
 
@@ -18,7 +18,7 @@ flutter doctor
 
 ### 2. Navigate to Flutter project
 ```bash
-cd metroflow_flutter
+cd Metricorex_flutter
 ```
 
 ### 3. Install dependencies
@@ -44,7 +44,7 @@ If you get this error:
    - Check with: `flutter devices`
 2. Regenerate platform-specific files:
    ```bash
-   cd metroflow_flutter
+   cd Metricorex_flutter
    flutter create .
    ```
 

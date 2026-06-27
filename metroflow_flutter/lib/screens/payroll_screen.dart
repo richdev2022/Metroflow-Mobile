@@ -110,21 +110,31 @@ class _PayrollScreenState extends State<PayrollScreen> {
     setState(() => _isVerifyingAccount = true);
     try {
       final api = ApiService();
-      final response = await api.resolveAccount(bankCode, accountNumber);
-      if (response.statusCode == 200 && mounted) {
-        final data = response.data;
-        final accountName = data['account_name'] as String?;
+      final response = await api.resolveAccount(bankCode, accountNumber, suppressToast: true);
+      if (response.data['success'] == true && mounted) {
+        final data = response.data['data'];
+        String? accountName;
+        if (data is Map) {
+          if (data['account_name'] != null) {
+            accountName = data['account_name'];
+          } else if (data['responseBody'] != null && data['responseBody']['accountName'] != null) {
+            accountName = data['responseBody']['accountName'];
+          }
+        }
         if (accountName != null) {
           setState(() {
             _editEmployeeData['account_name'] = accountName;
-            _editAccountNameController.text = accountName;
+            _editAccountNameController.text = accountName!;
           });
           AppToast.show('Account verified successfully!', type: AppToastType.success);
         }
+      } else if (mounted) {
+        final errorMessage = response.data['message'] ?? response.data['error'] ?? 'Failed to verify account';
+        AppToast.show(errorMessage, type: AppToastType.error);
       }
     } catch (e) {
       debugPrint('Failed to verify account: $e');
-      AppToast.show('Failed to verify account', type: AppToastType.error);
+      AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
     } finally {
       if (mounted) setState(() => _isVerifyingAccount = false);
     }

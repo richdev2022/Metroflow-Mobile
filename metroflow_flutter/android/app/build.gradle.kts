@@ -5,9 +5,9 @@ plugins {
 }
 
 android {
-    namespace = "com.example.metroflow_flutter"
+    namespace = "com.example.Metricorex_flutter"
     compileSdk = 36
-    ndkVersion = "27.1.12297006"
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -16,7 +16,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.metroflow_flutter"
+        applicationId = "com.example.Metricorex_flutter"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

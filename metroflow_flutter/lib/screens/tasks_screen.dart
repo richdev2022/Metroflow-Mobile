@@ -2,11 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:metroflow_flutter/theme/app_theme.dart';
-import 'package:metroflow_flutter/services/api.dart';
-import 'package:metroflow_flutter/models/task.dart';
-import 'package:metroflow_flutter/models/epic.dart';
-import 'package:metroflow_flutter/screens/bulk_create_tasks_screen.dart';
+import '../theme/app_theme.dart';
+import '../services/api.dart';
+import '../models/task.dart';
+import '../models/epic.dart';
+import 'bulk_create_tasks_screen.dart';
 
 class TasksScreen extends ConsumerStatefulWidget {
   const TasksScreen({super.key});

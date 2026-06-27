@@ -320,7 +320,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   void _showError(Object error) {
-    AppToast.show(error.toString().replaceAll('Exception: ', ''), type: AppToastType.error);
+    AppToast.show(ApiService.extractErrorMessage(error), type: AppToastType.error);
   }
 
   void _showInfo(String title, String message) {

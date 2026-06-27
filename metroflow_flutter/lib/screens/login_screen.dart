@@ -280,7 +280,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
                     const SizedBox(height: 24),
                     Text(
-                      'Metroflow',
+                      'Metricorex',
                       style: TextStyle(
                         fontSize: 32,
                         fontWeight: FontWeight.bold,

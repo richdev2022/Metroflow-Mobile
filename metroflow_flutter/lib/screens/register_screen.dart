@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:metroflow_flutter/providers/auth_provider.dart';
-import 'package:metroflow_flutter/theme/app_theme.dart';
+import '../providers/auth_provider.dart';
+import '../theme/app_theme.dart';
 
 const List<String> businessIndustries = [
   'Technology',
@@ -500,7 +500,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Join Metroflow today',
+                    'Join Metricorex today',
                     style: TextStyle(
                       fontSize: 16,
                       color: colors.textSecondary,

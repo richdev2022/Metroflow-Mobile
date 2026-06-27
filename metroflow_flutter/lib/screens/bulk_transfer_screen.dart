@@ -2,13 +2,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:metricorex_flutter/theme/app_theme.dart';
-import 'package:metricorex_flutter/services/api.dart';
-import 'package:metricorex_flutter/models/employee.dart';
-import 'package:metricorex_flutter/models/epic.dart';
-import 'package:metricorex_flutter/models/bank.dart';
-import 'package:metricorex_flutter/models/wallet.dart';
-import 'package:metricorex_flutter/models/transfer.dart';
+import '../theme/app_theme.dart';
+import '../services/api.dart';
+import '../models/employee.dart';
+import '../models/epic.dart';
+import '../models/bank.dart';
+import '../models/wallet.dart';
+import '../models/transfer.dart';
 
 class BulkTransferScreen extends ConsumerStatefulWidget {
   const BulkTransferScreen({super.key});

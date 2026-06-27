@@ -203,7 +203,7 @@
 [  +23 ms] Found plugin sqflite at C:\Users\DELL\AppData\Local\Pub\Cache\hosted\pub.dev\sqflite-2.4.2+1\
 [   +6 ms] Found plugin sqflite_darwin at C:\Users\DELL\AppData\Local\Pub\Cache\hosted\pub.dev\sqflite_darwin-2.4.2\
 [   +2 ms] Found plugin sqflite_android at C:\Users\DELL\AppData\Local\Pub\Cache\hosted\pub.dev\sqflite_android-2.4.2+3\
-[  +24 ms] Generating C:\Projects\Metroflow-Mobile\metroflow_flutter\android\app\src\main\java\io\flutter\plugins\GeneratedPluginRegistrant.java
+[  +24 ms] Generating C:\Projects\Metricorex-Mobile\Metricorex_flutter\android\app\src\main\java\io\flutter\plugins\GeneratedPluginRegistrant.java
 [   +3 ms] Skipping generating GeneratedPluginRegistrant.java because it is up-to-date.
 [   +9 ms] Skipping generating generated_plugin_registrant.h because it is up-to-date.
 [   +2 ms] Skipping generating generated_plugin_registrant.cc because it is up-to-date.
@@ -219,21 +219,21 @@
 [  +30 ms] CMake project not found, skipping support Android 15 16k page size migration.
 [  +13 ms] The developer has already configured the Built-In Kotlin flag, skipping migration.
 [   +2 ms] The developer has already configured the new DSL flag, skipping migration.
-[  +35 ms] Using gradle from C:\Projects\Metroflow-Mobile\metroflow_flutter\android\gradlew.bat.
-[  +56 ms] LocalFile: 'C:\Projects\Metroflow-Mobile\metroflow_flutter\android\build.gradle.kts' doesn't provide an AGP version. Checking settings.
-[   +3 ms] LocalFile: 'C:\Projects\Metroflow-Mobile\metroflow_flutter\android\settings.gradle.kts' provides AGP version: 9.0.1
+[  +35 ms] Using gradle from C:\Projects\Metricorex-Mobile\Metricorex_flutter\android\gradlew.bat.
+[  +56 ms] LocalFile: 'C:\Projects\Metricorex-Mobile\Metricorex_flutter\android\build.gradle.kts' doesn't provide an AGP version. Checking settings.
+[   +3 ms] LocalFile: 'C:\Projects\Metricorex-Mobile\Metricorex_flutter\android\settings.gradle.kts' provides AGP version: 9.0.1
 [  +21 ms] Running Gradle task 'assembleRelease'...
-[   +2 ms] executing: [C:\Projects\Metroflow-Mobile\metroflow_flutter\android/] C:\Projects\Metroflow-Mobile\metroflow_flutter\android\gradlew.bat --full-stacktrace --info -Pverbose=true -Ptarget-platform=android-arm,android-arm64,android-x64 -Ptarget=lib\main.dart -Pbase-application-name=android.app.Application -Pdart-defines=RkxVVFRFUl9WRVJTSU9OPTMuNDQuMQ==,RkxVVFRFUl9DSEFOTkVMPXN0YWJsZQ==,RkxVVFRFUl9HSVRfVVJMPWh0dHBzOi8vZ2l0aHViLmNvbS9mbHV0dGVyL2ZsdXR0ZXIuZ2l0,RkxVVFRFUl9GUkFNRVdPUktfUkVWSVNJT049OTI0MTM0YTQ0Yw==,RkxVVFRFUl9FTkdJTkVfUkVWSVNJT049YzQxNmFjZmViOA==,RkxVVFRFUl9EQVJUX1ZFUlNJT049My4xMi4x -Pdart-obfuscation=false -Ptrack-widget-creation=true -Ptree-shake-icons=true assembleRelease
+[   +2 ms] executing: [C:\Projects\Metricorex-Mobile\Metricorex_flutter\android/] C:\Projects\Metricorex-Mobile\Metricorex_flutter\android\gradlew.bat --full-stacktrace --info -Pverbose=true -Ptarget-platform=android-arm,android-arm64,android-x64 -Ptarget=lib\main.dart -Pbase-application-name=android.app.Application -Pdart-defines=RkxVVFRFUl9WRVJTSU9OPTMuNDQuMQ==,RkxVVFRFUl9DSEFOTkVMPXN0YWJsZQ==,RkxVVFRFUl9HSVRfVVJMPWh0dHBzOi8vZ2l0aHViLmNvbS9mbHV0dGVyL2ZsdXR0ZXIuZ2l0,RkxVVFRFUl9GUkFNRVdPUktfUkVWSVNJT049OTI0MTM0YTQ0Yw==,RkxVVFRFUl9FTkdJTkVfUkVWSVNJT049YzQxNmFjZmViOA==,RkxVVFRFUl9EQVJUX1ZFUlNJT049My4xMi4x -Pdart-obfuscation=false -Ptrack-widget-creation=true -Ptree-shake-icons=true assembleRelease
 [+2061 ms] Initialized native services in: C:\Users\DELL\.gradle\native
 [   +7 ms] Initialized jansi services in: C:\Users\DELL\.gradle\native
 [ +989 ms] The client will now receive all logging from the daemon (pid: 21724). The daemon log file: C:\Users\DELL\.gradle\daemon\9.1.0\daemon-21724.out.log
 [        ] Starting 5th build in daemon [uptime: 1 hrs 10 mins 57.216 secs, performance: 100%, GC rate: 0.00/s, heap usage: 0% of 8 GiB, non-heap usage: 3% of 4 GiB]
 [        ] Using 8 worker leases.
-[ +106 ms] Now considering [C:\Projects\Metroflow-Mobile\metroflow_flutter\android, C:\flutter\packages\flutter_tools\gradle] as hierarchies to watch
+[ +106 ms] Now considering [C:\Projects\Metricorex-Mobile\Metricorex_flutter\android, C:\flutter\packages\flutter_tools\gradle] as hierarchies to watch
 [  +96 ms] Watching the file system is configured to be enabled if available
 [        ] File system watching is active
 [ +102 ms] Starting Build
-[        ] Now considering [C:\flutter\packages\flutter_tools\gradle, C:\Projects\Metroflow-Mobile\metroflow_flutter\android] as hierarchies to watch
+[        ] Now considering [C:\flutter\packages\flutter_tools\gradle, C:\Projects\Metricorex-Mobile\Metricorex_flutter\android] as hierarchies to watch
 [ +406 ms] > Configure project :gradle
 [        ] Evaluating project ':gradle' using build file 'C:\flutter\packages\flutter_tools\gradle\build.gradle.kts'.
 [        ] Resolved plugin [id: 'org.gradle.java-gradle-plugin']
@@ -293,11 +293,11 @@
 [        ]   Build cache is disabled
 [        ]   Not worth caching
 [        ] Skipping task ':gradle:jar' as it is up-to-date.
-[ +311 ms] Settings evaluated using settings file 'C:\Projects\Metroflow-Mobile\metroflow_flutter\android\settings.gradle.kts'.
-[  +95 ms] Projects loaded. Root project using build file 'C:\Projects\Metroflow-Mobile\metroflow_flutter\android\build.gradle.kts'.
+[ +311 ms] Settings evaluated using settings file 'C:\Projects\Metricorex-Mobile\Metricorex_flutter\android\settings.gradle.kts'.
+[  +95 ms] Projects loaded. Root project using build file 'C:\Projects\Metricorex-Mobile\Metricorex_flutter\android\build.gradle.kts'.
 [        ] Included projects: [root project 'android', project ':app', project ':file_selector_android', project ':flutter_plugin_android_lifecycle', project ':fluttertoast', project ':image_picker_android', project ':jni', project ':jni_flutter', project ':local_auth_android', project ':share_plus', project ':shared_preferences_android', project ':sqflite_android', project ':url_launcher_android', project ':webview_flutter_android']
 [ +486 ms] > Configure project :app
-[        ] Evaluating project ':app' using build file 'C:\Projects\Metroflow-Mobile\metroflow_flutter\android\app\build.gradle.kts'.
+[        ] Evaluating project ':app' using build file 'C:\Projects\Metricorex-Mobile\Metricorex_flutter\android\app\build.gradle.kts'.
 [        ] Resolved plugin [id: 'com.android.application']
 [        ] Resolved plugin [id: 'dev.flutter.flutter-gradle-plugin']
 [        ] WARNING: The option setting 'android.builtInKotlin=false' is deprecated.
@@ -416,7 +416,7 @@
 [        ] [32m[3mRemove both `android.builtInKotlin=true` and `android.newDsl=false` from `gradle.properties`, then migrate to built-in Kotlin.[0m[0m
 [        ] [36mSee [0m[34mhttps://kotl.in/gradle/agp-built-in-kotlin[0m[36m for more details.[0m
 [        ] > Configure project :
-[        ] Evaluating root project 'android' using build file 'C:\Projects\Metroflow-Mobile\metroflow_flutter\android\build.gradle.kts'.
+[        ] Evaluating root project 'android' using build file 'C:\Projects\Metricorex-Mobile\Metricorex_flutter\android\build.gradle.kts'.
 [+1954 ms] > Configure project :file_selector_android
 [        ] Evaluating project ':file_selector_android' using build file 'C:\Users\DELL\AppData\Local\Pub\Cache\hosted\pub.dev\file_selector_android-0.5.2+8\android\build.gradle.kts'.
 [        ] Caching disabled for Kotlin DSL script compilation (Project/TopLevel/stage1) because:
@@ -671,10 +671,10 @@
 [        ] Task ':app:configureCMakeRelease[arm64-v8a]' is not up-to-date because:
 [        ]   Task.upToDateWhen is false.
 [        ] C/C++: C:\flutter\packages\flutter_tools\gradle\src\main\scripts\CMakeLists.txt release|arm64-v8a : Start JSON generation. Platform version: 24 min SDK version: arm64-v8a
-[        ] C/C++: C:\flutter\packages\flutter_tools\gradle\src\main\scripts\CMakeLists.txt release|arm64-v8a : rebuilding JSON C:\Projects\Metroflow-Mobile\metroflow_flutter\build\.cxx\release\6d44lxs1\arm64-v8a\android_gradle_build.json due to:
+[        ] C/C++: C:\flutter\packages\flutter_tools\gradle\src\main\scripts\CMakeLists.txt release|arm64-v8a : rebuilding JSON C:\Projects\Metricorex-Mobile\Metricorex_flutter\build\.cxx\release\6d44lxs1\arm64-v8a\android_gradle_build.json due to:
 [        ] C/C++: C:\flutter\packages\flutter_tools\gradle\src\main\scripts\CMakeLists.txt release|arm64-v8a : - no fingerprint file, will remove stale configuration folder
-[        ] C/C++: C:\flutter\packages\flutter_tools\gradle\src\main\scripts\CMakeLists.txt release|arm64-v8a : removing stale contents from 'C:\Projects\Metroflow-Mobile\metroflow_flutter\build\.cxx\release\6d44lxs1\arm64-v8a'
-[+1210 ms] C/C++: C:\flutter\packages\flutter_tools\gradle\src\main\scripts\CMakeLists.txt release|arm64-v8a : created folder 'C:\Projects\Metroflow-Mobile\metroflow_flutter\build\.cxx\release\6d44lxs1\arm64-v8a'
+[        ] C/C++: C:\flutter\packages\flutter_tools\gradle\src\main\scripts\CMakeLists.txt release|arm64-v8a : removing stale contents from 'C:\Projects\Metricorex-Mobile\Metricorex_flutter\build\.cxx\release\6d44lxs1\arm64-v8a'
+[+1210 ms] C/C++: C:\flutter\packages\flutter_tools\gradle\src\main\scripts\CMakeLists.txt release|arm64-v8a : created folder 'C:\Projects\Metricorex-Mobile\Metricorex_flutter\build\.cxx\release\6d44lxs1\arm64-v8a'
 [        ] C/C++: C:\flutter\packages\flutter_tools\gradle\src\main\scripts\CMakeLists.txt release|arm64-v8a : executing cmake @echo off
 [        ] "C:\\Android\\Sdk\\cmake\\3.22.1\\bin\\cmake.exe" ^
 [        ]   "-HC:\\flutter\\packages\\flutter_tools\\gradle\\src\\main\\scripts" ^
@@ -688,9 +688,9 @@
 [        ]   "-DCMAKE_ANDROID_NDK=C:\\Android\\Sdk\\ndk\\28.2.13676358" ^
 [        ]   "-DCMAKE_TOOLCHAIN_FILE=C:\\Android\\Sdk\\ndk\\28.2.13676358\\build\\cmake\\android.toolchain.cmake" ^
 [        ]   "-DCMAKE_MAKE_PROGRAM=C:\\Android\\Sdk\\cmake\\3.22.1\\bin\\ninja.exe" ^
-[        ]   "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=C:\\Projects\\Metroflow-Mobile\\metroflow_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
-[        ]   "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=C:\\Projects\\Metroflow-Mobile\\metroflow_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
-[        ]   "-BC:\\Projects\\Metroflow-Mobile\\metroflow_flutter\\build\\.cxx\\release\\6d44lxs1\\arm64-v8a" ^
+[        ]   "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=C:\\Projects\\Metricorex-Mobile\\Metricorex_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
+[        ]   "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=C:\\Projects\\Metricorex-Mobile\\Metricorex_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
+[        ]   "-BC:\\Projects\\Metricorex-Mobile\\Metricorex_flutter\\build\\.cxx\\release\\6d44lxs1\\arm64-v8a" ^
 [        ]   -GNinja ^
 [        ]   -Wno-dev ^
 [        ]   --no-warn-unused-cli ^
@@ -708,21 +708,21 @@
 [        ]   "-DCMAKE_ANDROID_NDK=C:\\Android\\Sdk\\ndk\\28.2.13676358" ^
 [        ]   "-DCMAKE_TOOLCHAIN_FILE=C:\\Android\\Sdk\\ndk\\28.2.13676358\\build\\cmake\\android.toolchain.cmake" ^
 [        ]   "-DCMAKE_MAKE_PROGRAM=C:\\Android\\Sdk\\cmake\\3.22.1\\bin\\ninja.exe" ^
-[        ]   "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=C:\\Projects\\Metroflow-Mobile\\metroflow_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
-[        ]   "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=C:\\Projects\\Metroflow-Mobile\\metroflow_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
-[        ]   "-BC:\\Projects\\Metroflow-Mobile\\metroflow_flutter\\build\\.cxx\\release\\6d44lxs1\\arm64-v8a" ^
+[        ]   "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=C:\\Projects\\Metricorex-Mobile\\Metricorex_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
+[        ]   "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=C:\\Projects\\Metricorex-Mobile\\Metricorex_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
+[        ]   "-BC:\\Projects\\Metricorex-Mobile\\Metricorex_flutter\\build\\.cxx\\release\\6d44lxs1\\arm64-v8a" ^
 [        ]   -GNinja ^
 [        ]   -Wno-dev ^
 [        ]   --no-warn-unused-cli ^
 [        ]   "-DCMAKE_BUILD_TYPE=release"
-[ +285 ms] Starting process 'command 'C:\Android\Sdk\cmake\3.22.1\bin\cmake.exe''. Working directory: C:\Projects\Metroflow-Mobile\metroflow_flutter\android\app Command: C:\Android\Sdk\cmake\3.22.1\bin\cmake.exe -HC:\flutter\packages\flutter_tools\gradle\src\main\scripts -DCMAKE_SYSTEM_NAME=Android -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_SYSTEM_VERSION=24 -DANDROID_PLATFORM=android-24 -DANDROID_ABI=arm64-v8a -DCMAKE_ANDROID_ARCH_ABI=arm64-v8a -DANDROID_NDK=C:\Android\Sdk\ndk\28.2.13676358 -DCMAKE_ANDROID_NDK=C:\Android\Sdk\ndk\28.2.13676358 -DCMAKE_TOOLCHAIN_FILE=C:\Android\Sdk\ndk\28.2.13676358\build\cmake\android.toolchain.cmake -DCMAKE_MAKE_PROGRAM=C:\Android\Sdk\cmake\3.22.1\bin\ninja.exe -DCMAKE_LIBRARY_OUTPUT_DIRECTORY=C:\Projects\Metroflow-Mobile\metroflow_flutter\build\app\intermediates\cxx\release\6d44lxs1\obj\arm64-v8a -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=C:\Projects\Metroflow-Mobile\metroflow_flutter\build\app\intermediates\cxx\release\6d44lxs1\obj\arm64-v8a -BC:\Projects\Metroflow-Mobile\metroflow_flutter\build\.cxx\release\6d44lxs1\arm64-v8a -GNinja -Wno-dev --no-warn-unused-cli -DCMAKE_BUILD_TYPE=release
+[ +285 ms] Starting process 'command 'C:\Android\Sdk\cmake\3.22.1\bin\cmake.exe''. Working directory: C:\Projects\Metricorex-Mobile\Metricorex_flutter\android\app Command: C:\Android\Sdk\cmake\3.22.1\bin\cmake.exe -HC:\flutter\packages\flutter_tools\gradle\src\main\scripts -DCMAKE_SYSTEM_NAME=Android -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_SYSTEM_VERSION=24 -DANDROID_PLATFORM=android-24 -DANDROID_ABI=arm64-v8a -DCMAKE_ANDROID_ARCH_ABI=arm64-v8a -DANDROID_NDK=C:\Android\Sdk\ndk\28.2.13676358 -DCMAKE_ANDROID_NDK=C:\Android\Sdk\ndk\28.2.13676358 -DCMAKE_TOOLCHAIN_FILE=C:\Android\Sdk\ndk\28.2.13676358\build\cmake\android.toolchain.cmake -DCMAKE_MAKE_PROGRAM=C:\Android\Sdk\cmake\3.22.1\bin\ninja.exe -DCMAKE_LIBRARY_OUTPUT_DIRECTORY=C:\Projects\Metricorex-Mobile\Metricorex_flutter\build\app\intermediates\cxx\release\6d44lxs1\obj\arm64-v8a -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=C:\Projects\Metricorex-Mobile\Metricorex_flutter\build\app\intermediates\cxx\release\6d44lxs1\obj\arm64-v8a -BC:\Projects\Metricorex-Mobile\Metricorex_flutter\build\.cxx\release\6d44lxs1\arm64-v8a -GNinja -Wno-dev --no-warn-unused-cli -DCMAKE_BUILD_TYPE=release
 [+5889 ms] Successfully started process 'command 'C:\Android\Sdk\cmake\3.22.1\bin\cmake.exe''
 [        ] C/C++: CMake Error at C:/Android/Sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakeTestCCompiler.cmake:69 (message):
 [        ] C/C++:   The C compiler
 [        ] C/C++:     "C:/Android/Sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe"
 [        ] C/C++:   is not able to compile a simple test program.
 [        ] C/C++:   It fails with the following output:
-[        ] C/C++:     Change Dir: C:/Projects/Metroflow-Mobile/metroflow_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeTmp
+[        ] C/C++:     Change Dir: C:/Projects/Metricorex-Mobile/Metricorex_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeTmp
 [        ] C/C++:     
 [        ] C/C++:     Run Build Command(s):C:\Android\Sdk\cmake\3.22.1\bin\ninja.exe cmTC_bc669 && ninja: fatal: GetOverlappedResult: The operation completed successfully.
 [        ] C/C++:     
@@ -741,8 +741,8 @@
 [        ] -- Check for working C compiler: C:/Android/Sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe
 [        ] -- Check for working C compiler: C:/Android/Sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe - broken
 [        ] -- Configuring incomplete, errors occurred!
-[        ] See also "C:/Projects/Metroflow-Mobile/metroflow_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeOutput.log".
-[        ] See also "C:/Projects/Metroflow-Mobile/metroflow_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeError.log".
+[        ] See also "C:/Projects/Metricorex-Mobile/Metricorex_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeOutput.log".
+[        ] See also "C:/Projects/Metricorex-Mobile/Metricorex_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeError.log".
 [        ] C++ build system [configure] failed while executing:
 [        ]     @echo off
 [        ]     "C:\\Android\\Sdk\\cmake\\3.22.1\\bin\\cmake.exe" ^
@@ -757,29 +757,29 @@
 [        ]       "-DCMAKE_ANDROID_NDK=C:\\Android\\Sdk\\ndk\\28.2.13676358" ^
 [        ]       "-DCMAKE_TOOLCHAIN_FILE=C:\\Android\\Sdk\\ndk\\28.2.13676358\\build\\cmake\\android.toolchain.cmake" ^
 [        ]       "-DCMAKE_MAKE_PROGRAM=C:\\Android\\Sdk\\cmake\\3.22.1\\bin\\ninja.exe" ^
-[   +2 ms]       "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=C:\\Projects\\Metroflow-Mobile\\metroflow_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
-[        ]       "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=C:\\Projects\\Metroflow-Mobile\\metroflow_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
-[        ]       "-BC:\\Projects\\Metroflow-Mobile\\metroflow_flutter\\build\\.cxx\\release\\6d44lxs1\\arm64-v8a" ^
+[   +2 ms]       "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=C:\\Projects\\Metricorex-Mobile\\Metricorex_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
+[        ]       "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=C:\\Projects\\Metricorex-Mobile\\Metricorex_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
+[        ]       "-BC:\\Projects\\Metricorex-Mobile\\Metricorex_flutter\\build\\.cxx\\release\\6d44lxs1\\arm64-v8a" ^
 [   +1 ms]       -GNinja ^
 [        ]       -Wno-dev ^
 [   +2 ms]       --no-warn-unused-cli ^
 [        ]       "-DCMAKE_BUILD_TYPE=release"
-[        ]   from C:\Projects\Metroflow-Mobile\metroflow_flutter\android\app
+[        ]   from C:\Projects\Metricorex-Mobile\Metricorex_flutter\android\app
 [        ] CMake Error at C:/Android/Sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakeTestCCompiler.cmake:69 (message):
 [   +3 ms]   The C compiler
 [        ]     "C:/Android/Sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe"
 [        ]   is not able to compile a simple test program.
 [        ]   It fails with the following output:
-[        ]     Change Dir: C:/Projects/Metroflow-Mobile/metroflow_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeTmp
+[        ]     Change Dir: C:/Projects/Metricorex-Mobile/Metricorex_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeTmp
 [   +1 ms]     Run Build Command(s):C:\Android\Sdk\cmake\3.22.1\bin\ninja.exe cmTC_bc669 && ninja: fatal: GetOverlappedResult: The operation completed successfully.
 [   +2 ms]   CMake will not be able to correctly generate this project.
 [        ] Call Stack (most recent call first):
 [   +1 ms]   CMakeLists.txt
-[        ] C/C++: C:\flutter\packages\flutter_tools\gradle\src\main\scripts\CMakeLists.txt release|arm64-v8a : Writing build model to C:\Projects\Metroflow-Mobile\metroflow_flutter\build\app\intermediates\cxx\release\6d44lxs1\logs\arm64-v8a\build_model.json
+[        ] C/C++: C:\flutter\packages\flutter_tools\gradle\src\main\scripts\CMakeLists.txt release|arm64-v8a : Writing build model to C:\Projects\Metricorex-Mobile\Metricorex_flutter\build\app\intermediates\cxx\release\6d44lxs1\logs\arm64-v8a\build_model.json
 [ +169 ms] > Task :app:configureCMakeRelease[arm64-v8a] FAILED
 [ +593 ms] Build defd41bb-eebf-4aaf-8f1f-83f1575c3968 is closed
 [ +399 ms] Build 81d4d472-a5f1-4ea7-8245-f9554d390b21 is closed
-[+1401 ms] [Incubating] Problems report is available at: file:///C:/Projects/Metroflow-Mobile/metroflow_flutter/build/reports/problems/problems-report.html
+[+1401 ms] [Incubating] Problems report is available at: file:///C:/Projects/Metricorex-Mobile/Metricorex_flutter/build/reports/problems/problems-report.html
 [        ] FAILURE: Build failed with an exception.
 [        ] * What went wrong:
 [        ] Execution failed for task ':app:configureCMakeRelease[arm64-v8a]'.
@@ -791,8 +791,8 @@
 [        ]   -- Check for working C compiler: C:/Android/Sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe
 [        ]   -- Check for working C compiler: C:/Android/Sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe - broken
 [        ]   -- Configuring incomplete, errors occurred!
-[        ]   See also "C:/Projects/Metroflow-Mobile/metroflow_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeOutput.log".
-[        ]   See also "C:/Projects/Metroflow-Mobile/metroflow_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeError.log".
+[        ]   See also "C:/Projects/Metricorex-Mobile/Metricorex_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeOutput.log".
+[        ]   See also "C:/Projects/Metricorex-Mobile/Metricorex_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeError.log".
 [        ]   C++ build system [configure] failed while executing:
 [        ]       @echo off
 [        ]       "C:\\Android\\Sdk\\cmake\\3.22.1\\bin\\cmake.exe" ^
@@ -807,20 +807,20 @@
 [        ]         "-DCMAKE_ANDROID_NDK=C:\\Android\\Sdk\\ndk\\28.2.13676358" ^
 [        ]         "-DCMAKE_TOOLCHAIN_FILE=C:\\Android\\Sdk\\ndk\\28.2.13676358\\build\\cmake\\android.toolchain.cmake" ^
 [        ]         "-DCMAKE_MAKE_PROGRAM=C:\\Android\\Sdk\\cmake\\3.22.1\\bin\\ninja.exe" ^
-[        ]         "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=C:\\Projects\\Metroflow-Mobile\\metroflow_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
-[        ]         "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=C:\\Projects\\Metroflow-Mobile\\metroflow_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
-[        ]         "-BC:\\Projects\\Metroflow-Mobile\\metroflow_flutter\\build\\.cxx\\release\\6d44lxs1\\arm64-v8a" ^
+[        ]         "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=C:\\Projects\\Metricorex-Mobile\\Metricorex_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
+[        ]         "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=C:\\Projects\\Metricorex-Mobile\\Metricorex_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
+[        ]         "-BC:\\Projects\\Metricorex-Mobile\\Metricorex_flutter\\build\\.cxx\\release\\6d44lxs1\\arm64-v8a" ^
 [        ]         -GNinja ^
 [        ]         -Wno-dev ^
 [        ]         --no-warn-unused-cli ^
 [        ]         "-DCMAKE_BUILD_TYPE=release"
-[        ]     from C:\Projects\Metroflow-Mobile\metroflow_flutter\android\app
+[        ]     from C:\Projects\Metricorex-Mobile\Metricorex_flutter\android\app
 [        ]   CMake Error at C:/Android/Sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakeTestCCompiler.cmake:69 (message):
 [        ]     The C compiler
 [        ]       "C:/Android/Sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe"
 [        ]     is not able to compile a simple test program.
 [        ]     It fails with the following output:
-[        ]       Change Dir: C:/Projects/Metroflow-Mobile/metroflow_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeTmp
+[        ]       Change Dir: C:/Projects/Metricorex-Mobile/Metricorex_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeTmp
 [        ]       Run Build Command(s):C:\Android\Sdk\cmake\3.22.1\bin\ninja.exe cmTC_bc669 && ninja: fatal: GetOverlappedResult: The operation completed successfully.
 [        ]     CMake will not be able to correctly generate this project.
 [        ]   Call Stack (most recent call first):
@@ -832,8 +832,8 @@
 [        ]   -- Check for working C compiler: C:/Android/Sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe
 [        ]   -- Check for working C compiler: C:/Android/Sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe - broken
 [        ]   -- Configuring incomplete, errors occurred!
-[        ]   See also "C:/Projects/Metroflow-Mobile/metroflow_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeOutput.log".
-[        ]   See also "C:/Projects/Metroflow-Mobile/metroflow_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeError.log".
+[        ]   See also "C:/Projects/Metricorex-Mobile/Metricorex_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeOutput.log".
+[        ]   See also "C:/Projects/Metricorex-Mobile/Metricorex_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeError.log".
 [        ]   C++ build system [configure] failed while executing:
 [        ]       @echo off
 [        ]       "C:\\Android\\Sdk\\cmake\\3.22.1\\bin\\cmake.exe" ^
@@ -848,20 +848,20 @@
 [        ]         "-DCMAKE_ANDROID_NDK=C:\\Android\\Sdk\\ndk\\28.2.13676358" ^
 [   +1 ms]         "-DCMAKE_TOOLCHAIN_FILE=C:\\Android\\Sdk\\ndk\\28.2.13676358\\build\\cmake\\android.toolchain.cmake" ^
 [        ]         "-DCMAKE_MAKE_PROGRAM=C:\\Android\\Sdk\\cmake\\3.22.1\\bin\\ninja.exe" ^
-[        ]         "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=C:\\Projects\\Metroflow-Mobile\\metroflow_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
-[        ]         "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=C:\\Projects\\Metroflow-Mobile\\metroflow_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
-[        ]         "-BC:\\Projects\\Metroflow-Mobile\\metroflow_flutter\\build\\.cxx\\release\\6d44lxs1\\arm64-v8a" ^
+[        ]         "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=C:\\Projects\\Metricorex-Mobile\\Metricorex_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
+[        ]         "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=C:\\Projects\\Metricorex-Mobile\\Metricorex_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
+[        ]         "-BC:\\Projects\\Metricorex-Mobile\\Metricorex_flutter\\build\\.cxx\\release\\6d44lxs1\\arm64-v8a" ^
 [        ]         -GNinja ^
 [        ]         -Wno-dev ^
 [        ]         --no-warn-unused-cli ^
 [        ]         "-DCMAKE_BUILD_TYPE=release"
-[        ]     from C:\Projects\Metroflow-Mobile\metroflow_flutter\android\app
+[        ]     from C:\Projects\Metricorex-Mobile\Metricorex_flutter\android\app
 [        ]   CMake Error at C:/Android/Sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakeTestCCompiler.cmake:69 (message):
 [        ]     The C compiler
 [        ]       "C:/Android/Sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe"
 [        ]     is not able to compile a simple test program.
 [        ]     It fails with the following output:
-[        ]       Change Dir: C:/Projects/Metroflow-Mobile/metroflow_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeTmp
+[        ]       Change Dir: C:/Projects/Metricorex-Mobile/Metricorex_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeTmp
 [        ]       Run Build Command(s):C:\Android\Sdk\cmake\3.22.1\bin\ninja.exe cmTC_bc669 && ninja: fatal: GetOverlappedResult: The operation completed successfully.
 [        ]     CMake will not be able to correctly generate this project.
 [        ]   Call Stack (most recent call first):
@@ -1009,7 +1009,7 @@
 [        ]   	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1136)
 [        ]   	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:635)
 [   +1 ms]   	at java.base/java.lang.Thread.run(Thread.java:840)
-[        ]   Caused by: com.android.ide.common.process.ProcessException: Error while executing process C:\Android\Sdk\cmake\3.22.1\bin\cmake.exe with arguments {-HC:\flutter\packages\flutter_tools\gradle\src\main\scripts -DCMAKE_SYSTEM_NAME=Android -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_SYSTEM_VERSION=24 -DANDROID_PLATFORM=android-24 -DANDROID_ABI=arm64-v8a -DCMAKE_ANDROID_ARCH_ABI=arm64-v8a -DANDROID_NDK=C:\Android\Sdk\ndk\28.2.13676358 -DCMAKE_ANDROID_NDK=C:\Android\Sdk\ndk\28.2.13676358 -DCMAKE_TOOLCHAIN_FILE=C:\Android\Sdk\ndk\28.2.13676358\build\cmake\android.toolchain.cmake -DCMAKE_MAKE_PROGRAM=C:\Android\Sdk\cmake\3.22.1\bin\ninja.exe -DCMAKE_LIBRARY_OUTPUT_DIRECTORY=C:\Projects\Metroflow-Mobile\metroflow_flutter\build\app\intermediates\cxx\release\6d44lxs1\obj\arm64-v8a -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=C:\Projects\Metroflow-Mobile\metroflow_flutter\build\app\intermediates\cxx\release\6d44lxs1\obj\arm64-v8a -BC:\Projects\Metroflow-Mobile\metroflow_flutter\build\.cxx\release\6d44lxs1\arm64-v8a -GNinja -Wno-dev --no-warn-unused-cli -DCMAKE_BUILD_TYPE=release}
+[        ]   Caused by: com.android.ide.common.process.ProcessException: Error while executing process C:\Android\Sdk\cmake\3.22.1\bin\cmake.exe with arguments {-HC:\flutter\packages\flutter_tools\gradle\src\main\scripts -DCMAKE_SYSTEM_NAME=Android -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_SYSTEM_VERSION=24 -DANDROID_PLATFORM=android-24 -DANDROID_ABI=arm64-v8a -DCMAKE_ANDROID_ARCH_ABI=arm64-v8a -DANDROID_NDK=C:\Android\Sdk\ndk\28.2.13676358 -DCMAKE_ANDROID_NDK=C:\Android\Sdk\ndk\28.2.13676358 -DCMAKE_TOOLCHAIN_FILE=C:\Android\Sdk\ndk\28.2.13676358\build\cmake\android.toolchain.cmake -DCMAKE_MAKE_PROGRAM=C:\Android\Sdk\cmake\3.22.1\bin\ninja.exe -DCMAKE_LIBRARY_OUTPUT_DIRECTORY=C:\Projects\Metricorex-Mobile\Metricorex_flutter\build\app\intermediates\cxx\release\6d44lxs1\obj\arm64-v8a -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=C:\Projects\Metricorex-Mobile\Metricorex_flutter\build\app\intermediates\cxx\release\6d44lxs1\obj\arm64-v8a -BC:\Projects\Metricorex-Mobile\Metricorex_flutter\build\.cxx\release\6d44lxs1\arm64-v8a -GNinja -Wno-dev --no-warn-unused-cli -DCMAKE_BUILD_TYPE=release}
 [        ]   	at com.android.build.gradle.internal.process.GradleProcessResult.buildProcessException(GradleProcessResult.java:73)
 [        ]   	at com.android.build.gradle.internal.process.GradleProcessResult.assertNormalExitValue(GradleProcessResult.java:48)
 [        ]   	at com.android.build.gradle.internal.cxx.process.ExecuteProcessKt.execute(ExecuteProcess.kt:277)
@@ -1067,8 +1067,8 @@
 [        ] -- Check for working C compiler: C:/Android/Sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe
 [        ] -- Check for working C compiler: C:/Android/Sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe - broken
 [        ] -- Configuring incomplete, errors occurred!
-[        ] See also "C:/Projects/Metroflow-Mobile/metroflow_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeOutput.log".
-[        ] See also "C:/Projects/Metroflow-Mobile/metroflow_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeError.log".
+[        ] See also "C:/Projects/Metricorex-Mobile/Metricorex_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeOutput.log".
+[        ] See also "C:/Projects/Metricorex-Mobile/Metricorex_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeError.log".
 [        ] C++ build system [configure] failed while executing:
 [        ]     @echo off
 [        ]     "C:\\Android\\Sdk\\cmake\\3.22.1\\bin\\cmake.exe" ^
@@ -1083,20 +1083,20 @@
 [        ]       "-DCMAKE_ANDROID_NDK=C:\\Android\\Sdk\\ndk\\28.2.13676358" ^
 [        ]       "-DCMAKE_TOOLCHAIN_FILE=C:\\Android\\Sdk\\ndk\\28.2.13676358\\build\\cmake\\android.toolchain.cmake" ^
 [        ]       "-DCMAKE_MAKE_PROGRAM=C:\\Android\\Sdk\\cmake\\3.22.1\\bin\\ninja.exe" ^
-[        ]       "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=C:\\Projects\\Metroflow-Mobile\\metroflow_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
-[        ]       "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=C:\\Projects\\Metroflow-Mobile\\metroflow_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
-[        ]       "-BC:\\Projects\\Metroflow-Mobile\\metroflow_flutter\\build\\.cxx\\release\\6d44lxs1\\arm64-v8a" ^
+[        ]       "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=C:\\Projects\\Metricorex-Mobile\\Metricorex_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
+[        ]       "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=C:\\Projects\\Metricorex-Mobile\\Metricorex_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
+[        ]       "-BC:\\Projects\\Metricorex-Mobile\\Metricorex_flutter\\build\\.cxx\\release\\6d44lxs1\\arm64-v8a" ^
 [        ]       -GNinja ^
 [        ]       -Wno-dev ^
 [        ]       --no-warn-unused-cli ^
 [        ]       "-DCMAKE_BUILD_TYPE=release"
-[        ]   from C:\Projects\Metroflow-Mobile\metroflow_flutter\android\app
+[        ]   from C:\Projects\Metricorex-Mobile\Metricorex_flutter\android\app
 [        ] CMake Error at C:/Android/Sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakeTestCCompiler.cmake:69 (message):
 [        ]   The C compiler
 [        ]     "C:/Android/Sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe"
 [        ]   is not able to compile a simple test program.
 [        ]   It fails with the following output:
-[        ]     Change Dir: C:/Projects/Metroflow-Mobile/metroflow_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeTmp
+[        ]     Change Dir: C:/Projects/Metricorex-Mobile/Metricorex_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeTmp
 [        ]     Run Build Command(s):C:\Android\Sdk\cmake\3.22.1\bin\ninja.exe cmTC_bc669 && ninja: fatal: GetOverlappedResult: The operation completed successfully.
 [        ]   CMake will not be able to correctly generate this project.
 [        ] Call Stack (most recent call first):
@@ -1108,8 +1108,8 @@
 [        ] -- Check for working C compiler: C:/Android/Sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe
 [        ] -- Check for working C compiler: C:/Android/Sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe - broken
 [        ] -- Configuring incomplete, errors occurred!
-[        ] See also "C:/Projects/Metroflow-Mobile/metroflow_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeOutput.log".
-[        ] See also "C:/Projects/Metroflow-Mobile/metroflow_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeError.log".
+[        ] See also "C:/Projects/Metricorex-Mobile/Metricorex_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeOutput.log".
+[        ] See also "C:/Projects/Metricorex-Mobile/Metricorex_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeError.log".
 [        ] C++ build system [configure] failed while executing:
 [        ]     @echo off
 [        ]     "C:\\Android\\Sdk\\cmake\\3.22.1\\bin\\cmake.exe" ^
@@ -1124,20 +1124,20 @@
 [        ]       "-DCMAKE_ANDROID_NDK=C:\\Android\\Sdk\\ndk\\28.2.13676358" ^
 [        ]       "-DCMAKE_TOOLCHAIN_FILE=C:\\Android\\Sdk\\ndk\\28.2.13676358\\build\\cmake\\android.toolchain.cmake" ^
 [        ]       "-DCMAKE_MAKE_PROGRAM=C:\\Android\\Sdk\\cmake\\3.22.1\\bin\\ninja.exe" ^
-[        ]       "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=C:\\Projects\\Metroflow-Mobile\\metroflow_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
-[        ]       "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=C:\\Projects\\Metroflow-Mobile\\metroflow_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
-[        ]       "-BC:\\Projects\\Metroflow-Mobile\\metroflow_flutter\\build\\.cxx\\release\\6d44lxs1\\arm64-v8a" ^
+[        ]       "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=C:\\Projects\\Metricorex-Mobile\\Metricorex_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
+[        ]       "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=C:\\Projects\\Metricorex-Mobile\\Metricorex_flutter\\build\\app\\intermediates\\cxx\\release\\6d44lxs1\\obj\\arm64-v8a" ^
+[        ]       "-BC:\\Projects\\Metricorex-Mobile\\Metricorex_flutter\\build\\.cxx\\release\\6d44lxs1\\arm64-v8a" ^
 [        ]       -GNinja ^
 [        ]       -Wno-dev ^
 [        ]       --no-warn-unused-cli ^
 [        ]       "-DCMAKE_BUILD_TYPE=release"
-[        ]   from C:\Projects\Metroflow-Mobile\metroflow_flutter\android\app
+[        ]   from C:\Projects\Metricorex-Mobile\Metricorex_flutter\android\app
 [        ] CMake Error at C:/Android/Sdk/cmake/3.22.1/share/cmake-3.22/Modules/CMakeTestCCompiler.cmake:69 (message):
 [        ]   The C compiler
 [        ]     "C:/Android/Sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/windows-x86_64/bin/clang.exe"
 [   +1 ms]   is not able to compile a simple test program.
 [        ]   It fails with the following output:
-[        ]     Change Dir: C:/Projects/Metroflow-Mobile/metroflow_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeTmp
+[        ]     Change Dir: C:/Projects/Metricorex-Mobile/Metricorex_flutter/build/.cxx/release/6d44lxs1/arm64-v8a/CMakeFiles/CMakeTmp
 [        ]     Run Build Command(s):C:\Android\Sdk\cmake\3.22.1\bin\ninja.exe cmTC_bc669 && ninja: fatal: GetOverlappedResult: The operation completed successfully.
 [   +1 ms]   CMake will not be able to correctly generate this project.
 [        ] Call Stack (most recent call first):
@@ -1285,7 +1285,7 @@
 [        ] 	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1136)
 [        ] 	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:635)
 [        ] 	at java.base/java.lang.Thread.run(Thread.java:840)
-[        ] Caused by: com.android.ide.common.process.ProcessException: Error while executing process C:\Android\Sdk\cmake\3.22.1\bin\cmake.exe with arguments {-HC:\flutter\packages\flutter_tools\gradle\src\main\scripts -DCMAKE_SYSTEM_NAME=Android -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_SYSTEM_VERSION=24 -DANDROID_PLATFORM=android-24 -DANDROID_ABI=arm64-v8a -DCMAKE_ANDROID_ARCH_ABI=arm64-v8a -DANDROID_NDK=C:\Android\Sdk\ndk\28.2.13676358 -DCMAKE_ANDROID_NDK=C:\Android\Sdk\ndk\28.2.13676358 -DCMAKE_TOOLCHAIN_FILE=C:\Android\Sdk\ndk\28.2.13676358\build\cmake\android.toolchain.cmake -DCMAKE_MAKE_PROGRAM=C:\Android\Sdk\cmake\3.22.1\bin\ninja.exe -DCMAKE_LIBRARY_OUTPUT_DIRECTORY=C:\Projects\Metroflow-Mobile\metroflow_flutter\build\app\intermediates\cxx\release\6d44lxs1\obj\arm64-v8a -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=C:\Projects\Metroflow-Mobile\metroflow_flutter\build\app\intermediates\cxx\release\6d44lxs1\obj\arm64-v8a -BC:\Projects\Metroflow-Mobile\metroflow_flutter\build\.cxx\release\6d44lxs1\arm64-v8a -GNinja -Wno-dev --no-warn-unused-cli -DCMAKE_BUILD_TYPE=release}
+[        ] Caused by: com.android.ide.common.process.ProcessException: Error while executing process C:\Android\Sdk\cmake\3.22.1\bin\cmake.exe with arguments {-HC:\flutter\packages\flutter_tools\gradle\src\main\scripts -DCMAKE_SYSTEM_NAME=Android -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_SYSTEM_VERSION=24 -DANDROID_PLATFORM=android-24 -DANDROID_ABI=arm64-v8a -DCMAKE_ANDROID_ARCH_ABI=arm64-v8a -DANDROID_NDK=C:\Android\Sdk\ndk\28.2.13676358 -DCMAKE_ANDROID_NDK=C:\Android\Sdk\ndk\28.2.13676358 -DCMAKE_TOOLCHAIN_FILE=C:\Android\Sdk\ndk\28.2.13676358\build\cmake\android.toolchain.cmake -DCMAKE_MAKE_PROGRAM=C:\Android\Sdk\cmake\3.22.1\bin\ninja.exe -DCMAKE_LIBRARY_OUTPUT_DIRECTORY=C:\Projects\Metricorex-Mobile\Metricorex_flutter\build\app\intermediates\cxx\release\6d44lxs1\obj\arm64-v8a -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=C:\Projects\Metricorex-Mobile\Metricorex_flutter\build\app\intermediates\cxx\release\6d44lxs1\obj\arm64-v8a -BC:\Projects\Metricorex-Mobile\Metricorex_flutter\build\.cxx\release\6d44lxs1\arm64-v8a -GNinja -Wno-dev --no-warn-unused-cli -DCMAKE_BUILD_TYPE=release}
 [        ] 	at com.android.build.gradle.internal.process.GradleProcessResult.buildProcessException(GradleProcessResult.java:73)
 [        ] 	at com.android.build.gradle.internal.process.GradleProcessResult.assertNormalExitValue(GradleProcessResult.java:48)
 [        ] 	at com.android.build.gradle.internal.cxx.process.ExecuteProcessKt.execute(ExecuteProcess.kt:277)

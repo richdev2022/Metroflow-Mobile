@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:metroflow_flutter/theme/app_theme.dart';
-import 'package:metroflow_flutter/services/api.dart';
-import 'package:metroflow_flutter/models/fee_config.dart';
+import '../theme/app_theme.dart';
+import '../services/api.dart';
+import '../models/fee_config.dart';
 
 class FeesScreen extends ConsumerStatefulWidget {
   const FeesScreen({super.key});

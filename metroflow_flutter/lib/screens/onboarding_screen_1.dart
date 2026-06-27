@@ -27,7 +27,7 @@ class OnboardingScreen1 extends StatelessWidget {
                       child: const Icon(Icons.business_center, size: 48, color: AppColors.primary),
                     ),
                     const SizedBox(height: 8),
-                    const Text('Metroflow', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: AppColors.primary)),
+                    const Text('Metricorex', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: AppColors.primary)),
                     const SizedBox(height: 32),
                     const Text(
                       'Run Your Entire Business on One Platform',

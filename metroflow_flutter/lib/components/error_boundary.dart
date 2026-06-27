@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:metroflow_flutter/theme/app_theme.dart';
+import '../theme/app_theme.dart';
 
 class ErrorBoundary extends StatefulWidget {
   final Widget child;
