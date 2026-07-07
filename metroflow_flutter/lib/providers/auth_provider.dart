@@ -94,21 +94,7 @@ class AuthNotifier extends Notifier<AuthState> {
       final biometricsEnabled = await BiometricService.isEnabled();
       final hasSeenOnboarding = await _storageService.getHasSeenOnboarding();
 
-      bool isTokenValid = token != null;
-      
-      // If token exists, validate it with backend
-      if (token != null) {
-        try {
-          await _apiService.getKycStatus(
-            options: Options(extra: {'suppressToast': true}),
-          );
-        } catch (e) {
-          // If API call fails, token is invalid
-          debugPrint('Token validation failed: $e');
-          isTokenValid = false;
-          // Clear invalid token (logout will handle this, but just in case)
-        }
-      }
+      final isTokenValid = token != null;
 
       state = state.copyWith(
         token: isTokenValid ? token : null,
@@ -354,22 +340,9 @@ class AuthNotifier extends Notifier<AuthState> {
           final businessId = credentials['businessId']!;
           final userName = credentials['userName']!;
 
-          // First validate the token with backend
-          try {
-            // Temporarily set the token for validation
-            await _storageService.setToken(token);
-            await _apiService.getKycStatus(
-              options: Options(extra: {'suppressToast': true}),
-            );
-          } catch (e) {
-            // Token is invalid - disable biometrics and logout
-            debugPrint('Stored biometric token is invalid: $e');
-            await logout(disableBiometrics: true);
-            return false;
-          }
-
-          // Token is valid - restore all credentials
+          // Restore all credentials
           await Future.wait([
+            _storageService.setToken(token),
             _storageService.setUserId(userId),
             _storageService.setBusinessId(businessId),
             _storageService.setUserName(userName),

@@ -27,9 +27,12 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
   Epic? _selectedEpic;
   bool _showEpicPicker = false;
   bool _showBankPicker = false;
+  String? _selectedRecipientIdForBank;
   List<Bank> _banks = [];
   List<Recipient> _recipients = [];
   String _otp = '';
+  String _pin = '';
+  String _selectedOtpMethod = 'sms';
   bool _loading = true;
   bool _showOtpModal = false;
   bool _submitting = false;
@@ -310,7 +313,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
     setState(() => _submitting = true);
     try {
       final api = ApiService();
-      await api.requestTransferOtp(walletId: wallet['id']);
+      await api.requestTransferOtp(walletId: wallet['id'], otpMethod: _selectedOtpMethod);
       if (mounted) {
         setState(() => _showOtpModal = true);
         _startOtpCountdown();
@@ -343,6 +346,15 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Please enter a valid 6-digit OTP')),
+        );
+      }
+      return;
+    }
+
+    if (_pin.length < 4) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please enter a valid transaction PIN')),
         );
       }
       return;
@@ -408,6 +420,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
           'amount': double.tryParse(recipient.amount) ?? 0,
           'remark': recipient.remark,
           'otp': _otp,
+          'pin': _pin,
           'wallet_id': wallet['id'],
         };
         
@@ -452,6 +465,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
         final payload = {
           'type': _transferType == 'salary' ? 'Salary' : 'Epic',
           'otp': _otp,
+          'pin': _pin,
           'source_wallet_id': wallet['id'],
           'data': {
             'items': items,
@@ -707,6 +721,42 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
                     recipientCount: _transferType == 'salary' ? _employees.length : _recipients.length,
                   ),
                   const SizedBox(height: 24),
+                  _sectionTitle(title: 'OTP Delivery Method'),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: ['sms', 'whatsapp', 'email'].map((method) {
+                      final isSelected = _selectedOtpMethod == method;
+                      return Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          child: GestureDetector(
+                            onTap: () => setState(() => _selectedOtpMethod = method),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                              decoration: BoxDecoration(
+                                color: isSelected ? colors.primary.withValues(alpha: 0.1) : colors.surface,
+                                border: Border.all(
+                                  color: isSelected ? colors.primary : colors.border,
+                                  width: 2,
+                                ),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                method.toUpperCase(),
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: isSelected ? colors.primary : colors.textSecondary,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 24),
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
@@ -880,6 +930,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
                 setState(() {
                   _bankSearchQuery = '';
                   _bankSearchController.clear();
+                  _selectedRecipientIdForBank = recipient.id;
                   _showBankPicker = true;
                 });
               },
@@ -1247,18 +1298,22 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
                             onTap: () {
                               setState(() {
                                 _recipients = _recipients.map((r) {
-                                  return Recipient(
-                                    id: r.id,
-                                    recipientAccount: r.recipientAccount,
-                                    recipientBank: bank.code,
-                                    recipientName: r.recipientName,
-                                    amount: r.amount,
-                                    remark: r.remark,
-                                    sourceType: r.sourceType,
-                                    sourceId: r.sourceId,
-                                  );
+                                  if (r.id == _selectedRecipientIdForBank) {
+                                    return Recipient(
+                                      id: r.id,
+                                      recipientAccount: r.recipientAccount,
+                                      recipientBank: bank.code,
+                                      recipientName: r.recipientName,
+                                      amount: r.amount,
+                                      remark: r.remark,
+                                      sourceType: r.sourceType,
+                                      sourceId: r.sourceId,
+                                    );
+                                  }
+                                  return r;
                                 }).toList();
                                 _showBankPicker = false;
+                                _selectedRecipientIdForBank = null;
                               });
                             },
                             child: Container(
@@ -1296,9 +1351,9 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
           color: Colors.black.withValues(alpha: 0.5),
         ),
         DraggableScrollableSheet(
-          initialChildSize: 0.6,
+          initialChildSize: 0.7,
           minChildSize: 0.5,
-          maxChildSize: 0.8,
+          maxChildSize: 0.9,
           builder: (context, scrollController) {
             return Container(
               decoration: BoxDecoration(
@@ -1313,7 +1368,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
-                          'Enter OTP',
+                          'Confirm Transfer',
                           style: TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.bold,
@@ -1336,7 +1391,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
                             TextField(
                               decoration: const InputDecoration(
                                 labelText: 'OTP Code',
-                                hintText: 'Enter OTP',
+                                hintText: 'Enter 6-digit OTP',
                               ),
                               style: const TextStyle(fontSize: 24),
                               keyboardType: TextInputType.number,
@@ -1372,6 +1427,19 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
                               ],
                             ),
                             const SizedBox(height: 24),
+                            TextField(
+                              decoration: const InputDecoration(
+                                labelText: 'Transaction PIN',
+                                hintText: 'Enter 4-digit PIN',
+                              ),
+                              style: const TextStyle(fontSize: 24),
+                              keyboardType: TextInputType.number,
+                              maxLength: 4,
+                              obscureText: true,
+                              textAlign: TextAlign.center,
+                              onChanged: (value) => setState(() => _pin = value),
+                            ),
+                            const SizedBox(height: 32),
                             SizedBox(
                               width: double.infinity,
                               child: ElevatedButton(

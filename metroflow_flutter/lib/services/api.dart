@@ -1,11 +1,12 @@
 import 'package:dio/dio.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import '../utils/app_toast.dart';
 import 'package:flutter/material.dart';
 import '../providers/auth_provider.dart';
 
-const String _apiBaseUrl = 'https://metroflow-backend.netlify.app/api';
+final String _apiBaseUrl = dotenv.env['EXPO_PUBLIC_API_BASE_URL'] ?? 'https://metroflow-backend.netlify.app/api';
 
 // Global key to access navigator context
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -329,8 +330,10 @@ class ApiService {
   }
 
   // KYC API
-  Future<Response> initiateKyc(String type, String number) async {
-    return await _dio.post('/kyc/initiate', data: {'type': type, 'number': number});
+  Future<Response> initiateKyc(String type, String number, {String? otpMethod}) async {
+    final Map<String, dynamic> payload = {'type': type, 'number': number};
+    if (otpMethod != null) payload['otp_method'] = otpMethod;
+    return await _dio.post('/kyc/initiate', data: payload);
   }
 
   Future<Response> verifyKycOtp(String otp) async {
@@ -411,8 +414,11 @@ class ApiService {
     }, options: Options(extra: {'suppressToast': suppressToast}));
   }
 
-  Future<Response> requestTransferOtp({String? walletId}) async {
-    return await _dio.post('/transfers/otp/request', data: {'wallet_id': walletId});
+  Future<Response> requestTransferOtp({String? walletId, String? otpMethod}) async {
+    final Map<String, dynamic> payload = {};
+    if (walletId != null) payload['wallet_id'] = walletId;
+    if (otpMethod != null) payload['otp_method'] = otpMethod;
+    return await _dio.post('/transfers/otp/request', data: payload);
   }
 
   Future<Response> singleTransfer(Map<String, dynamic> data, {bool suppressToast = true}) async {
@@ -551,6 +557,26 @@ class ApiService {
     return await _dio.put('/settings/otp-preference', data: {'preference': preference});
   }
 
+  Future<Response> getOtpEnabled() async {
+    return await _dio.get('/settings/otp-enabled');
+  }
+
+  Future<Response> updateOtpEnabled(bool enabled) async {
+    return await _dio.put('/settings/otp-enabled', data: {'enabled': enabled});
+  }
+
+  Future<Response> createPin(String pin) async {
+    return await _dio.post('/settings/pin', data: {'pin': pin});
+  }
+
+  Future<Response> sendPinUpdateOtp() async {
+    return await _dio.post('/settings/pin/send-otp');
+  }
+
+  Future<Response> updatePin(String newPin, String otp) async {
+    return await _dio.put('/settings/pin', data: {'newPin': newPin, 'otp': otp});
+  }
+
   Future<Response> getFees() async {
     return await _dio.get('/fees');
   }
@@ -611,6 +637,23 @@ class ApiService {
       '/product-documentation/$id/pdf',
       options: Options(responseType: ResponseType.bytes, extra: {'suppressToast': true}),
     );
+  }
+
+  // Task Statuses API
+  Future<Response> getTaskStatuses() async {
+    return await _dio.get('/task-statuses');
+  }
+
+  Future<Response> createTaskStatus(Map<String, dynamic> data) async {
+    return await _dio.post('/task-statuses', data: data);
+  }
+
+  Future<Response> updateTaskStatus(String id, Map<String, dynamic> data) async {
+    return await _dio.put('/task-statuses/$id', data: data);
+  }
+
+  Future<Response> deleteTaskStatus(String id) async {
+    return await _dio.delete('/task-statuses/$id');
   }
 }
 

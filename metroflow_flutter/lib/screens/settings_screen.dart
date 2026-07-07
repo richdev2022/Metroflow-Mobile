@@ -77,6 +77,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final _contactController = TextEditingController();
   final _industrySearchController = TextEditingController();
   final _otpController = TextEditingController();
+  final _pinController = TextEditingController();
+  final _newPinController = TextEditingController();
 
   BusinessProfile? _settings;
   Subscription? _subscription;
@@ -89,6 +91,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   String _editIndustry = '';
   String _editCurrency = 'NGN';
   String _otpPreference = 'email';
+  bool _otpEnabled = true;
+  bool _pinCreated = false;
   String? _contactType;
 
   @override
@@ -127,6 +131,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         api.getCurrentSubscription(),
         api.getKycStatus(),
         api.getOtpPreference(),
+        api.getOtpEnabled(),
       ]);
 
       final settingsData = results[0].data;
@@ -151,6 +156,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       final otpPrefData = results[3].data;
       if (otpPrefData['success'] == true) {
         _otpPreference = (otpPrefData['preference'] as String?) ?? 'email';
+      }
+
+      final otpEnabledData = results[4].data;
+      if (otpEnabledData['success'] == true) {
+        _otpEnabled = otpEnabledData['otpEnabled'] as bool? ?? true;
+        _pinCreated = otpEnabledData['pinCreated'] as bool? ?? false;
       }
     } catch (e) {
       debugPrint('Failed to fetch settings: $e');
@@ -226,6 +237,82 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       await ApiService().updateOtpPreference(preference);
     } catch (e) {
       debugPrint('Failed to update OTP preference: $e');
+    }
+  }
+
+  Future<void> _handleToggleOtp(bool enabled) async {
+    setState(() => _isSaving = true);
+    try {
+      await ApiService().updateOtpEnabled(enabled);
+      setState(() => _otpEnabled = enabled);
+    } catch (e) {
+      debugPrint('Failed to toggle OTP: $e');
+      AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  Future<void> _handleCreatePin() async {
+    final pin = _pinController.text.trim();
+    if (pin.length != 4) {
+      AppToast.show('Please enter a 4-digit PIN');
+      return;
+    }
+
+    setState(() => _isSaving = true);
+    try {
+      await ApiService().createPin(pin);
+      setState(() => _pinCreated = true);
+      AppToast.show('PIN created successfully', type: AppToastType.success);
+      if (mounted) Navigator.of(context).pop();
+      _pinController.clear();
+    } catch (e) {
+      debugPrint('Failed to create PIN: $e');
+      AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  Future<void> _handleSendPinUpdateOtp() async {
+    setState(() => _isSaving = true);
+    try {
+      await ApiService().sendPinUpdateOtp();
+      AppToast.show('OTP sent successfully', type: AppToastType.success);
+    } catch (e) {
+      debugPrint('Failed to send PIN update OTP: $e');
+      AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  Future<void> _handleUpdatePin() async {
+    final newPin = _newPinController.text.trim();
+    final otp = _otpController.text.trim();
+
+    if (newPin.length != 4) {
+      AppToast.show('Please enter a 4-digit new PIN');
+      return;
+    }
+    if (otp.length != 6) {
+      AppToast.show('Please enter a 6-digit OTP');
+      return;
+    }
+
+    setState(() => _isSaving = true);
+    try {
+      await ApiService().updatePin(newPin, otp);
+      AppToast.show('PIN updated successfully', type: AppToastType.success);
+      if (mounted) Navigator.of(context).pop();
+      _newPinController.clear();
+      _otpController.clear();
+    } catch (e) {
+      debugPrint('Failed to update PIN: $e');
+      AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
@@ -419,6 +506,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           : () => context.go(_kycTier == 'Tier 2' ? '/main/business-kyc' : '/kyc-prompt'),
                     ),
                     _sectionTitle('Transaction Security'),
+                    _otpToggleCard(),
+                    _pinManagementCard(),
                     _otpPreferenceCard(),
                     _sectionTitle('Subscription'),
                     _settingItem(
@@ -712,16 +801,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const SizedBox(height: 12),
           Row(
-            children: ['email', 'sms', 'both'].map((pref) {
+            children: ['email', 'sms', 'whatsapp', 'both'].map((pref) {
               final selected = _otpPreference == pref;
               return Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.only(right: 8),
+                  padding: const EdgeInsets.only(right: 4),
                   child: InkWell(
                     borderRadius: BorderRadius.circular(10),
                     onTap: () => _handleUpdateOtpPreference(pref),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
                       decoration: BoxDecoration(
                         color: selected ? colors.primary.withValues(alpha: 0.08) : colors.background,
                         border: Border.all(color: selected ? colors.primary : colors.border),
@@ -732,7 +821,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           color: selected ? colors.primary : colors.textSecondary,
-                          fontSize: 12,
+                          fontSize: 10,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -743,6 +832,175 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             }).toList(),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _otpToggleCard() {
+    final colors = AppTheme.colors;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Require OTP for Transfers',
+                style: TextStyle(color: colors.text, fontSize: 16, fontWeight: FontWeight.w500),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Add an extra layer of security for transfers',
+                style: TextStyle(color: colors.textSecondary, fontSize: 14),
+              ),
+            ],
+          ),
+          Switch(
+            value: _otpEnabled,
+            onChanged: _isSaving ? null : _handleToggleOtp,
+            activeThumbColor: colors.primary,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _pinManagementCard() {
+    final colors = AppTheme.colors;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Transaction PIN',
+            style: TextStyle(color: colors.text, fontSize: 16, fontWeight: FontWeight.w500),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _pinCreated ? 'PIN is set. Required for all transfers.' : 'Create a PIN for extra transfer security.',
+            style: TextStyle(color: colors.textSecondary, fontSize: 14),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: _isSaving
+                  ? null
+                  : () {
+                      if (_pinCreated) {
+                        _showPinUpdateModal();
+                      } else {
+                        _showPinCreateModal();
+                      }
+                    },
+              child: Text(_pinCreated ? 'Update PIN' : 'Create PIN'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showPinCreateModal() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _modalShell(
+        title: 'Create Transaction PIN',
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _fieldLabel('Enter 4-digit PIN'),
+            TextField(
+              controller: _pinController,
+              decoration: const InputDecoration(hintText: 'PIN'),
+              keyboardType: TextInputType.number,
+              maxLength: 4,
+              obscureText: true,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 24),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton(
+              onPressed: _isSaving ? null : _handleCreatePin,
+              child: _isSaving
+                  ? const SizedBox(
+                      height: 20,
+                      width: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Text('Create PIN'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showPinUpdateModal() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _modalShell(
+        title: 'Update Transaction PIN',
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ElevatedButton(
+              onPressed: _isSaving ? null : _handleSendPinUpdateOtp,
+              child: const Text('Send OTP'),
+            ),
+            const SizedBox(height: 16),
+            _fieldLabel('Enter 6-digit OTP'),
+            TextField(
+              controller: _otpController,
+              decoration: const InputDecoration(hintText: 'OTP'),
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 24),
+            ),
+            const SizedBox(height: 16),
+            _fieldLabel('Enter new 4-digit PIN'),
+            TextField(
+              controller: _newPinController,
+              decoration: const InputDecoration(hintText: 'New PIN'),
+              keyboardType: TextInputType.number,
+              maxLength: 4,
+              obscureText: true,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 24),
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton(
+              onPressed: _isSaving ? null : _handleUpdatePin,
+              child: _isSaving
+                  ? const SizedBox(
+                      height: 20,
+                      width: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Text('Update PIN'),
+            ),
+          ],
+        ),
       ),
     );
   }

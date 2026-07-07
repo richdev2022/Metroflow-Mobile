@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'models/transfer.dart';
 import 'theme/app_theme.dart';
 import 'providers/theme_provider.dart';
@@ -44,8 +45,9 @@ import 'screens/fees_screen.dart';
 import 'screens/activity_logs_screen.dart';
 import 'screens/board_screen.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await dotenv.load(fileName: ".env");
   runApp(const ProviderScope(child: MyApp()));
 }
 
@@ -62,8 +64,6 @@ class MyApp extends ConsumerStatefulWidget {
 class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   late final GoRouter _router;
   AppLifecycleState _appState = AppLifecycleState.resumed;
-  DateTime? _lastKycCheckAt;
-  bool? _cachedKycVerified;
   String? _currentRoute;
   final _storage = StorageService();
   bool _shouldPromptBiometricsOnResume = false;
@@ -108,70 +108,20 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         _currentRoute = path;
 
         if (isAuthenticated) {
-          final authState = ref.read(authProvider);
-          if (authState.skippedKyc) {
-            if (path.startsWith('/onboarding') ||
-                path == '/login' ||
-                path == '/register' ||
-                path == '/verify-otp' ||
-                path == '/forgot-password' ||
-                path == '/verify-reset-otp' ||
-                path == '/reset-password') {
-              return '/main';
+          if (path.startsWith('/onboarding') ||
+              path == '/login' ||
+              path == '/register' ||
+              path == '/verify-otp' ||
+              path == '/forgot-password' ||
+              path == '/verify-reset-otp' ||
+              path == '/reset-password') {
+            // Check if we have a last route to navigate to
+            final lastRoute = await _storage.getLastRoute();
+            if (lastRoute != null && lastRoute.isNotEmpty && lastRoute != '/login') {
+              await _storage.removeLastRoute(); // Clear it after using
+              return lastRoute;
             }
-            return null;
-          }
-
-          // Check KYC status before allowing access to main
-          try {
-            final now = DateTime.now();
-            final cacheIsFresh = _lastKycCheckAt != null &&
-                now.difference(_lastKycCheckAt!) < const Duration(minutes: 5);
-            var isKycVerified = _cachedKycVerified;
-
-            if (!cacheIsFresh || isKycVerified == null) {
-              final api = ApiService();
-              final response = await api.getKycStatus();
-              final data = response.data as Map<String, dynamic>;
-              final user = data['user'] as Map<String, dynamic>?;
-              final bvnVerified = user?['bvnStatus'] == 'verified' ||
-                  user?['bvn_status'] == 'verified' ||
-                  data['bvn_verified'] == true;
-              final ninVerified = user?['ninStatus'] == 'verified' ||
-                  user?['nin_status'] == 'verified' ||
-                  data['nin_verified'] == true;
-              isKycVerified = bvnVerified || ninVerified;
-              _cachedKycVerified = isKycVerified;
-              _lastKycCheckAt = now;
-            }
-            
-            if (!isKycVerified) {
-              // If Tier 1 is not verified and not already on KYC screens, go to kyc-prompt
-              final isKycRoute = path == '/kyc-prompt' ||
-                  path == '/kyc-initiate' ||
-                  path == '/kyc-otp' ||
-                  path == '/main/business-kyc';
-              if (!isKycRoute) {
-                return '/kyc-prompt';
-              }
-            } else if (path.startsWith('/onboarding') ||
-                path == '/login' ||
-                path == '/register' ||
-                path == '/verify-otp' ||
-                path == '/forgot-password' ||
-                path == '/verify-reset-otp' ||
-                path == '/reset-password') {
-              // Check if we have a last route to navigate to
-              final lastRoute = await _storage.getLastRoute();
-              if (lastRoute != null && lastRoute.isNotEmpty && lastRoute != '/login') {
-                await _storage.removeLastRoute(); // Clear it after using
-                return lastRoute;
-              }
-              return '/main';
-            }
-          } catch (e) {
-            // If API call fails, maybe just proceed to login or something
-            debugPrint('Error checking KYC status: $e');
+            return '/main';
           }
           return null;
         } else {
@@ -432,27 +382,15 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
             try {
               final success = await authNotifier.loginWithBiometrics();
               if (success) {
-                // Navigate to last route or main
-                final lastRoute = await _storage.getLastRoute();
-                if (lastRoute != null && lastRoute.isNotEmpty && lastRoute != '/login') {
-                  await _storage.removeLastRoute();
-                  if (mounted) _router.go(lastRoute);
-                } else {
-                  // Check KYC and navigate
-                  final api = ApiService();
-                  final response = await api.getKycStatus();
-                  final data = response.data as Map<String, dynamic>;
-                  final user = data['user'] as Map<String, dynamic>?;
-                  final bvnVerified = user?['bvnStatus'] == 'verified' || user?['bvn_status'] == 'verified' || data['bvn_verified'] == true;
-                  final ninVerified = user?['ninStatus'] == 'verified' || user?['nin_status'] == 'verified' || data['nin_verified'] == true;
-                  final isTier1Verified = bvnVerified || ninVerified;
-                  if (!isTier1Verified) {
-                    if (mounted) _router.go('/kyc-prompt');
-                  } else {
-                    if (mounted) _router.go('/main');
-                  }
-                }
+              // Navigate to last route or main
+              final lastRoute = await _storage.getLastRoute();
+              if (lastRoute != null && lastRoute.isNotEmpty && lastRoute != '/login') {
+                await _storage.removeLastRoute();
+                if (mounted) _router.go(lastRoute);
+              } else {
+                if (mounted) _router.go('/main');
               }
+            }
             } catch (e) {
               debugPrint('Auto biometric login failed: $e');
             }

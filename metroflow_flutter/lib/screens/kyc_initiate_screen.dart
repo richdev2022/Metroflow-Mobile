@@ -16,6 +16,7 @@ class _KycInitiateScreenState extends ConsumerState<KycInitiateScreen> {
   String? _type;
   final _numberController = TextEditingController();
   bool _isLoading = false;
+  String _selectedOtpMethod = 'sms';
 
   @override
   void didChangeDependencies() {
@@ -50,7 +51,7 @@ class _KycInitiateScreenState extends ConsumerState<KycInitiateScreen> {
     setState(() => _isLoading = true);
     try {
       final api = ApiService();
-      final response = await api.initiateKyc(type, number);
+      final response = await api.initiateKyc(type, number, otpMethod: _selectedOtpMethod);
       final responseData = response.data as Map<String, dynamic>;
       if (mounted) {
         context.go('/kyc-otp?type=$type', extra: {
@@ -72,6 +73,7 @@ class _KycInitiateScreenState extends ConsumerState<KycInitiateScreen> {
   @override
   Widget build(BuildContext context) {
     final type = _type ?? 'bvn';
+    final colors = AppTheme.colors;
 
     return Scaffold(
       body: SafeArea(
@@ -91,9 +93,9 @@ class _KycInitiateScreenState extends ConsumerState<KycInitiateScreen> {
               const SizedBox(height: 40),
               Container(
                 decoration: BoxDecoration(
-                  color: AppTheme.colors.surface,
+                  color: colors.surface,
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: AppTheme.colors.border, width: 1.5),
+                  border: Border.all(color: colors.border, width: 1.5),
                 ),
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: TextField(
@@ -102,12 +104,51 @@ class _KycInitiateScreenState extends ConsumerState<KycInitiateScreen> {
                   maxLength: 11,
                   decoration: InputDecoration(
                     hintText: type == 'bvn' ? 'Enter 11-digit BVN' : 'Enter 11-digit NIN',
-                    hintStyle: TextStyle(color: AppTheme.colors.textSecondary),
-                    prefixIcon: Icon(Icons.description_outlined, color: AppTheme.colors.textSecondary),
+                    hintStyle: TextStyle(color: colors.textSecondary),
+                    prefixIcon: Icon(Icons.description_outlined, color: colors.textSecondary),
                     border: InputBorder.none,
                   ),
                   style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500, letterSpacing: 1),
                 ),
+              ),
+              const SizedBox(height: 24),
+              const Text(
+                'OTP Delivery Method',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.grey, letterSpacing: 1),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: ['sms', 'whatsapp', 'email'].map((method) {
+                  final isSelected = _selectedOtpMethod == method;
+                  return Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: GestureDetector(
+                        onTap: () => setState(() => _selectedOtpMethod = method),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                          decoration: BoxDecoration(
+                            color: isSelected ? colors.primary.withValues(alpha: 0.1) : colors.surface,
+                            border: Border.all(
+                              color: isSelected ? colors.primary : colors.border,
+                              width: 2,
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            method.toUpperCase(),
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: isSelected ? colors.primary : colors.textSecondary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
               ),
               const SizedBox(height: 40),
               SizedBox(
