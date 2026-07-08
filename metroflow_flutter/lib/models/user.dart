@@ -21,7 +21,7 @@ class User {
       email: json['email'] as String,
       name: json['name'] as String,
       phone: json['phone'] as String,
-      kycStatus: json['kycStatus'] as String,
+      kycStatus: json['kyc_status'] as String,
       role: json['role'] as String,
     );
   }
@@ -32,7 +32,7 @@ class User {
       'email': email,
       'name': name,
       'phone': phone,
-      'kycStatus': kycStatus,
+      'kyc_status': kycStatus,
       'role': role,
     };
   }

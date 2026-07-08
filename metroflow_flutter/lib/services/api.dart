@@ -655,6 +655,70 @@ class ApiService {
   Future<Response> deleteTaskStatus(String id) async {
     return await _dio.delete('/task-statuses/$id');
   }
+
+  // Meetings API
+  Future<Response> getMeetings({int page = 1, int limit = 10}) async {
+    return await _dio.get('/meetings', queryParameters: {
+      'page': page,
+      'limit': limit,
+    });
+  }
+
+  Future<Response> createMeeting(Map<String, dynamic> data) async {
+    return await _dio.post('/meetings', data: data);
+  }
+
+  Future<Response> updateMeeting(String id, Map<String, dynamic> data) async {
+    return await _dio.put('/meetings/$id', data: data);
+  }
+
+  Future<Response> deleteMeeting(String id) async {
+    return await _dio.delete('/meetings/$id');
+  }
+
+  // Chat API
+  Future<Response> getConversations() async {
+    return await _dio.get('/chat/conversations');
+  }
+
+  Future<Response> createConversation(Map<String, dynamic> data) async {
+    return await _dio.post('/chat/conversations', data: data);
+  }
+
+  Future<Response> getConversationMessages(String conversationId, {int page = 1, int limit = 50}) async {
+    return await _dio.get('/chat/conversations/$conversationId/messages', queryParameters: {
+      'page': page,
+      'limit': limit,
+    });
+  }
+
+  Future<Response> sendMessage(String conversationId, Map<String, dynamic> data) async {
+    return await _dio.post('/chat/conversations/$conversationId/messages', data: data);
+  }
+
+  // Calls API
+  Future<Response> getCalls({int page = 1, int limit = 10}) async {
+    return await _dio.get('/calls', queryParameters: {
+      'page': page,
+      'limit': limit,
+    });
+  }
+
+  Future<Response> createCall(Map<String, dynamic> data) async {
+    return await _dio.post('/calls', data: data);
+  }
+
+  Future<Response> updateCall(String id, Map<String, dynamic> data) async {
+    return await _dio.put('/calls/$id', data: data);
+  }
+
+  Future<Response> joinCall(String id) async {
+    return await _dio.post('/calls/$id/join');
+  }
+
+  Future<Response> leaveCall(String id) async {
+    return await _dio.post('/calls/$id/leave');
+  }
 }
 
 class StorageService {

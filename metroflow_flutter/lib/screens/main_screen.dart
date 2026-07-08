@@ -11,6 +11,9 @@ import 'dashboard_screen.dart';
 import 'tasks_screen.dart';
 import 'wallet_screen.dart';
 import 'payroll_screen.dart';
+import 'meetings_screen.dart';
+import 'chat_screen.dart';
+import 'calls_screen.dart';
 
 class MainScreen extends ConsumerStatefulWidget {
   const MainScreen({super.key, this.initialIndex = 0});
@@ -28,6 +31,9 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   final List<Widget> _pages = const [
     DashboardScreen(),
     TasksScreen(),
+    MeetingsScreen(),
+    ChatScreen(),
+    CallsScreen(),
     WalletScreen(),
     PayrollScreen(),
   ];
@@ -35,6 +41,9 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   final List<String> _pageTitles = const [
     'Home',
     'Tasks',
+    'Meetings',
+    'Chat',
+    'Calls',
     'Wallet',
     'Payroll',
   ];
@@ -42,18 +51,18 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   @override
   void initState() {
     super.initState();
-    _selectedIndex = widget.initialIndex == 2 || widget.initialIndex == 3 ? 0 : widget.initialIndex;
+    _selectedIndex = widget.initialIndex == 5 || widget.initialIndex == 6 ? 0 : widget.initialIndex;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && (_selectedIndex == 2 || _selectedIndex == 3)) {
+      if (mounted && (_selectedIndex == 5 || _selectedIndex == 6)) {
         _onItemTapped(_selectedIndex);
-      } else if (mounted && (widget.initialIndex == 2 || widget.initialIndex == 3)) {
+      } else if (mounted && (widget.initialIndex == 5 || widget.initialIndex == 6)) {
         _onItemTapped(widget.initialIndex);
       }
     });
   }
 
   Future<void> _onItemTapped(int index) async {
-    if ((index == 2 || index == 3) && !await _canAccessWalletOrPayroll()) {
+    if ((index == 5 || index == 6) && !await _canAccessWalletOrPayroll()) {
       return;
     }
     setState(() {
@@ -270,6 +279,27 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     },
                   ),
                   ListTile(
+                    leading: const Icon(Icons.calendar_today_outlined),
+                    title: const Text('Meetings'),
+                    onTap: () {
+                      context.go('/main/meetings');
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.chat_outlined),
+                    title: const Text('Chat'),
+                    onTap: () {
+                      context.go('/main/chat');
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.video_call_outlined),
+                    title: const Text('Calls'),
+                    onTap: () {
+                      context.go('/main/calls');
+                    },
+                  ),
+                  ListTile(
                     leading: const Icon(Icons.person_outline),
                     title: const Text('Profile'),
                     onTap: () {
@@ -453,7 +483,70 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       borderRadius: BorderRadius.circular(12),
                     )
                   : null,
-              child: Icon(Icons.account_balance_wallet_outlined, color: _selectedIndex == 2 ? Colors.white : null),
+              child: Icon(Icons.calendar_today_outlined, color: _selectedIndex == 2 ? Colors.white : null),
+            ),
+            activeIcon: Container(
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+              decoration: BoxDecoration(
+                color: colors.primary,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.calendar_today, color: Colors.white),
+            ),
+            label: 'Meetings',
+          ),
+          BottomNavigationBarItem(
+            icon: Container(
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+              decoration: _selectedIndex == 3
+                  ? BoxDecoration(
+                      color: colors.primary,
+                      borderRadius: BorderRadius.circular(12),
+                    )
+                  : null,
+              child: Icon(Icons.chat_outlined, color: _selectedIndex == 3 ? Colors.white : null),
+            ),
+            activeIcon: Container(
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+              decoration: BoxDecoration(
+                color: colors.primary,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.chat, color: Colors.white),
+            ),
+            label: 'Chat',
+          ),
+          BottomNavigationBarItem(
+            icon: Container(
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+              decoration: _selectedIndex == 4
+                  ? BoxDecoration(
+                      color: colors.primary,
+                      borderRadius: BorderRadius.circular(12),
+                    )
+                  : null,
+              child: Icon(Icons.video_call_outlined, color: _selectedIndex == 4 ? Colors.white : null),
+            ),
+            activeIcon: Container(
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+              decoration: BoxDecoration(
+                color: colors.primary,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.video_call, color: Colors.white),
+            ),
+            label: 'Calls',
+          ),
+          BottomNavigationBarItem(
+            icon: Container(
+              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+              decoration: _selectedIndex == 5
+                  ? BoxDecoration(
+                      color: colors.primary,
+                      borderRadius: BorderRadius.circular(12),
+                    )
+                  : null,
+              child: Icon(Icons.account_balance_wallet_outlined, color: _selectedIndex == 5 ? Colors.white : null),
             ),
             activeIcon: Container(
               padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
@@ -468,13 +561,13 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           BottomNavigationBarItem(
             icon: Container(
               padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-              decoration: _selectedIndex == 3
+              decoration: _selectedIndex == 6
                   ? BoxDecoration(
                       color: colors.primary,
                       borderRadius: BorderRadius.circular(12),
                     )
                   : null,
-              child: Icon(Icons.payments_outlined, color: _selectedIndex == 3 ? Colors.white : null),
+              child: Icon(Icons.payments_outlined, color: _selectedIndex == 6 ? Colors.white : null),
             ),
             activeIcon: Container(
               padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),

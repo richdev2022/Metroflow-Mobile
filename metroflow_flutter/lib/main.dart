@@ -44,6 +44,9 @@ import 'models/payment_transaction.dart';
 import 'screens/fees_screen.dart';
 import 'screens/activity_logs_screen.dart';
 import 'screens/board_screen.dart';
+import 'screens/meetings_screen.dart';
+import 'screens/chat_screen.dart';
+import 'screens/calls_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -303,6 +306,18 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
                 if (extra is! PaymentTransaction) return const SubscriptionScreen();
                 return TransactionDetailScreen(transaction: extra);
               },
+            ),
+            GoRoute(
+              path: 'meetings',
+              builder: (context, state) => const MeetingsScreen(),
+            ),
+            GoRoute(
+              path: 'chat',
+              builder: (context, state) => const ChatScreen(),
+            ),
+            GoRoute(
+              path: 'calls',
+              builder: (context, state) => const CallsScreen(),
             ),
           ],
         ),
