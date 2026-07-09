@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dio/dio.dart';
 import '../services/api.dart';
 import '../services/biometrics.dart';
+import '../services/socket_service.dart';
 
 class AuthState {
   final bool isAuthenticated;
@@ -62,6 +63,7 @@ class AuthNotifier extends Notifier<AuthState> {
   Timer? _idleTimer;
   final ApiService _apiService = ApiService();
   final StorageService _storageService = StorageService();
+  final SocketService _socketService = SocketService();
 
   @override
   AuthState build() {
@@ -95,6 +97,11 @@ class AuthNotifier extends Notifier<AuthState> {
       final hasSeenOnboarding = await _storageService.getHasSeenOnboarding();
 
       final isTokenValid = token != null;
+
+      // Connect socket if authenticated
+      if (isTokenValid && userId != null && businessId != null) {
+        _socketService.connect(userId, businessId);
+      }
 
       state = state.copyWith(
         token: isTokenValid ? token : null,
@@ -141,6 +148,11 @@ class AuthNotifier extends Notifier<AuthState> {
           businessId: businessId,
           userName: userName,
         );
+      }
+
+      // Connect socket
+      if (userId != null && businessId != null) {
+        _socketService.connect(userId, businessId);
       }
 
       state = state.copyWith(
@@ -191,6 +203,11 @@ class AuthNotifier extends Notifier<AuthState> {
           );
         }
 
+        // Connect socket
+        if (userId != null && businessId != null) {
+          _socketService.connect(userId, businessId);
+        }
+
         state = state.copyWith(
           token: token,
           userId: userId,
@@ -238,6 +255,11 @@ class AuthNotifier extends Notifier<AuthState> {
           );
         }
 
+        // Connect socket
+        if (userId != null && businessId != null) {
+          _socketService.connect(userId, businessId);
+        }
+
         state = state.copyWith(
           token: token,
           userId: userId,
@@ -258,6 +280,9 @@ class AuthNotifier extends Notifier<AuthState> {
   Future<void> logout({bool disableBiometrics = false}) async {
     try {
       _idleTimer?.cancel();
+      
+      // Disconnect socket
+      _socketService.disconnect();
       
       final hasSeenOnboarding = state.hasSeenOnboarding;
       bool newBiometricsEnabled = state.biometricsEnabled;
@@ -348,6 +373,9 @@ class AuthNotifier extends Notifier<AuthState> {
             _storageService.setUserName(userName),
           ]);
 
+          // Connect socket
+          _socketService.connect(userId, businessId);
+
           state = state.copyWith(
             token: token,
             userId: userId,
@@ -410,6 +438,11 @@ class AuthNotifier extends Notifier<AuthState> {
           businessId: businessId,
           userName: userName,
         );
+      }
+
+      // Connect socket if authenticated
+      if (isAuthenticated && userId != null && businessId != null) {
+        _socketService.connect(userId, businessId);
       }
 
       state = state.copyWith(

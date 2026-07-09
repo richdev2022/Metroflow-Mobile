@@ -34,12 +34,22 @@ class Meeting {
   final DateTime endTime;
   final String timezone;
   final String createdById;
+  final String hostId;
+  final String? coHostId;
   final String status;
-  final String meetingUrl;
+  final String meetingCode;
+  final bool isInstant;
+  final String? password;
+  final int maxParticipants;
+  final bool waitingRoomEnabled;
+  final bool recordingEnabled;
+  final bool screenSharingEnabled;
   final String? googleEventId;
   final DateTime createdAt;
   final DateTime updatedAt;
   final List<MeetingAttendee> attendees;
+  // Backward compatibility fields
+  final String meetingUrl;
 
   Meeting({
     required this.id,
@@ -49,12 +59,21 @@ class Meeting {
     required this.endTime,
     required this.timezone,
     required this.createdById,
+    required this.hostId,
+    this.coHostId,
     required this.status,
-    required this.meetingUrl,
+    required this.meetingCode,
+    required this.isInstant,
+    this.password,
+    required this.maxParticipants,
+    required this.waitingRoomEnabled,
+    required this.recordingEnabled,
+    required this.screenSharingEnabled,
     this.googleEventId,
     required this.createdAt,
     required this.updatedAt,
     required this.attendees,
+    this.meetingUrl = '',
   });
 
   factory Meeting.fromJson(Map<String, dynamic> json) {
@@ -66,14 +85,23 @@ class Meeting {
       endTime: DateTime.parse((json['endTime'] ?? json['end_time']) as String),
       timezone: (json['timezone'] as String?) ?? 'UTC',
       createdById: (json['createdById'] ?? json['created_by'] ?? '') as String,
+      hostId: (json['hostId'] ?? json['host_id'] ?? '') as String,
+      coHostId: (json['coHostId'] ?? json['co_host_id']) as String?,
       status: (json['status'] as String?) ?? 'scheduled',
-      meetingUrl: (json['meetingUrl'] ?? json['meeting_url'] ?? '') as String,
+      meetingCode: (json['meetingCode'] ?? json['meeting_code'] ?? '') as String,
+      isInstant: (json['isInstant'] ?? json['is_instant'] ?? false) as bool,
+      password: (json['password']) as String?,
+      maxParticipants: (json['maxParticipants'] ?? json['max_participants'] ?? 100) as int,
+      waitingRoomEnabled: (json['waitingRoomEnabled'] ?? json['waiting_room_enabled'] ?? false) as bool,
+      recordingEnabled: (json['recordingEnabled'] ?? json['recording_enabled'] ?? false) as bool,
+      screenSharingEnabled: (json['screenSharingEnabled'] ?? json['screen_sharing_enabled'] ?? true) as bool,
       googleEventId: (json['googleEventId'] ?? json['google_event_id']) as String?,
       createdAt: DateTime.parse((json['createdAt'] ?? json['created_at']) as String),
       updatedAt: DateTime.parse((json['updatedAt'] ?? json['updated_at']) as String),
       attendees: ((json['attendees'] as List<dynamic>?) ?? [])
           .map((e) => MeetingAttendee.fromJson(e as Map<String, dynamic>))
           .toList(),
+      meetingUrl: (json['meetingUrl'] ?? json['meeting_url'] ?? '') as String,
     );
   }
 
@@ -86,12 +114,21 @@ class Meeting {
       'endTime': endTime.toIso8601String(),
       'timezone': timezone,
       'createdById': createdById,
+      'hostId': hostId,
+      'coHostId': coHostId,
       'status': status,
-      'meetingUrl': meetingUrl,
+      'meetingCode': meetingCode,
+      'isInstant': isInstant,
+      'password': password,
+      'maxParticipants': maxParticipants,
+      'waitingRoomEnabled': waitingRoomEnabled,
+      'recordingEnabled': recordingEnabled,
+      'screenSharingEnabled': screenSharingEnabled,
       'googleEventId': googleEventId,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
       'attendees': attendees.map((e) => e.toJson()).toList(),
+      'meetingUrl': meetingUrl,
     };
   }
 }

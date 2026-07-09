@@ -21,32 +21,51 @@ class _MeetingsScreenState extends ConsumerState<MeetingsScreen> {
   List<Meeting> _meetings = [];
   List<User> _teamMembers = [];
   bool _isLoading = true;
+  late final void Function(dynamic) _meetingCreatedHandler;
+  late final void Function(dynamic) _meetingUpdatedHandler;
+  late final void Function(dynamic) _meetingDeletedHandler;
 
   @override
   void initState() {
     super.initState();
     _loadMeetings();
     _loadTeamMembers();
-    _socket.onMeetingCreated = (data) {
+    _meetingCreatedHandler = (data) {
+      if (!mounted) return;
       setState(() {
-        _meetings.add(Meeting.fromJson(data));
-        _meetings.sort((a, b) => a.startTime.compareTo(b.startTime));
+        _upsertMeeting(Meeting.fromJson(data));
       });
     };
-    _socket.onMeetingUpdated = (data) {
+    _meetingUpdatedHandler = (data) {
+      if (!mounted) return;
       setState(() {
-        final index = _meetings.indexWhere((m) => m.id == data['id']);
-        if (index != -1) {
-          _meetings[index] = Meeting.fromJson(data);
-          _meetings.sort((a, b) => a.startTime.compareTo(b.startTime));
-        }
+        _upsertMeeting(Meeting.fromJson(data));
       });
     };
-    _socket.onMeetingDeleted = (meetingId) {
+    _meetingDeletedHandler = (meetingId) {
+      if (!mounted) return;
+      final id = meetingId is Map ? meetingId['id'] : meetingId;
       setState(() {
-        _meetings.removeWhere((m) => m.id == meetingId);
+        _meetings.removeWhere((m) => m.id == id);
       });
     };
+    _socket.onMeetingCreated = _meetingCreatedHandler;
+    _socket.onMeetingUpdated = _meetingUpdatedHandler;
+    _socket.onMeetingDeleted = _meetingDeletedHandler;
+  }
+
+  @override
+  void dispose() {
+    if (_socket.onMeetingCreated == _meetingCreatedHandler) {
+      _socket.onMeetingCreated = null;
+    }
+    if (_socket.onMeetingUpdated == _meetingUpdatedHandler) {
+      _socket.onMeetingUpdated = null;
+    }
+    if (_socket.onMeetingDeleted == _meetingDeletedHandler) {
+      _socket.onMeetingDeleted = null;
+    }
+    super.dispose();
   }
 
   Future<void> _loadMeetings() async {
@@ -66,6 +85,16 @@ class _MeetingsScreenState extends ConsumerState<MeetingsScreen> {
         setState(() => _isLoading = false);
       }
     }
+  }
+
+  void _upsertMeeting(Meeting meeting) {
+    final index = _meetings.indexWhere((item) => item.id == meeting.id);
+    if (index == -1) {
+      _meetings.add(meeting);
+    } else {
+      _meetings[index] = meeting;
+    }
+    _meetings.sort((a, b) => a.startTime.compareTo(b.startTime));
   }
 
   Future<void> _loadTeamMembers() async {
@@ -89,20 +118,9 @@ class _MeetingsScreenState extends ConsumerState<MeetingsScreen> {
         teamMembers: _teamMembers,
         meeting: meeting,
         onSaved: (updatedMeeting) {
-          if (meeting == null) {
-            setState(() {
-              _meetings.add(updatedMeeting);
-              _meetings.sort((a, b) => a.startTime.compareTo(b.startTime));
-            });
-          } else {
-            setState(() {
-              final index = _meetings.indexWhere((m) => m.id == updatedMeeting.id);
-              if (index != -1) {
-                _meetings[index] = updatedMeeting;
-                _meetings.sort((a, b) => a.startTime.compareTo(b.startTime));
-              }
-            });
-          }
+          setState(() {
+            _upsertMeeting(updatedMeeting);
+          });
         },
       ),
     );
@@ -132,6 +150,11 @@ class _MeetingsScreenState extends ConsumerState<MeetingsScreen> {
         });
       } catch (e) {
         Logger.error('Error deleting meeting: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(ApiService.extractErrorMessage(e))),
+          );
+        }
       }
     }
   }
@@ -226,7 +249,7 @@ class _MeetingsScreenState extends ConsumerState<MeetingsScreen> {
                                   Icon(Icons.access_time, size: 18, color: Theme.of(context).primaryColor),
                                   const SizedBox(width: 8),
                                   Text(
-                                    '${DateFormat.yMMMd().format(meeting.startTime)} • ${DateFormat.Hm().format(meeting.startTime)} - ${DateFormat.Hm().format(meeting.endTime)}',
+                                    '${DateFormat.yMMMd().format(meeting.startTime)} - ${DateFormat.Hm().format(meeting.startTime)} to ${DateFormat.Hm().format(meeting.endTime)}',
                                   ),
                                 ],
                               ),
@@ -341,6 +364,12 @@ class _MeetingDialogState extends State<_MeetingDialog> {
 
   Future<void> _saveMeeting() async {
     if (!_formKey.currentState!.validate()) return;
+    if (!_endDate.isAfter(_startDate)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('End time must be after start time')),
+      );
+      return;
+    }
 
     setState(() => _isSaving = true);
     try {
@@ -363,6 +392,11 @@ class _MeetingDialogState extends State<_MeetingDialog> {
       }
     } catch (e) {
       Logger.error('Error saving meeting: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(ApiService.extractErrorMessage(e))),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() => _isSaving = false);

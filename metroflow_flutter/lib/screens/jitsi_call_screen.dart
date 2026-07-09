@@ -82,22 +82,28 @@ class _JitsiCallScreenState extends State<JitsiCallScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.title),
-        leading: IconButton(
-          icon: const Icon(Icons.close),
-          onPressed: _leave,
-        ),
-        actions: [
-          TextButton.icon(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) _leave();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(widget.title),
+          leading: IconButton(
+            icon: const Icon(Icons.close),
             onPressed: _leave,
-            icon: const Icon(Icons.call_end),
-            label: const Text('Leave'),
           ),
-        ],
+          actions: [
+            TextButton.icon(
+              onPressed: _leave,
+              icon: const Icon(Icons.call_end),
+              label: const Text('Leave'),
+            ),
+          ],
+        ),
+        body: WebViewWidget(controller: _controller),
       ),
-      body: WebViewWidget(controller: _controller),
     );
   }
 }

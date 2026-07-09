@@ -12,9 +12,9 @@ class ConversationParticipant {
   factory ConversationParticipant.fromJson(Map<String, dynamic> json) {
     return ConversationParticipant(
       id: json['id'] as String,
-      userId: json['user_id'] as String,
-      lastReadAt: json['last_read_at'] != null
-          ? DateTime.parse(json['last_read_at'] as String)
+      userId: (json['userId'] ?? json['user_id']) as String,
+      lastReadAt: (json['lastReadAt'] ?? json['last_read_at']) != null
+          ? DateTime.parse((json['lastReadAt'] ?? json['last_read_at']) as String)
           : null,
     );
   }
@@ -22,8 +22,8 @@ class ConversationParticipant {
   Map<String, dynamic> toJson() {
     return {
       'id': id,
-      'user_id': userId,
-      'last_read_at': lastReadAt?.toIso8601String(),
+      'userId': userId,
+      'lastReadAt': lastReadAt?.toIso8601String(),
     };
   }
 }
@@ -55,16 +55,16 @@ class Conversation {
     return Conversation(
       id: json['id'] as String,
       name: json['name'] as String?,
-      type: json['type'] as String,
-      createdBy: json['created_by'] as String,
-      createdAt: DateTime.parse(json['created_at'] as String),
-      updatedAt: DateTime.parse(json['updated_at'] as String),
-      participants: (json['participants'] as List<dynamic>)
+      type: (json['type'] as String?) ?? 'direct',
+      createdBy: (json['createdBy'] ?? json['created_by'] ?? '') as String,
+      createdAt: DateTime.parse((json['createdAt'] ?? json['created_at']) as String),
+      updatedAt: DateTime.parse((json['updatedAt'] ?? json['updated_at']) as String),
+      participants: ((json['participants'] as List<dynamic>?) ?? [])
           .map((e) => ConversationParticipant.fromJson(e as Map<String, dynamic>))
           .toList(),
-      lastMessage: json['last_message'] as String?,
-      lastMessageAt: json['last_message_at'] != null
-          ? DateTime.parse(json['last_message_at'] as String)
+      lastMessage: (json['lastMessage'] ?? json['last_message']) as String?,
+      lastMessageAt: (json['lastMessageAt'] ?? json['last_message_at']) != null
+          ? DateTime.parse((json['lastMessageAt'] ?? json['last_message_at']) as String)
           : null,
     );
   }
@@ -74,12 +74,12 @@ class Conversation {
       'id': id,
       'name': name,
       'type': type,
-      'created_by': createdBy,
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
+      'createdBy': createdBy,
+      'createdAt': createdAt.toIso8601String(),
+      'updatedAt': updatedAt.toIso8601String(),
       'participants': participants.map((e) => e.toJson()).toList(),
-      'last_message': lastMessage,
-      'last_message_at': lastMessageAt?.toIso8601String(),
+      'lastMessage': lastMessage,
+      'lastMessageAt': lastMessageAt?.toIso8601String(),
     };
   }
 }

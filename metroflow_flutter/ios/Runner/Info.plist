@@ -51,6 +51,10 @@
 	<true/>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Metricorex uses Face ID to let you sign in securely.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Metricorex uses the camera for video calls and meetings.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Metricorex uses the microphone for audio calls, video calls, and meetings.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

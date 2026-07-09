@@ -21,25 +21,99 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
   List<Call> _calls = [];
   List<User> _teamMembers = [];
   bool _isLoading = true;
+  late final void Function(dynamic) _callCreatedHandler;
+  late final void Function(dynamic) _callUpdatedHandler;
+  late final void Function(dynamic) _callDeletedHandler;
+  late final void Function(dynamic) _callParticipantChangedHandler;
 
   @override
   void initState() {
     super.initState();
     _loadCalls();
     _loadTeamMembers();
-    _socket.onCallCreated = (data) {
+    _callCreatedHandler = (data) {
+      if (!mounted) return;
       setState(() {
-        _calls.insert(0, Call.fromJson(data));
+        _upsertCall(Call.fromJson(data));
       });
     };
-    _socket.onCallUpdated = (data) {
+    _callUpdatedHandler = (data) {
+      if (!mounted) return;
       setState(() {
-        final index = _calls.indexWhere((c) => c.id == data['id']);
-        if (index != -1) {
-          _calls[index] = Call.fromJson(data);
+        _upsertCall(Call.fromJson(data));
+      });
+    };
+    _callDeletedHandler = (callId) {
+      if (!mounted) return;
+      final id = callId is Map ? callId['id'] : callId;
+      setState(() {
+        _calls.removeWhere((c) => c.id == id);
+      });
+    };
+    _callParticipantChangedHandler = (_) {
+      if (!mounted) return;
+      _loadCalls();
+    };
+    _socket.onCallCreated = _callCreatedHandler;
+    _socket.onCallUpdated = _callUpdatedHandler;
+    _socket.onCallDeleted = _callDeletedHandler;
+    _socket.onCallParticipantJoined = _callParticipantChangedHandler;
+    _socket.onCallParticipantLeft = _callParticipantChangedHandler;
+  }
+
+  @override
+  void dispose() {
+    if (_socket.onCallCreated == _callCreatedHandler) {
+      _socket.onCallCreated = null;
+    }
+    if (_socket.onCallUpdated == _callUpdatedHandler) {
+      _socket.onCallUpdated = null;
+    }
+    if (_socket.onCallDeleted == _callDeletedHandler) {
+      _socket.onCallDeleted = null;
+    }
+    if (_socket.onCallParticipantJoined == _callParticipantChangedHandler) {
+      _socket.onCallParticipantJoined = null;
+    }
+    if (_socket.onCallParticipantLeft == _callParticipantChangedHandler) {
+      _socket.onCallParticipantLeft = null;
+    }
+    super.dispose();
+  }
+
+  Future<void> _deleteCall(Call call) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Call'),
+        content: Text('Are you sure you want to delete this ${call.type} call?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      try {
+        await _api.deleteCall(call.id);
+        setState(() {
+          _calls.remove(call);
+        });
+      } catch (e) {
+        Logger.error('Error deleting call: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+  SnackBar(
+    content: Text(ApiService.extractErrorMessage(e)),
+  ),
+);
         }
-      });
-    };
+      }
+    }
   }
 
   Future<void> _loadCalls() async {
@@ -82,12 +156,22 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
         teamMembers: _teamMembers,
         onCreated: (call) {
           setState(() {
-            _calls.insert(0, call);
+            _upsertCall(call);
           });
           _openCallModal(call);
         },
       ),
     );
+  }
+
+  void _upsertCall(Call call) {
+    final index = _calls.indexWhere((item) => item.id == call.id);
+    if (index == -1) {
+      _calls.insert(0, call);
+    } else {
+      _calls[index] = call;
+    }
+    _calls.sort((a, b) => b.createdAt.compareTo(a.createdAt));
   }
 
   Future<void> _openCallModal(Call call) async {
@@ -96,12 +180,7 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
       if (response.data['success'] == true && mounted) {
         final updatedCall = Call.fromJson(response.data['data']);
         setState(() {
-          final index = _calls.indexWhere((c) => c.id == updatedCall.id);
-          if (index == -1) {
-            _calls.insert(0, updatedCall);
-          } else {
-            _calls[index] = updatedCall;
-          }
+          _upsertCall(updatedCall);
         });
         await JitsiCallScreen.showModal(
           context: context,
@@ -126,10 +205,7 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
       if (response.data['success'] == true && mounted) {
         final updatedCall = Call.fromJson(response.data['data']);
         setState(() {
-          final index = _calls.indexWhere((c) => c.id == updatedCall.id);
-          if (index != -1) {
-            _calls[index] = updatedCall;
-          }
+          _upsertCall(updatedCall);
         });
       }
     } catch (e) {
@@ -235,6 +311,16 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
                                     ],
                                   ),
                                 ),
+                                PopupMenuButton(
+                                  onSelected: (value) {
+                                    if (value == 'delete') {
+                                      _deleteCall(call);
+                                    }
+                                  },
+                                  itemBuilder: (context) => [
+                                    const PopupMenuItem(value: 'delete', child: Text('Delete')),
+                                  ],
+                                ),
                                 if (call.status == 'ongoing')
                                   ElevatedButton.icon(
                                     icon: const Icon(Icons.call),
@@ -309,11 +395,16 @@ class _CreateCallDialogState extends State<_CreateCallDialog> {
       });
       if (response.data['success'] == true) {
         final call = Call.fromJson(response.data['data']);
-        widget.onCreated(call);
         if (mounted) Navigator.pop(context);
+        widget.onCreated(call);
       }
     } catch (e) {
       Logger.error('Error creating call: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(ApiService.extractErrorMessage(e))),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() => _isCreating = false);

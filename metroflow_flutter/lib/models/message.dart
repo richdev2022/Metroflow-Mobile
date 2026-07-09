@@ -22,26 +22,26 @@ class Message {
   factory Message.fromJson(Map<String, dynamic> json) {
     return Message(
       id: json['id'] as String,
-      conversationId: json['conversation_id'] as String,
-      senderId: json['sender_id'] as String,
-      content: json['content'] as String,
-      attachmentUrl: json['attachment_url'] as String?,
-      attachmentType: json['attachment_type'] as String?,
-      createdAt: DateTime.parse(json['created_at'] as String),
-      senderName: json['sender_name'] as String?,
+      conversationId: (json['conversationId'] ?? json['conversation_id']) as String,
+      senderId: (json['senderId'] ?? json['sender_id']) as String,
+      content: (json['content'] as String?) ?? '',
+      attachmentUrl: (json['attachmentUrl'] ?? json['attachment_url']) as String?,
+      attachmentType: (json['attachmentType'] ?? json['attachment_type']) as String?,
+      createdAt: DateTime.parse((json['createdAt'] ?? json['created_at']) as String),
+      senderName: (json['senderName'] ?? json['sender_name']) as String?,
     );
   }
 
   Map<String, dynamic> toJson() {
     return {
       'id': id,
-      'conversation_id': conversationId,
-      'sender_id': senderId,
+      'conversationId': conversationId,
+      'senderId': senderId,
       'content': content,
-      'attachment_url': attachmentUrl,
-      'attachment_type': attachmentType,
-      'created_at': createdAt.toIso8601String(),
-      'sender_name': senderName,
+      'attachmentUrl': attachmentUrl,
+      'attachmentType': attachmentType,
+      'createdAt': createdAt.toIso8601String(),
+      'senderName': senderName,
     };
   }
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../services/api.dart';
+import '../services/socket_service.dart';
 import '../models/conversation.dart';
 import '../models/user.dart';
 import '../utils/logger.dart';
@@ -17,15 +18,38 @@ class ChatScreen extends ConsumerStatefulWidget {
 
 class _ChatScreenState extends ConsumerState<ChatScreen> {
   final ApiService _api = ApiService();
+  final SocketService _socket = SocketService();
   List<Conversation> _conversations = [];
   List<User> _teamMembers = [];
   bool _isLoading = true;
+  late final void Function(dynamic) _conversationCreatedHandler;
 
   @override
   void initState() {
     super.initState();
     _loadConversations();
     _loadTeamMembers();
+    _conversationCreatedHandler = (data) {
+      if (!mounted) return;
+      final conversation = Conversation.fromJson(data);
+      setState(() {
+        final index = _conversations.indexWhere((item) => item.id == conversation.id);
+        if (index == -1) {
+          _conversations.insert(0, conversation);
+        } else {
+          _conversations[index] = conversation;
+        }
+      });
+    };
+    _socket.onConversationCreated = _conversationCreatedHandler;
+  }
+
+  @override
+  void dispose() {
+    if (_socket.onConversationCreated == _conversationCreatedHandler) {
+      _socket.onConversationCreated = null;
+    }
+    super.dispose();
   }
 
   Future<void> _loadConversations() async {
@@ -193,9 +217,9 @@ class _CreateConversationDialogState extends State<_CreateConversationDialog> {
         final conversation = Conversation.fromJson(response.data['data']);
         widget.onCreated(conversation);
         if (mounted) {
-          Navigator.pop(context);
-          Navigator.push(
-            context,
+          final navigator = Navigator.of(context, rootNavigator: true);
+          navigator.pop();
+          navigator.push(
             MaterialPageRoute(
               builder: (context) => ChatDetailScreen(conversation: conversation),
             ),
@@ -204,6 +228,11 @@ class _CreateConversationDialogState extends State<_CreateConversationDialog> {
       }
     } catch (e) {
       Logger.error('Error creating conversation: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(ApiService.extractErrorMessage(e))),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() => _isCreating = false);

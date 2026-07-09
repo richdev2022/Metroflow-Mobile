@@ -23,7 +23,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   final ScrollController _scrollController = ScrollController();
   List<Message> _messages = [];
   bool _isLoading = true;
+  bool _isSending = false;
   String? _currentUserId;
+  late final void Function(dynamic) _messageCreatedHandler;
 
   @override
   void initState() {
@@ -31,18 +33,45 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     _loadCurrentUser();
     _loadMessages();
     _socket.joinConversation(widget.conversation.id);
-    _socket.onMessageCreated = (data) {
-      if (data['conversation_id'] == widget.conversation.id) {
-        setState(() {
-          _messages.add(Message.fromJson(data));
-        });
-        _scrollToBottom();
-      }
+    _messageCreatedHandler = (data) {
+      final conversationId = data['conversationId'] ?? data['conversation_id'];
+      if (!mounted || conversationId != widget.conversation.id) return;
+      final message = Message.fromJson(data);
+      setState(() {
+        _upsertMessage(message);
+      });
+      _scrollToBottom();
     };
+    _socket.onMessageCreated = _messageCreatedHandler;
+  }
+
+  void _upsertMessage(Message message) {
+    final index = _messages.indexWhere((item) => item.id == message.id);
+    if (index == -1) {
+      _messages.add(message);
+    } else {
+      _messages[index] = message;
+    }
+  }
+
+  Message _extractMessage(dynamic responseData) {
+    final data = responseData is Map ? responseData['data'] : null;
+    if (data is Map && data['message'] is Map<String, dynamic>) {
+      return Message.fromJson(data['message'] as Map<String, dynamic>);
+    }
+    if (data is Map<String, dynamic>) {
+      return Message.fromJson(data);
+    }
+    return Message.fromJson(responseData as Map<String, dynamic>);
   }
 
   Future<void> _loadCurrentUser() async {
-    _currentUserId = await _storage.getUserId();
+    final userId = await _storage.getUserId();
+    if (mounted) {
+      setState(() {
+        _currentUserId = userId;
+      });
+    }
   }
 
   void _scrollToBottom() {
@@ -75,19 +104,41 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   }
 
   Future<void> _sendMessage() async {
-    if (_messageController.text.trim().isEmpty) return;
+    final content = _messageController.text.trim();
+    if (content.isEmpty || _isSending) return;
+
+    setState(() => _isSending = true);
     try {
-      await _api.sendMessage(widget.conversation.id, {
-        'content': _messageController.text.trim(),
+      final response = await _api.sendMessage(widget.conversation.id, {
+        'content': content,
       });
       _messageController.clear();
+      if (response.data['success'] == true && mounted) {
+        final message = _extractMessage(response.data);
+        setState(() {
+          _upsertMessage(message);
+        });
+        _scrollToBottom();
+      }
     } catch (e) {
       Logger.error('Error sending message: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(ApiService.extractErrorMessage(e))),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSending = false);
+      }
     }
   }
 
   @override
   void dispose() {
+    if (_socket.onMessageCreated == _messageCreatedHandler) {
+      _socket.onMessageCreated = null;
+    }
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -222,7 +273,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                     ),
                     child: IconButton(
                       icon: const Icon(Icons.send, color: Colors.white),
-                      onPressed: _sendMessage,
+                      onPressed: _isSending ? null : _sendMessage,
                     ),
                   ),
                 ],

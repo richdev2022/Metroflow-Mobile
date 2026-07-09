@@ -664,6 +664,10 @@ class ApiService {
     });
   }
 
+  Future<Response> getMeetingByCode(String code) async {
+    return await _dio.get('/meetings/code/$code');
+  }
+
   Future<Response> createMeeting(Map<String, dynamic> data) async {
     return await _dio.post('/meetings', data: data);
   }
@@ -704,6 +708,10 @@ class ApiService {
     });
   }
 
+  Future<Response> getCallByCode(String code) async {
+    return await _dio.get('/calls/code/$code');
+  }
+
   Future<Response> createCall(Map<String, dynamic> data) async {
     return await _dio.post('/calls', data: data);
   }
@@ -712,12 +720,36 @@ class ApiService {
     return await _dio.put('/calls/$id', data: data);
   }
 
-  Future<Response> joinCall(String id) async {
-    return await _dio.post('/calls/$id/join');
+  Future<Response> joinCall(String id, {String? password}) async {
+    return await _dio.post('/calls/$id/join', data: password != null ? {'password': password} : null);
   }
 
   Future<Response> leaveCall(String id) async {
     return await _dio.post('/calls/$id/leave');
+  }
+
+  Future<Response> deleteCall(String id) async {
+    return await _dio.delete('/calls/$id');
+  }
+
+  // Recordings API
+  Future<Response> getRecordings({int page = 1, int limit = 10}) async {
+    return await _dio.get('/recordings', queryParameters: {
+      'page': page,
+      'limit': limit,
+    });
+  }
+
+  Future<Response> startRecording(Map<String, dynamic> data) async {
+    return await _dio.post('/recordings', data: data);
+  }
+
+  Future<Response> updateRecording(String id, Map<String, dynamic> data) async {
+    return await _dio.put('/recordings/$id', data: data);
+  }
+
+  Future<Response> deleteRecording(String id) async {
+    return await _dio.delete('/recordings/$id');
   }
 }
 
