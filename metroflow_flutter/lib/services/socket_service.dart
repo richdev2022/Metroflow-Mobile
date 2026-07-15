@@ -43,6 +43,7 @@ class SocketService {
   void Function(dynamic)? onScreenShareStarted;
   void Function(dynamic)? onScreenShareStopped;
   void Function(dynamic)? onMeetingChatMessage;
+  void Function(dynamic)? onNotificationNew;
 
   void connect(String userId, String businessId) {
     if (_socket?.connected == true) return;
@@ -186,6 +187,10 @@ class SocketService {
 
     _socket?.on('meeting-chat:message', (data) {
       if (onMeetingChatMessage != null) onMeetingChatMessage!(data);
+    });
+
+    _socket?.on('notification:new', (data) {
+      if (onNotificationNew != null) onNotificationNew!(data);
     });
   }
 

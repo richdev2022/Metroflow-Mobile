@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../theme/app_theme.dart';
 import '../providers/theme_provider.dart';
 import '../providers/auth_provider.dart';
+import '../providers/notifications_provider.dart';
 import '../services/api.dart';
 import '../utils/app_toast.dart';
 import 'dashboard_screen.dart';
@@ -225,6 +226,45 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           onPressed: () => _scaffoldKey.currentState?.openDrawer(),
         ),
         actions: [
+          Consumer(
+            builder: (context, ref, child) {
+              final notificationsState = ref.watch(notificationsProvider);
+              return Stack(
+                children: [
+                  IconButton(
+                    tooltip: 'Notifications',
+                    icon: const Icon(Icons.notifications_outlined, color: Colors.white),
+                    onPressed: () => context.push('/main/notifications'),
+                  ),
+                  if (notificationsState.unreadCount > 0)
+                    Positioned(
+                      right: 8,
+                      top: 8,
+                      child: Container(
+                        padding: const EdgeInsets.all(2),
+                        decoration: BoxDecoration(
+                          color: Colors.red,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        constraints: const BoxConstraints(
+                          minWidth: 16,
+                          minHeight: 16,
+                        ),
+                        child: Text(
+                          notificationsState.unreadCount > 99 ? '99+' : notificationsState.unreadCount.toString(),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
           if (_selectedIndex == 0)
             IconButton(
               tooltip: 'Profile',

@@ -32,6 +32,8 @@ class MediasoupRoomService {
     required this.produceAudio,
     this.onRemoteStream,
     this.onConnectionStateChanged,
+    this.onScreenShareStarted,
+    this.onScreenShareStopped,
   });
 
   final String roomId;
@@ -40,6 +42,10 @@ class MediasoupRoomService {
   final bool produceAudio;
   final void Function(RemoteMediaStream stream)? onRemoteStream;
   final void Function(String state)? onConnectionStateChanged;
+  final void Function(MediaStream stream)? onScreenShareStarted;
+  final void Function()? onScreenShareStopped;
+
+  MediaStream? get screenStream => _screenStream;
 
   final Device _device = Device();
   final Map<String, Producer> _producers = {};
@@ -129,6 +135,7 @@ class MediasoupRoomService {
       source: 'screen',
       appData: {'source': 'screen'},
     );
+    onScreenShareStarted?.call(_screenStream!);
   }
 
   Future<void> stopScreenShare() async {
@@ -142,6 +149,7 @@ class MediasoupRoomService {
     await _screenStream?.dispose();
     _screenStream = null;
     _screenProducer = null;
+    onScreenShareStopped?.call();
   }
 
   Future<void> _createTransports() async {
@@ -183,7 +191,7 @@ class MediasoupRoomService {
           producerId: consumer.producerId,
           peerId: consumer.peerId,
           kind: consumer.kind ?? 'video',
-          source: consumer.appData?['source']?.toString(),
+          source: consumer.appData['source']?.toString(),
           stream: consumer.stream,
         ));
       },

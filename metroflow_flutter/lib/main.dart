@@ -6,7 +6,6 @@ import 'models/transfer.dart';
 import 'theme/app_theme.dart';
 import 'providers/theme_provider.dart';
 import 'providers/auth_provider.dart';
-import 'providers/call_provider.dart';
 import 'services/api.dart';
 import 'services/biometrics.dart';
 import 'components/error_boundary.dart';
@@ -49,6 +48,7 @@ import 'screens/meetings_screen.dart';
 import 'screens/chat_screen.dart';
 import 'screens/calls_screen.dart';
 import 'screens/incoming_call_dialog.dart';
+import 'screens/notifications_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -320,6 +320,10 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
             GoRoute(
               path: 'calls',
               builder: (context, state) => const CallsScreen(),
+            ),
+            GoRoute(
+              path: 'notifications',
+              builder: (context, state) => const NotificationsScreen(),
             ),
           ],
         ),

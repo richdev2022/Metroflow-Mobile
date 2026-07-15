@@ -157,7 +157,6 @@ class TransferSuccessScreen extends StatelessWidget {
           _row('Total', formatAmount(data.total, data.currency)),
           _row('Status', data.status.toUpperCase()),
           _row('Wallet ID', data.walletId),
-          _row('Payment Provider', data.paymentProvider),
           _row('Created At', formatDate(data.createdAt)),
           _row('Updated At', formatDate(data.updatedAt)),
         ],

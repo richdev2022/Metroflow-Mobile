@@ -764,6 +764,35 @@ class ApiService {
   Future<Response> deleteRecording(String id) async {
     return await _dio.delete('/recordings/$id');
   }
+
+  Future<Response> uploadRecording(String id, String filePath, {int? duration}) async {
+    final formData = FormData.fromMap({
+      'file': await MultipartFile.fromFile(filePath),
+      if (duration != null) 'duration': duration,
+    });
+    return await _dio.post('/recordings/$id/upload', data: formData);
+  }
+
+  // Notifications API
+  Future<Response> getNotifications({int page = 1, int limit = 20, bool unreadOnly = false}) async {
+    return await _dio.get('/notifications', queryParameters: {
+      'page': page,
+      'limit': limit,
+      'unreadOnly': unreadOnly,
+    });
+  }
+
+  Future<Response> markNotificationAsRead(String id) async {
+    return await _dio.patch('/notifications/$id/read');
+  }
+
+  Future<Response> markAllNotificationsAsRead() async {
+    return await _dio.patch('/notifications/read-all');
+  }
+
+  Future<Response> takeNotificationAction(String id, String action) async {
+    return await _dio.post('/notifications/$id/action', data: {'action': action});
+  }
 }
 
 class StorageService {

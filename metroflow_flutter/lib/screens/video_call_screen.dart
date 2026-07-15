@@ -94,6 +94,7 @@ class _ParticipantTileData {
 class _VideoCallScreenState extends State<VideoCallScreen> {
   final SocketService _socket = SocketService();
   final RTCVideoRenderer _localRenderer = RTCVideoRenderer();
+  final RTCVideoRenderer _screenRenderer = RTCVideoRenderer();
   final TextEditingController _chatController = TextEditingController();
   final List<_RemoteTile> _remoteTiles = [];
   final List<_ChatLine> _chatLines = [];
@@ -131,6 +132,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
   Future<void> _initRoom() async {
     await _localRenderer.initialize();
+    await _screenRenderer.initialize();
     _wireRoomEvents();
 
     try {
@@ -148,6 +150,18 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
           setState(() => _connectionLabel = state);
         },
         onRemoteStream: _addRemoteStream,
+        onScreenShareStarted: (stream) {
+          if (!mounted) return;
+          setState(() {
+            _screenRenderer.srcObject = stream;
+          });
+        },
+        onScreenShareStopped: () {
+          if (!mounted) return;
+          setState(() {
+            _screenRenderer.srcObject = null;
+          });
+        },
       );
 
       _room = room;
@@ -207,11 +221,19 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     };
     _socket.onRecordingStarted = (data) {
       _previousRecordingStartHandler?.call(data);
-      if (mounted) setState(() => _isRecording = true);
+      if (mounted) {
+        setState(() {
+          _isRecording = true;
+        });
+      }
     };
-    _socket.onRecordingStopped = (data) {
+    _socket.onRecordingStopped = (data) async {
       _previousRecordingStopHandler?.call(data);
-      if (mounted) setState(() => _isRecording = false);
+      if (mounted) {
+        setState(() {
+          _isRecording = false;
+        });
+      }
     };
     _socket.onRecordingPaused = (data) {
       _previousRecordingPauseHandler?.call(data);
@@ -252,6 +274,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     }
     _remoteTiles.clear();
     await _localRenderer.dispose();
+    await _screenRenderer.dispose();
   }
 
   Future<void> _toggleAudio() async {
@@ -459,8 +482,10 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       _ParticipantTileData(
         id: 'local',
         displayName: 'You',
-        renderer: _localRenderer,
-        hasVideo: _localRenderer.srcObject != null && _isVideoEnabled && widget.enableVideo,
+        renderer: _isScreenSharing ? _screenRenderer : _localRenderer,
+        hasVideo: _isScreenSharing
+            ? _screenRenderer.srcObject != null
+            : (_localRenderer.srcObject != null && _isVideoEnabled && widget.enableVideo),
         isMuted: !_isAudioEnabled,
         isScreenShare: _isScreenSharing,
         hasAudioActivity: _isAudioEnabled,
@@ -650,13 +675,19 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         borderRadius: BorderRadius.circular(8),
         child: Container(
           color: Colors.grey[900],
-          child: _localRenderer.srcObject != null && _isVideoEnabled && widget.enableVideo
+          child: _isScreenSharing && _screenRenderer.srcObject != null
               ? RTCVideoView(
-                  _localRenderer,
-                  mirror: true,
+                  _screenRenderer,
+                  mirror: false,
                   objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
                 )
-              : _buildAvatarFallback('You'),
+              : (_localRenderer.srcObject != null && _isVideoEnabled && widget.enableVideo)
+                  ? RTCVideoView(
+                      _localRenderer,
+                      mirror: true,
+                      objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                    )
+                  : _buildAvatarFallback('You'),
         ),
       ),
     );
