@@ -6,7 +6,8 @@ import '../services/socket_service.dart';
 import '../models/meeting.dart';
 import '../models/user.dart';
 import '../utils/logger.dart';
-import 'jitsi_call_screen.dart';
+import '../utils/timezone_data.dart';
+import 'video_call_screen.dart';
 
 class MeetingsScreen extends ConsumerStatefulWidget {
   const MeetingsScreen({super.key});
@@ -32,14 +33,16 @@ class _MeetingsScreenState extends ConsumerState<MeetingsScreen> {
     _loadTeamMembers();
     _meetingCreatedHandler = (data) {
       if (!mounted) return;
+      if (data is! Map) return;
       setState(() {
-        _upsertMeeting(Meeting.fromJson(data));
+        _upsertMeeting(Meeting.fromJson(Map<String, dynamic>.from(data)));
       });
     };
     _meetingUpdatedHandler = (data) {
       if (!mounted) return;
+      if (data is! Map) return;
       setState(() {
-        _upsertMeeting(Meeting.fromJson(data));
+        _upsertMeeting(Meeting.fromJson(Map<String, dynamic>.from(data)));
       });
     };
     _meetingDeletedHandler = (meetingId) {
@@ -72,9 +75,18 @@ class _MeetingsScreenState extends ConsumerState<MeetingsScreen> {
     try {
       final response = await _api.getMeetings();
       if (response.data['success'] == true) {
-        final data = response.data['data']['meetings'] as List;
+        if (!mounted) return;
+        final responseData = response.data['data'];
+        final data = responseData is Map && responseData['meetings'] is List
+            ? responseData['meetings'] as List
+            : responseData is List
+                ? responseData
+                : <dynamic>[];
         setState(() {
-          _meetings = data.map((json) => Meeting.fromJson(json)).toList()
+          _meetings = data
+              .whereType<Map>()
+              .map((json) => Meeting.fromJson(Map<String, dynamic>.from(json)))
+              .toList()
             ..sort((a, b) => a.startTime.compareTo(b.startTime));
         });
       }
@@ -101,9 +113,13 @@ class _MeetingsScreenState extends ConsumerState<MeetingsScreen> {
     try {
       final response = await _api.getTeam();
       if (response.data['success'] == true) {
-        final data = response.data['data'] as List;
+        if (!mounted) return;
+        final data = response.data['data'] is List ? response.data['data'] as List : <dynamic>[];
         setState(() {
-          _teamMembers = data.map((json) => User.fromJson(json)).toList();
+          _teamMembers = data
+              .whereType<Map>()
+              .map((json) => User.fromJson(Map<String, dynamic>.from(json)))
+              .toList();
         });
       }
     } catch (e) {
@@ -160,18 +176,36 @@ class _MeetingsScreenState extends ConsumerState<MeetingsScreen> {
   }
 
   Future<void> _joinMeeting(Meeting meeting) async {
-    if (meeting.meetingUrl.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Meeting link is not available yet')),
-      );
-      return;
+    try {
+      final response = await _api.joinMeeting(meeting.id);
+      if (response.data['success'] == true && mounted) {
+        await VideoCallScreen.showModal(
+          context: context,
+          roomId: meeting.id,
+          title: meeting.title,
+          isMeeting: true,
+          onLeave: () => _leaveMeeting(meeting.id),
+        );
+      }
+    } catch (e) {
+      Logger.error('Error joining meeting: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(ApiService.extractErrorMessage(e))),
+        );
+      }
     }
+  }
 
-    await JitsiCallScreen.showModal(
-      context: context,
-      meetingUrl: meeting.meetingUrl,
-      title: meeting.title,
-    );
+  Future<void> _leaveMeeting(String meetingId) async {
+    try {
+      await _api.leaveMeeting(meetingId);
+      if (mounted) {
+        await _loadMeetings();
+      }
+    } catch (e) {
+      Logger.error('Error leaving meeting: $e');
+    }
   }
 
   @override
@@ -299,15 +333,43 @@ class _MeetingDialog extends StatefulWidget {
   State<_MeetingDialog> createState() => _MeetingDialogState();
 }
 
+const List<String> timezones = [
+  'UTC',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'Europe/London',
+  'Europe/Paris',
+  'Europe/Berlin',
+  'Asia/Dubai',
+  'Asia/Dhaka',
+  'Asia/Kolkata',
+  'Asia/Singapore',
+  'Asia/Tokyo',
+  'Australia/Sydney',
+  'Pacific/Auckland'
+];
+
 class _MeetingDialogState extends State<_MeetingDialog> {
   final ApiService _api = ApiService();
   final _formKey = GlobalKey<FormState>();
   final _titleController = TextEditingController();
   final _descriptionController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _maxParticipantsController = TextEditingController(text: '100');
+  final _timezoneSearchController = TextEditingController();
   DateTime _startDate = DateTime.now().add(const Duration(hours: 1));
   DateTime _endDate = DateTime.now().add(const Duration(hours: 2));
+  String _selectedTimezone = 'UTC';
+  String _searchTimezone = '';
   final List<String> _selectedAttendeeIds = [];
+  bool _isInstant = false;
+  bool _waitingRoomEnabled = false;
+  bool _recordingEnabled = false;
+  bool _screenSharingEnabled = true;
   bool _isSaving = false;
+  bool _showTimezoneDropdown = false;
 
   @override
   void initState() {
@@ -315,8 +377,15 @@ class _MeetingDialogState extends State<_MeetingDialog> {
     if (widget.meeting != null) {
       _titleController.text = widget.meeting!.title;
       _descriptionController.text = widget.meeting!.description;
+      _passwordController.text = widget.meeting!.password ?? '';
+      _maxParticipantsController.text = widget.meeting!.maxParticipants.toString();
       _startDate = widget.meeting!.startTime;
       _endDate = widget.meeting!.endTime;
+      _selectedTimezone = widget.meeting!.timezone;
+      _isInstant = widget.meeting!.isInstant;
+      _waitingRoomEnabled = widget.meeting!.waitingRoomEnabled;
+      _recordingEnabled = widget.meeting!.recordingEnabled;
+      _screenSharingEnabled = widget.meeting!.screenSharingEnabled;
       _selectedAttendeeIds.addAll(widget.meeting!.attendees.map((a) => a.userId));
     }
   }
@@ -325,7 +394,18 @@ class _MeetingDialogState extends State<_MeetingDialog> {
   void dispose() {
     _titleController.dispose();
     _descriptionController.dispose();
+    _passwordController.dispose();
+    _maxParticipantsController.dispose();
+    _timezoneSearchController.dispose();
     super.dispose();
+  }
+
+  List<Map<String, String>> get _filteredTimezones {
+    if (_searchTimezone.isEmpty) return timezoneData;
+    return timezoneData.where((tz) => 
+      tz['label']!.toLowerCase().contains(_searchTimezone.toLowerCase()) ||
+      tz['name']!.toLowerCase().contains(_searchTimezone.toLowerCase())
+    ).toList();
   }
 
   Future<void> _pickDateTime({required bool isStart}) async {
@@ -373,12 +453,23 @@ class _MeetingDialogState extends State<_MeetingDialog> {
 
     setState(() => _isSaving = true);
     try {
+      final maxParticipants = int.tryParse(_maxParticipantsController.text.trim());
+      if (maxParticipants == null || maxParticipants < 2) {
+        throw const FormatException('Max participants must be at least 2');
+      }
+
       final data = {
         'title': _titleController.text.trim(),
         'description': _descriptionController.text.trim(),
         'startTime': _startDate.toUtc().toIso8601String(),
         'endTime': _endDate.toUtc().toIso8601String(),
-        'timezone': 'UTC',
+        'timezone': _selectedTimezone,
+        'isInstant': _isInstant,
+        'password': _passwordController.text.trim().isEmpty ? null : _passwordController.text.trim(),
+        'maxParticipants': maxParticipants,
+        'waitingRoomEnabled': _waitingRoomEnabled,
+        'recordingEnabled': _recordingEnabled,
+        'screenSharingEnabled': _screenSharingEnabled,
         'attendeeIds': _selectedAttendeeIds,
       };
       final response = widget.meeting == null
@@ -386,7 +477,11 @@ class _MeetingDialogState extends State<_MeetingDialog> {
           : await _api.updateMeeting(widget.meeting!.id, data);
 
       if (response.data['success'] == true) {
-        final meeting = Meeting.fromJson(response.data['data']);
+        final responseData = response.data['data'];
+        if (responseData is! Map) {
+          throw const FormatException('Invalid meeting response');
+        }
+        final meeting = Meeting.fromJson(Map<String, dynamic>.from(responseData));
         widget.onSaved(meeting);
         if (mounted) Navigator.pop(context);
       }
@@ -415,6 +510,7 @@ class _MeetingDialogState extends State<_MeetingDialog> {
           child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 TextFormField(
                   controller: _titleController,
@@ -434,44 +530,189 @@ class _MeetingDialogState extends State<_MeetingDialog> {
                   maxLines: 2,
                 ),
                 const SizedBox(height: 16),
-                InkWell(
-                  onTap: () => _pickDateTime(isStart: true),
-                  child: InputDecorator(
-                    decoration: const InputDecoration(
-                      labelText: 'Start Time',
-                      border: OutlineInputBorder(),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.calendar_today),
-                        const SizedBox(width: 8),
-                        Text(DateFormat.yMMMd().add_Hm().format(_startDate)),
-                      ],
+                SwitchListTile(
+                  title: const Text('Instant Meeting'),
+                  value: _isInstant,
+                  onChanged: (value) {
+                    setState(() {
+                      _isInstant = value;
+                    });
+                  },
+                  contentPadding: EdgeInsets.zero,
+                ),
+                if (!_isInstant) ...[
+                  const SizedBox(height: 16),
+                  InkWell(
+                    onTap: () => _pickDateTime(isStart: true),
+                    child: InputDecorator(
+                      decoration: const InputDecoration(
+                        labelText: 'Start Time',
+                        border: OutlineInputBorder(),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.calendar_today),
+                          const SizedBox(width: 8),
+                          Text(DateFormat.yMMMd().add_Hm().format(_startDate)),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 16),
-                InkWell(
-                  onTap: () => _pickDateTime(isStart: false),
-                  child: InputDecorator(
-                    decoration: const InputDecoration(
-                      labelText: 'End Time',
-                      border: OutlineInputBorder(),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.calendar_today),
-                        const SizedBox(width: 8),
-                        Text(DateFormat.yMMMd().add_Hm().format(_endDate)),
-                      ],
+                  const SizedBox(height: 16),
+                  InkWell(
+                    onTap: () => _pickDateTime(isStart: false),
+                    child: InputDecorator(
+                      decoration: const InputDecoration(
+                        labelText: 'End Time',
+                        border: OutlineInputBorder(),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.calendar_today),
+                          const SizedBox(width: 8),
+                          Text(DateFormat.yMMMd().add_Hm().format(_endDate)),
+                        ],
+                      ),
                     ),
                   ),
+                ],
+                const SizedBox(height: 16),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Timezone', style: TextStyle(fontWeight: FontWeight.w500)),
+                    const SizedBox(height: 8),
+                    InkWell(
+                      onTap: () {
+                        setState(() {
+                          _showTimezoneDropdown = !_showTimezoneDropdown;
+                        });
+                      },
+                      child: InputDecorator(
+                        decoration: InputDecoration(
+                          border: const OutlineInputBorder(),
+                          suffixIcon: Icon(
+                            _showTimezoneDropdown ? Icons.arrow_drop_up : Icons.arrow_drop_down,
+                          ),
+                        ),
+                        child: Text(
+                          timezoneData.firstWhere(
+                            (tz) => tz['name'] == _selectedTimezone,
+                            orElse: () => {'label': _selectedTimezone},
+                          )['label']!,
+                        ),
+                      ),
+                    ),
+                    if (_showTimezoneDropdown)
+                      Container(
+                        margin: const EdgeInsets.only(top: 8),
+                        constraints: const BoxConstraints(maxHeight: 200),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey[300]!),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Column(
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.all(8.0),
+                              child: TextField(
+                                controller: _timezoneSearchController,
+                                decoration: const InputDecoration(
+                                  hintText: 'Search timezones...',
+                                  prefixIcon: Icon(Icons.search),
+                                  border: OutlineInputBorder(),
+                                  isDense: true,
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                ),
+                                onChanged: (value) {
+                                  setState(() {
+                                    _searchTimezone = value;
+                                  });
+                                },
+                              ),
+                            ),
+                            Expanded(
+                              child: ListView.builder(
+                                shrinkWrap: true,
+                                itemCount: _filteredTimezones.length,
+                                itemBuilder: (context, index) {
+                                  final tz = _filteredTimezones[index];
+                                  final isSelected = tz['name'] == _selectedTimezone;
+                                  return ListTile(
+                                    title: Text(tz['label']!),
+                                    trailing: isSelected ? const Icon(Icons.check, color: Colors.green) : null,
+                                    onTap: () {
+                                      setState(() {
+                                        _selectedTimezone = tz['name']!;
+                                        _showTimezoneDropdown = false;
+                                        _searchTimezone = '';
+                                        _timezoneSearchController.clear();
+                                      });
+                                    },
+                                    dense: true,
+                                  );
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
                 ),
                 const SizedBox(height: 16),
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text('Attendees', style: TextStyle(fontWeight: FontWeight.w500)),
+                TextFormField(
+                  controller: _passwordController,
+                  decoration: const InputDecoration(
+                    labelText: 'Meeting Password (Optional)',
+                    hintText: 'Enter password to secure the meeting',
+                  ),
+                  obscureText: true,
                 ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _maxParticipantsController,
+                  decoration: const InputDecoration(
+                    labelText: 'Max Participants',
+                    hintText: '100',
+                  ),
+                  keyboardType: TextInputType.number,
+                ),
+                const SizedBox(height: 16),
+                SwitchListTile(
+                  title: const Text('Waiting Room'),
+                  subtitle: const Text('Participants wait in a room before joining'),
+                  value: _waitingRoomEnabled,
+                  onChanged: (value) {
+                    setState(() {
+                      _waitingRoomEnabled = value;
+                    });
+                  },
+                  contentPadding: EdgeInsets.zero,
+                ),
+                SwitchListTile(
+                  title: const Text('Enable Recording'),
+                  subtitle: const Text('Allow recording the meeting'),
+                  value: _recordingEnabled,
+                  onChanged: (value) {
+                    setState(() {
+                      _recordingEnabled = value;
+                    });
+                  },
+                  contentPadding: EdgeInsets.zero,
+                ),
+                SwitchListTile(
+                  title: const Text('Enable Screen Sharing'),
+                  subtitle: const Text('Allow participants to share their screens'),
+                  value: _screenSharingEnabled,
+                  onChanged: (value) {
+                    setState(() {
+                      _screenSharingEnabled = value;
+                    });
+                  },
+                  contentPadding: EdgeInsets.zero,
+                ),
+                const SizedBox(height: 16),
+                const Text('Attendees', style: TextStyle(fontWeight: FontWeight.w500)),
                 const SizedBox(height: 8),
                 SizedBox(
                   height: 150,

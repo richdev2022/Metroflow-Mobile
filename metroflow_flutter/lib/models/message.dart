@@ -21,14 +21,14 @@ class Message {
 
   factory Message.fromJson(Map<String, dynamic> json) {
     return Message(
-      id: json['id'] as String,
-      conversationId: (json['conversationId'] ?? json['conversation_id']) as String,
-      senderId: (json['senderId'] ?? json['sender_id']) as String,
+      id: (json['id'] ?? '').toString(),
+      conversationId: (json['conversationId'] ?? json['conversation_id'] ?? '').toString(),
+      senderId: (json['senderId'] ?? json['sender_id'] ?? '').toString(),
       content: (json['content'] as String?) ?? '',
-      attachmentUrl: (json['attachmentUrl'] ?? json['attachment_url']) as String?,
-      attachmentType: (json['attachmentType'] ?? json['attachment_type']) as String?,
-      createdAt: DateTime.parse((json['createdAt'] ?? json['created_at']) as String),
-      senderName: (json['senderName'] ?? json['sender_name']) as String?,
+      attachmentUrl: (json['attachmentUrl'] ?? json['attachment_url'])?.toString(),
+      attachmentType: (json['attachmentType'] ?? json['attachment_type'])?.toString(),
+      createdAt: _parseDate(json['createdAt'] ?? json['created_at']) ?? DateTime.now(),
+      senderName: (json['senderName'] ?? json['sender_name'])?.toString(),
     );
   }
 
@@ -44,4 +44,10 @@ class Message {
       'senderName': senderName,
     };
   }
+}
+
+DateTime? _parseDate(dynamic value) {
+  if (value == null) return null;
+  if (value is DateTime) return value;
+  return DateTime.tryParse(value.toString());
 }

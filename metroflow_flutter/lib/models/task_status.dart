@@ -1,3 +1,5 @@
+import 'task.dart';
+
 class TaskStatus {
   final String id;
   final String businessId;
@@ -7,6 +9,7 @@ class TaskStatus {
   final int sortOrder;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final List<Task>? tasks;
 
   TaskStatus({
     required this.id,
@@ -17,6 +20,7 @@ class TaskStatus {
     required this.sortOrder,
     required this.createdAt,
     required this.updatedAt,
+    this.tasks,
   });
 
   factory TaskStatus.fromJson(Map<String, dynamic> json) {
@@ -29,6 +33,11 @@ class TaskStatus {
       sortOrder: json['sort_order'],
       createdAt: DateTime.parse(json['created_at']),
       updatedAt: DateTime.parse(json['updated_at']),
+      tasks: json['tasks'] != null
+          ? (json['tasks'] as List<dynamic>)
+              .map((e) => Task.fromJson(e as Map<String, dynamic>))
+              .toList()
+          : null,
     );
   }
 
@@ -42,6 +51,7 @@ class TaskStatus {
       'sort_order': sortOrder,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
+      'tasks': tasks?.map((e) => e.toJson()).toList(),
     };
   }
 }

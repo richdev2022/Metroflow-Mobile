@@ -6,6 +6,7 @@ import 'models/transfer.dart';
 import 'theme/app_theme.dart';
 import 'providers/theme_provider.dart';
 import 'providers/auth_provider.dart';
+import 'providers/call_provider.dart';
 import 'services/api.dart';
 import 'services/biometrics.dart';
 import 'components/error_boundary.dart';
@@ -47,6 +48,7 @@ import 'screens/board_screen.dart';
 import 'screens/meetings_screen.dart';
 import 'screens/chat_screen.dart';
 import 'screens/calls_screen.dart';
+import 'screens/incoming_call_dialog.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -441,13 +443,18 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
     return ErrorBoundary(
       child: IdleTimeoutHandler(
-        child: MaterialApp.router(
-          title: 'Metricorex',
-          debugShowCheckedModeBanner: false,
-          theme: AppTheme.lightTheme,
-          darkTheme: AppTheme.darkTheme,
-          themeMode: themeState.mode,
-          routerConfig: _router,
+        child: Stack(
+          children: [
+            MaterialApp.router(
+              title: 'Metricorex',
+              debugShowCheckedModeBanner: false,
+              theme: AppTheme.lightTheme,
+              darkTheme: AppTheme.darkTheme,
+              themeMode: themeState.mode,
+              routerConfig: _router,
+            ),
+            const IncomingCallDialog(),
+          ],
         ),
       ),
     );

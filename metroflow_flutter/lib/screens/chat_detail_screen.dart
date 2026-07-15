@@ -34,9 +34,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     _loadMessages();
     _socket.joinConversation(widget.conversation.id);
     _messageCreatedHandler = (data) {
-      final conversationId = data['conversationId'] ?? data['conversation_id'];
+      final payload = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+      final conversationId = payload['conversationId'] ?? payload['conversation_id'];
       if (!mounted || conversationId != widget.conversation.id) return;
-      final message = Message.fromJson(data);
+      final message = Message.fromJson(payload);
       setState(() {
         _upsertMessage(message);
       });
@@ -56,13 +57,16 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
 
   Message _extractMessage(dynamic responseData) {
     final data = responseData is Map ? responseData['data'] : null;
-    if (data is Map && data['message'] is Map<String, dynamic>) {
-      return Message.fromJson(data['message'] as Map<String, dynamic>);
+    if (data is Map && data['message'] is Map) {
+      return Message.fromJson(Map<String, dynamic>.from(data['message'] as Map));
     }
-    if (data is Map<String, dynamic>) {
-      return Message.fromJson(data);
+    if (data is Map) {
+      return Message.fromJson(Map<String, dynamic>.from(data));
     }
-    return Message.fromJson(responseData as Map<String, dynamic>);
+    if (responseData is Map) {
+      return Message.fromJson(Map<String, dynamic>.from(responseData));
+    }
+    throw const FormatException('Invalid message response');
   }
 
   Future<void> _loadCurrentUser() async {
@@ -88,9 +92,18 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     try {
       final response = await _api.getConversationMessages(widget.conversation.id);
       if (response.data['success'] == true) {
-        final data = response.data['data']['messages'] as List;
+        if (!mounted) return;
+        final responseData = response.data['data'];
+        final data = responseData is Map && responseData['messages'] is List
+            ? responseData['messages'] as List
+            : responseData is List
+                ? responseData
+                : <dynamic>[];
         setState(() {
-          _messages = data.map((json) => Message.fromJson(json)).toList();
+          _messages = data
+              .whereType<Map>()
+              .map((json) => Message.fromJson(Map<String, dynamic>.from(json)))
+              .toList();
         });
         Future.delayed(const Duration(milliseconds: 100), _scrollToBottom);
       }

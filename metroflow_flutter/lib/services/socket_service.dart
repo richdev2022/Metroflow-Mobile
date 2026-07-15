@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:socket_io_client/socket_io_client.dart' as socket_io;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import '../utils/logger.dart';
@@ -9,6 +11,11 @@ class SocketService {
 
   socket_io.Socket? _socket;
   bool get isConnected => _socket?.connected ?? false;
+
+  String get _socketBaseUrl {
+    final configured = dotenv.env['EXPO_PUBLIC_API_BASE_URL'] ?? 'https://metroflow-backend.netlify.app';
+    return configured.replaceFirst(RegExp(r'/api/?$'), '');
+  }
 
   // Event callbacks
   void Function(dynamic)? onMeetingCreated;
@@ -38,22 +45,26 @@ class SocketService {
   void Function(dynamic)? onMeetingChatMessage;
 
   void connect(String userId, String businessId) {
-    final baseUrl = dotenv.env['EXPO_PUBLIC_API_BASE_URL'] ?? 'https://metroflow-backend.netlify.app';
+    if (_socket?.connected == true) return;
 
-    _socket = socket_io.io(baseUrl, socket_io.OptionBuilder()
+    _socket = socket_io.io(_socketBaseUrl, socket_io.OptionBuilder()
         .setTransports(['websocket'])
         .enableAutoConnect()
+        .enableReconnection() // Enable auto reconnection
+        .setReconnectionDelay(1000) // Initial delay
+        .setReconnectionDelayMax(5000) // Max delay
+        .setReconnectionAttempts(5) // Max attempts
         .build());
 
     _socket?.on('connect', (_) {
       Logger.log('Connected to socket');
-      _socket?.emit('user-online', {'userId': userId, 'businessId': businessId});
+      _socket?.emit('user-online', [userId, businessId]);
 
       // Keep alive every 30 seconds
       Future.doWhile(() async {
         await Future.delayed(const Duration(seconds: 30));
         if (_socket?.connected ?? false) {
-          _socket?.emit('user-keep-alive', {'userId': userId, 'businessId': businessId});
+          _socket?.emit('user-keep-alive', [userId, businessId]);
         }
         return _socket?.connected ?? false;
       });
@@ -61,6 +72,19 @@ class SocketService {
 
     _socket?.on('disconnect', (_) {
       Logger.log('Disconnected from socket');
+    });
+
+    _socket?.on('reconnect', (_) {
+      Logger.log('Reconnected to socket');
+      _socket?.emit('user-online', [userId, businessId]);
+    });
+
+    _socket?.on('reconnect_attempt', (attempt) {
+      Logger.log('Reconnect attempt: $attempt');
+    });
+
+    _socket?.on('reconnect_failed', (_) {
+      Logger.log('Reconnection failed');
     });
 
     // Listen to events
@@ -205,7 +229,7 @@ class SocketService {
   }
 
   void emitMediasoupGetRouterRtpCapabilities(Function(dynamic) callback) {
-    _socket?.emitWithAck('mediasoup:getRouterRtpCapabilities', null, ack: callback);
+    _socket?.emitWithAck('mediasoup:getRouterRtpCapabilities', [], ack: callback);
   }
 
   void emitMediasoupCreateWebRtcTransport(Map<String, dynamic> data, Function(dynamic) callback) {
@@ -258,5 +282,49 @@ class SocketService {
 
   void joinConversation(String conversationId) {
     _socket?.emit('join-conversation', conversationId);
+  }
+
+  Future<dynamic> _emitAck(String event, [dynamic data]) {
+    final socket = _socket;
+    if (socket == null || !socket.connected) {
+      return Future.error(StateError('Socket is not connected'));
+    }
+
+    final completer = Completer<dynamic>();
+    socket.emitWithAck(
+      event,
+      data,
+      ack: (response) {
+        if (!completer.isCompleted) completer.complete(response);
+      },
+    );
+    return completer.future.timeout(
+      const Duration(seconds: 20),
+      onTimeout: () => throw TimeoutException('Socket ack timed out for $event'),
+    );
+  }
+
+  Future<dynamic> mediasoupGetRouterRtpCapabilities() {
+    return _emitAck('mediasoup:getRouterRtpCapabilities', []);
+  }
+
+  Future<dynamic> mediasoupCreateWebRtcTransport(Map<String, dynamic> data) {
+    return _emitAck('mediasoup:createWebRtcTransport', data);
+  }
+
+  Future<dynamic> mediasoupConnectWebRtcTransport(Map<String, dynamic> data) {
+    return _emitAck('mediasoup:connectWebRtcTransport', data);
+  }
+
+  Future<dynamic> mediasoupProduce(Map<String, dynamic> data) {
+    return _emitAck('mediasoup:produce', data);
+  }
+
+  Future<dynamic> mediasoupConsume(Map<String, dynamic> data) {
+    return _emitAck('mediasoup:consume', data);
+  }
+
+  Future<dynamic> mediasoupResume(Map<String, dynamic> data) {
+    return _emitAck('mediasoup:resume', data);
   }
 }

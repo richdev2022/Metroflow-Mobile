@@ -16,7 +16,6 @@ class BoardScreen extends ConsumerStatefulWidget {
 }
 
 class _BoardScreenState extends ConsumerState<BoardScreen> {
-  List<Task> tasks = [];
   List<TaskStatus> taskStatuses = [];
   bool isLoading = true;
   bool isRefreshing = false;
@@ -33,24 +32,14 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
       setState(() => isRefreshing = true);
       final api = ApiService();
       
-      // Fetch both tasks and statuses
-      final tasksResponse = await api.getTasks(params: {'limit': 1000});
-      final statusesResponse = await api.getTaskStatuses();
+      // Fetch board data (statuses with tasks already grouped)
+      final boardResponse = await api.getBoard();
       
       if (mounted) {
-        final tasksData = tasksResponse.data;
-        final statusesData = statusesResponse.data;
+        final boardData = boardResponse.data;
         
-        if (tasksData is Map && tasksData['success'] == true) {
-          final body = tasksData['data'];
-          final newTasks = (body is Map ? body['tasks'] as List? : tasksData['tasks'] as List?)
-              ?.map((e) => Task.fromJson(e as Map<String, dynamic>))
-              .toList() ?? [];
-          setState(() => tasks = newTasks);
-        }
-        
-        if (statusesData is Map && statusesData['success'] == true) {
-          final newStatuses = (statusesData['data'] as List?)
+        if (boardData is Map && boardData['success'] == true) {
+          final newStatuses = (boardData['data'] as List?)
               ?.map((e) => TaskStatus.fromJson(e as Map<String, dynamic>))
               .toList() ?? [];
           setState(() => taskStatuses = newStatuses);
@@ -66,21 +55,6 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
         });
       }
     }
-  }
-
-  Map<String, List<Task>> get groupedTasks {
-    final Map<String, List<Task>> groups = {};
-    for (final status in taskStatuses) {
-      groups[status.name] = [];
-    }
-    for (final task in tasks) {
-      if (groups.containsKey(task.status)) {
-        groups[task.status]!.add(task);
-      } else if (taskStatuses.isNotEmpty) {
-        groups[taskStatuses.first.name]!.add(task);
-      }
-    }
-    return groups;
   }
 
   Color getStatusColor(String statusName) {
@@ -112,31 +86,64 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
     debugPrint('Updating task ${task.id} to status $newStatus');
     // First, update local state for immediate UI feedback
     setState(() {
-      final index = tasks.indexWhere((t) => t.id == task.id);
-      if (index != -1) {
-        tasks[index] = Task(
-          id: task.id,
-          businessId: task.businessId,
-          createdBy: task.createdBy,
-          title: task.title,
-          description: task.description,
-          epic: task.epic,
-          epicId: task.epicId,
-          sprint: task.sprint,
-          targetValue: task.targetValue,
-          accomplishedValue: task.accomplishedValue,
-          startDate: task.startDate,
-          endDate: task.endDate,
-          dueDate: task.dueDate,
-          status: newStatus,
-          isOverdue: task.isOverdue,
-          assignedTo: task.assignedTo,
-          attachments: task.attachments,
-          comments: task.comments,
-          images: task.images,
-          createdAt: task.createdAt,
-          updatedAt: DateTime.now().toIso8601String(),
-        );
+      // Remove task from old status
+      for (int i = 0; i < taskStatuses.length; i++) {
+        if (taskStatuses[i].tasks != null && taskStatuses[i].tasks!.any((t) => t.id == task.id)) {
+          taskStatuses[i] = TaskStatus(
+            id: taskStatuses[i].id,
+            businessId: taskStatuses[i].businessId,
+            name: taskStatuses[i].name,
+            color: taskStatuses[i].color,
+            isDefault: taskStatuses[i].isDefault,
+            sortOrder: taskStatuses[i].sortOrder,
+            createdAt: taskStatuses[i].createdAt,
+            updatedAt: taskStatuses[i].updatedAt,
+            tasks: taskStatuses[i].tasks?.where((t) => t.id != task.id).toList(),
+          );
+          break;
+        }
+      }
+      
+      // Add task to new status
+      final updatedTask = Task(
+        id: task.id,
+        businessId: task.businessId,
+        createdBy: task.createdBy,
+        title: task.title,
+        description: task.description,
+        epic: task.epic,
+        epicId: task.epicId,
+        sprint: task.sprint,
+        targetValue: task.targetValue,
+        accomplishedValue: task.accomplishedValue,
+        startDate: task.startDate,
+        endDate: task.endDate,
+        dueDate: task.dueDate,
+        status: newStatus,
+        isOverdue: task.isOverdue,
+        assignedTo: task.assignedTo,
+        attachments: task.attachments,
+        comments: task.comments,
+        images: task.images,
+        createdAt: task.createdAt,
+        updatedAt: DateTime.now().toIso8601String(),
+      );
+      
+      for (int i = 0; i < taskStatuses.length; i++) {
+        if (taskStatuses[i].name == newStatus) {
+          taskStatuses[i] = TaskStatus(
+            id: taskStatuses[i].id,
+            businessId: taskStatuses[i].businessId,
+            name: taskStatuses[i].name,
+            color: taskStatuses[i].color,
+            isDefault: taskStatuses[i].isDefault,
+            sortOrder: taskStatuses[i].sortOrder,
+            createdAt: taskStatuses[i].createdAt,
+            updatedAt: taskStatuses[i].updatedAt,
+            tasks: [...(taskStatuses[i].tasks ?? [])..add(updatedTask)],
+          );
+          break;
+        }
       }
     });
 
@@ -147,13 +154,8 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
       debugPrint('Successfully updated task ${task.id} on backend');
     } catch (e) {
       debugPrint('Failed to update task status on backend: $e');
-      // If API fails, revert back
-      setState(() {
-        final index = tasks.indexWhere((t) => t.id == task.id);
-        if (index != -1) {
-          tasks[index] = task;
-        }
-      });
+      // If API fails, revert back by refetching the data
+      await fetchData();
       if (mounted) {
         AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
       }
@@ -312,7 +314,7 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
                   scrollDirection: Axis.horizontal,
                   children: [
                     ...taskStatuses.map((status) {
-                      final statusTasks = groupedTasks[status.name] ?? [];
+                      final statusTasks = status.tasks ?? [];
                       final screenWidth = MediaQuery.of(context).size.width;
                       final columnWidth = screenWidth * 0.85 < 280 ? 280.0 : screenWidth * 0.85;
                       return Container(

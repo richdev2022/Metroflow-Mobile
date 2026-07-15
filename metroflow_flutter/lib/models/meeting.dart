@@ -11,9 +11,9 @@ class MeetingAttendee {
 
   factory MeetingAttendee.fromJson(Map<String, dynamic> json) {
     return MeetingAttendee(
-      id: json['id'] as String,
-      userId: (json['userId'] ?? json['user_id']) as String,
-      status: json['status'] as String,
+      id: (json['id'] ?? '').toString(),
+      userId: (json['userId'] ?? json['user_id'] ?? '').toString(),
+      status: (json['status'] ?? 'invited').toString(),
     );
   }
 
@@ -24,6 +24,27 @@ class MeetingAttendee {
       'status': status,
     };
   }
+}
+
+DateTime? _parseDate(dynamic value) {
+  if (value == null) return null;
+  if (value is DateTime) return value;
+  return DateTime.tryParse(value.toString());
+}
+
+int _parseInt(dynamic value, int fallback) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return int.tryParse(value?.toString() ?? '') ?? fallback;
+}
+
+bool _parseBool(dynamic value, bool fallback) {
+  if (value is bool) return value;
+  if (value is num) return value != 0;
+  final text = value?.toString().toLowerCase();
+  if (text == 'true') return true;
+  if (text == 'false') return false;
+  return fallback;
 }
 
 class Meeting {
@@ -77,31 +98,34 @@ class Meeting {
   });
 
   factory Meeting.fromJson(Map<String, dynamic> json) {
+    final now = DateTime.now();
+    final parsedStart = _parseDate(json['startTime'] ?? json['start_time']) ?? now;
     return Meeting(
-      id: json['id'] as String,
-      title: json['title'] as String,
+      id: (json['id'] ?? '').toString(),
+      title: (json['title'] ?? 'Untitled meeting').toString(),
       description: (json['description'] as String?) ?? '',
-      startTime: DateTime.parse((json['startTime'] ?? json['start_time']) as String),
-      endTime: DateTime.parse((json['endTime'] ?? json['end_time']) as String),
+      startTime: parsedStart,
+      endTime: _parseDate(json['endTime'] ?? json['end_time']) ?? parsedStart.add(const Duration(hours: 1)),
       timezone: (json['timezone'] as String?) ?? 'UTC',
-      createdById: (json['createdById'] ?? json['created_by'] ?? '') as String,
-      hostId: (json['hostId'] ?? json['host_id'] ?? '') as String,
-      coHostId: (json['coHostId'] ?? json['co_host_id']) as String?,
+      createdById: (json['createdById'] ?? json['created_by'] ?? '').toString(),
+      hostId: (json['hostId'] ?? json['host_id'] ?? '').toString(),
+      coHostId: (json['coHostId'] ?? json['co_host_id'])?.toString(),
       status: (json['status'] as String?) ?? 'scheduled',
-      meetingCode: (json['meetingCode'] ?? json['meeting_code'] ?? '') as String,
-      isInstant: (json['isInstant'] ?? json['is_instant'] ?? false) as bool,
-      password: (json['password']) as String?,
-      maxParticipants: (json['maxParticipants'] ?? json['max_participants'] ?? 100) as int,
-      waitingRoomEnabled: (json['waitingRoomEnabled'] ?? json['waiting_room_enabled'] ?? false) as bool,
-      recordingEnabled: (json['recordingEnabled'] ?? json['recording_enabled'] ?? false) as bool,
-      screenSharingEnabled: (json['screenSharingEnabled'] ?? json['screen_sharing_enabled'] ?? true) as bool,
-      googleEventId: (json['googleEventId'] ?? json['google_event_id']) as String?,
-      createdAt: DateTime.parse((json['createdAt'] ?? json['created_at']) as String),
-      updatedAt: DateTime.parse((json['updatedAt'] ?? json['updated_at']) as String),
+      meetingCode: (json['meetingCode'] ?? json['meeting_code'] ?? '').toString(),
+      isInstant: _parseBool(json['isInstant'] ?? json['is_instant'], false),
+      password: json['password']?.toString(),
+      maxParticipants: _parseInt(json['maxParticipants'] ?? json['max_participants'], 100),
+      waitingRoomEnabled: _parseBool(json['waitingRoomEnabled'] ?? json['waiting_room_enabled'], false),
+      recordingEnabled: _parseBool(json['recordingEnabled'] ?? json['recording_enabled'], false),
+      screenSharingEnabled: _parseBool(json['screenSharingEnabled'] ?? json['screen_sharing_enabled'], true),
+      googleEventId: (json['googleEventId'] ?? json['google_event_id'])?.toString(),
+      createdAt: _parseDate(json['createdAt'] ?? json['created_at']) ?? now,
+      updatedAt: _parseDate(json['updatedAt'] ?? json['updated_at']) ?? now,
       attendees: ((json['attendees'] as List<dynamic>?) ?? [])
-          .map((e) => MeetingAttendee.fromJson(e as Map<String, dynamic>))
+          .whereType<Map>()
+          .map((e) => MeetingAttendee.fromJson(Map<String, dynamic>.from(e)))
           .toList(),
-      meetingUrl: (json['meetingUrl'] ?? json['meeting_url'] ?? '') as String,
+      meetingUrl: (json['meetingUrl'] ?? json['meeting_url'] ?? '').toString(),
     );
   }
 

@@ -644,6 +644,11 @@ class ApiService {
     return await _dio.get('/task-statuses');
   }
 
+  // Board API
+  Future<Response> getBoard() async {
+    return await _dio.get('/board');
+  }
+
   Future<Response> createTaskStatus(Map<String, dynamic> data) async {
     return await _dio.post('/task-statuses', data: data);
   }
@@ -730,6 +735,14 @@ class ApiService {
 
   Future<Response> deleteCall(String id) async {
     return await _dio.delete('/calls/$id');
+  }
+
+  Future<Response> joinMeeting(String id, {String? password}) async {
+    return await _dio.post('/meetings/$id/join', data: password != null ? {'password': password} : null);
+  }
+
+  Future<Response> leaveMeeting(String id) async {
+    return await _dio.post('/meetings/$id/leave');
   }
 
   // Recordings API

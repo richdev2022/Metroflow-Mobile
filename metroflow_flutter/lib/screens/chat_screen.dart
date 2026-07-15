@@ -31,7 +31,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     _loadTeamMembers();
     _conversationCreatedHandler = (data) {
       if (!mounted) return;
-      final conversation = Conversation.fromJson(data);
+      if (data is! Map) return;
+      final conversation = Conversation.fromJson(Map<String, dynamic>.from(data));
       setState(() {
         final index = _conversations.indexWhere((item) => item.id == conversation.id);
         if (index == -1) {
@@ -56,9 +57,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     try {
       final response = await _api.getConversations();
       if (response.data['success'] == true) {
-        final data = response.data['data'] as List;
+        if (!mounted) return;
+        final responseData = response.data['data'];
+        final data = responseData is Map && responseData['conversations'] is List
+            ? responseData['conversations'] as List
+            : responseData is List
+                ? responseData
+                : <dynamic>[];
         setState(() {
-          _conversations = data.map((json) => Conversation.fromJson(json)).toList();
+          _conversations = data
+              .whereType<Map>()
+              .map((json) => Conversation.fromJson(Map<String, dynamic>.from(json)))
+              .toList();
         });
       }
     } catch (e) {
@@ -74,9 +84,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     try {
       final response = await _api.getTeam();
       if (response.data['success'] == true) {
-        final data = response.data['data'] as List;
+        if (!mounted) return;
+        final data = response.data['data'] is List ? response.data['data'] as List : <dynamic>[];
         setState(() {
-          _teamMembers = data.map((json) => User.fromJson(json)).toList();
+          _teamMembers = data
+              .whereType<Map>()
+              .map((json) => User.fromJson(Map<String, dynamic>.from(json)))
+              .toList();
         });
       }
     } catch (e) {
@@ -214,7 +228,11 @@ class _CreateConversationDialogState extends State<_CreateConversationDialog> {
         'participant_ids': _selectedMemberIds,
       });
       if (response.data['success'] == true) {
-        final conversation = Conversation.fromJson(response.data['data']);
+        final responseData = response.data['data'];
+        if (responseData is! Map) {
+          throw const FormatException('Invalid conversation response');
+        }
+        final conversation = Conversation.fromJson(Map<String, dynamic>.from(responseData));
         widget.onCreated(conversation);
         if (mounted) {
           final navigator = Navigator.of(context, rootNavigator: true);

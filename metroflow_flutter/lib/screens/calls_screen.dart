@@ -6,7 +6,7 @@ import '../services/socket_service.dart';
 import '../models/call.dart';
 import '../models/user.dart';
 import '../utils/logger.dart';
-import 'jitsi_call_screen.dart';
+import 'video_call_screen.dart';
 
 class CallsScreen extends ConsumerStatefulWidget {
   const CallsScreen({super.key});
@@ -33,14 +33,16 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
     _loadTeamMembers();
     _callCreatedHandler = (data) {
       if (!mounted) return;
+      if (data is! Map) return;
       setState(() {
-        _upsertCall(Call.fromJson(data));
+        _upsertCall(Call.fromJson(Map<String, dynamic>.from(data)));
       });
     };
     _callUpdatedHandler = (data) {
       if (!mounted) return;
+      if (data is! Map) return;
       setState(() {
-        _upsertCall(Call.fromJson(data));
+        _upsertCall(Call.fromJson(Map<String, dynamic>.from(data)));
       });
     };
     _callDeletedHandler = (callId) {
@@ -100,17 +102,18 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
     if (confirmed == true) {
       try {
         await _api.deleteCall(call.id);
+        if (!mounted) return;
         setState(() {
-          _calls.remove(call);
+          _calls.removeWhere((item) => item.id == call.id);
         });
       } catch (e) {
         Logger.error('Error deleting call: $e');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-  SnackBar(
-    content: Text(ApiService.extractErrorMessage(e)),
-  ),
-);
+            SnackBar(
+              content: Text(ApiService.extractErrorMessage(e)),
+            ),
+          );
         }
       }
     }
@@ -120,9 +123,18 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
     try {
       final response = await _api.getCalls();
       if (response.data['success'] == true) {
-        final data = response.data['data']['calls'] as List;
+        if (!mounted) return;
+        final responseData = response.data['data'];
+        final data = responseData is Map && responseData['calls'] is List
+            ? responseData['calls'] as List
+            : responseData is List
+                ? responseData
+                : <dynamic>[];
         setState(() {
-          _calls = data.map((json) => Call.fromJson(json)).toList()
+          _calls = data
+              .whereType<Map>()
+              .map((json) => Call.fromJson(Map<String, dynamic>.from(json)))
+              .toList()
             ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
         });
       }
@@ -139,9 +151,13 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
     try {
       final response = await _api.getTeam();
       if (response.data['success'] == true) {
-        final data = response.data['data'] as List;
+        if (!mounted) return;
+        final data = response.data['data'] is List ? response.data['data'] as List : <dynamic>[];
         setState(() {
-          _teamMembers = data.map((json) => User.fromJson(json)).toList();
+          _teamMembers = data
+              .whereType<Map>()
+              .map((json) => User.fromJson(Map<String, dynamic>.from(json)))
+              .toList();
         });
       }
     } catch (e) {
@@ -155,6 +171,7 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
       builder: (context) => _CreateCallDialog(
         teamMembers: _teamMembers,
         onCreated: (call) {
+          if (!mounted) return;
           setState(() {
             _upsertCall(call);
           });
@@ -178,14 +195,18 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
     try {
       final response = await _api.joinCall(call.id);
       if (response.data['success'] == true && mounted) {
-        final updatedCall = Call.fromJson(response.data['data']);
+        final responseData = response.data['data'];
+        final updatedCall = responseData is Map
+            ? Call.fromJson(Map<String, dynamic>.from(responseData))
+            : call;
         setState(() {
           _upsertCall(updatedCall);
         });
-        await JitsiCallScreen.showModal(
+        await VideoCallScreen.showModal(
           context: context,
-          roomId: updatedCall.jitsiRoomId,
+          roomId: updatedCall.id,
           title: '${updatedCall.type.capitalize()} Call',
+          enableVideo: updatedCall.type == 'video',
           onLeave: () => _leaveCall(updatedCall.id),
         );
       }
@@ -203,7 +224,9 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
     try {
       final response = await _api.leaveCall(callId);
       if (response.data['success'] == true && mounted) {
-        final updatedCall = Call.fromJson(response.data['data']);
+        final responseData = response.data['data'];
+        if (responseData is! Map) return;
+        final updatedCall = Call.fromJson(Map<String, dynamic>.from(responseData));
         setState(() {
           _upsertCall(updatedCall);
         });
@@ -375,9 +398,15 @@ class _CreateCallDialog extends StatefulWidget {
 
 class _CreateCallDialogState extends State<_CreateCallDialog> {
   final ApiService _api = ApiService();
+  final SocketService _socket = SocketService();
   final List<String> _selectedMemberIds = [];
+  final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _maxParticipantsController = TextEditingController(text: '10');
   String _callType = 'video';
   bool _isCreating = false;
+  bool _isGroupCall = false;
+  bool _waitingRoomEnabled = false;
+  bool _recordingEnabled = false;
 
   Future<void> _createCall() async {
     if (_selectedMemberIds.isEmpty) {
@@ -389,12 +418,36 @@ class _CreateCallDialogState extends State<_CreateCallDialog> {
 
     setState(() => _isCreating = true);
     try {
+      final maxParticipants = int.tryParse(_maxParticipantsController.text.trim());
+      if (maxParticipants == null || maxParticipants < 2) {
+        throw const FormatException('Max participants must be at least 2');
+      }
+
       final response = await _api.createCall({
         'type': _callType,
-        'participant_ids': _selectedMemberIds,
+        'isGroupCall': _isGroupCall,
+        'password': _passwordController.text.trim().isEmpty ? null : _passwordController.text.trim(),
+        'maxParticipants': maxParticipants,
+        'waitingRoomEnabled': _waitingRoomEnabled,
+        'recordingEnabled': _recordingEnabled,
+        'participantIds': _selectedMemberIds,
       });
       if (response.data['success'] == true) {
-        final call = Call.fromJson(response.data['data']);
+        final responseData = response.data['data'];
+        if (responseData is! Map) {
+          throw const FormatException('Invalid call response');
+        }
+        final call = Call.fromJson(Map<String, dynamic>.from(responseData));
+        
+        // Emit call invites to selected participants
+        for (final userId in _selectedMemberIds) {
+          _socket.emitCallInvite({
+            'callId': call.id,
+            'targetUserId': userId,
+            'type': _callType,
+          });
+        }
+        
         if (mounted) Navigator.pop(context);
         widget.onCreated(call);
       }
@@ -413,58 +466,117 @@ class _CreateCallDialogState extends State<_CreateCallDialog> {
   }
 
   @override
+  void dispose() {
+    _passwordController.dispose();
+    _maxParticipantsController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('New Call'),
       content: SizedBox(
         width: double.maxFinite,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SegmentedButton<String>(
-              segments: const [
-                ButtonSegment(value: 'video', icon: Icon(Icons.videocam), label: Text('Video')),
-                ButtonSegment(value: 'audio', icon: Icon(Icons.call), label: Text('Audio')),
-              ],
-              selected: {_callType},
-              onSelectionChanged: (newSelection) {
-                setState(() {
-                  _callType = newSelection.first;
-                });
-              },
-            ),
-            const SizedBox(height: 16),
-            const Align(
-              alignment: Alignment.centerLeft,
-              child: Text('Participants', style: TextStyle(fontWeight: FontWeight.w500)),
-            ),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 200,
-              child: ListView.builder(
-                shrinkWrap: true,
-                itemCount: widget.teamMembers.length,
-                itemBuilder: (context, index) {
-                  final member = widget.teamMembers[index];
-                  final isSelected = _selectedMemberIds.contains(member.id);
-                  return CheckboxListTile(
-                    title: Text(member.name),
-                    subtitle: Text(member.email),
-                    value: isSelected,
-                    onChanged: (value) {
-                      setState(() {
-                        if (value == true) {
-                          _selectedMemberIds.add(member.id);
-                        } else {
-                          _selectedMemberIds.remove(member.id);
-                        }
-                      });
-                    },
-                  );
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(value: 'video', icon: Icon(Icons.videocam), label: Text('Video')),
+                  ButtonSegment(value: 'audio', icon: Icon(Icons.call), label: Text('Audio')),
+                ],
+                selected: {_callType},
+                onSelectionChanged: (newSelection) {
+                  setState(() {
+                    _callType = newSelection.first;
+                  });
                 },
               ),
-            ),
-          ],
+              const SizedBox(height: 16),
+              SwitchListTile(
+                title: const Text('Group Call'),
+                value: _isGroupCall,
+                onChanged: (value) {
+                  setState(() {
+                    _isGroupCall = value;
+                  });
+                },
+                contentPadding: EdgeInsets.zero,
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _passwordController,
+                decoration: const InputDecoration(
+                  labelText: 'Call Password (Optional)',
+                  hintText: 'Enter password to secure the call',
+                ),
+                obscureText: true,
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _maxParticipantsController,
+                decoration: const InputDecoration(
+                  labelText: 'Max Participants',
+                  hintText: '10',
+                ),
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 16),
+              SwitchListTile(
+                title: const Text('Waiting Room'),
+                subtitle: const Text('Participants wait in a room before joining'),
+                value: _waitingRoomEnabled,
+                onChanged: (value) {
+                  setState(() {
+                    _waitingRoomEnabled = value;
+                  });
+                },
+                contentPadding: EdgeInsets.zero,
+              ),
+              SwitchListTile(
+                title: const Text('Enable Recording'),
+                subtitle: const Text('Allow recording the call'),
+                value: _recordingEnabled,
+                onChanged: (value) {
+                  setState(() {
+                    _recordingEnabled = value;
+                  });
+                },
+                contentPadding: EdgeInsets.zero,
+              ),
+              const SizedBox(height: 16),
+              const Text('Participants', style: TextStyle(fontWeight: FontWeight.w500)),
+              const SizedBox(height: 8),
+              SizedBox(
+                height: 200,
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: widget.teamMembers.length,
+                  itemBuilder: (context, index) {
+                    final member = widget.teamMembers[index];
+                    final isSelected = _selectedMemberIds.contains(member.id);
+                    return CheckboxListTile(
+                      title: Text(member.name),
+                      subtitle: Text(member.email),
+                      value: isSelected,
+                      onChanged: (value) {
+                        setState(() {
+                          if (value == true) {
+                            _selectedMemberIds.add(member.id);
+                          } else {
+                            _selectedMemberIds.remove(member.id);
+                          }
+                        });
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
       ),
       actions: [

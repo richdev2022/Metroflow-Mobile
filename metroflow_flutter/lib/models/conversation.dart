@@ -11,11 +11,9 @@ class ConversationParticipant {
 
   factory ConversationParticipant.fromJson(Map<String, dynamic> json) {
     return ConversationParticipant(
-      id: json['id'] as String,
-      userId: (json['userId'] ?? json['user_id']) as String,
-      lastReadAt: (json['lastReadAt'] ?? json['last_read_at']) != null
-          ? DateTime.parse((json['lastReadAt'] ?? json['last_read_at']) as String)
-          : null,
+      id: (json['id'] ?? '').toString(),
+      userId: (json['userId'] ?? json['user_id'] ?? '').toString(),
+      lastReadAt: _parseDate(json['lastReadAt'] ?? json['last_read_at']),
     );
   }
 
@@ -26,6 +24,12 @@ class ConversationParticipant {
       'lastReadAt': lastReadAt?.toIso8601String(),
     };
   }
+}
+
+DateTime? _parseDate(dynamic value) {
+  if (value == null) return null;
+  if (value is DateTime) return value;
+  return DateTime.tryParse(value.toString());
 }
 
 class Conversation {
@@ -53,19 +57,18 @@ class Conversation {
 
   factory Conversation.fromJson(Map<String, dynamic> json) {
     return Conversation(
-      id: json['id'] as String,
-      name: json['name'] as String?,
+      id: (json['id'] ?? '').toString(),
+      name: json['name']?.toString(),
       type: (json['type'] as String?) ?? 'direct',
-      createdBy: (json['createdBy'] ?? json['created_by'] ?? '') as String,
-      createdAt: DateTime.parse((json['createdAt'] ?? json['created_at']) as String),
-      updatedAt: DateTime.parse((json['updatedAt'] ?? json['updated_at']) as String),
+      createdBy: (json['createdBy'] ?? json['created_by'] ?? '').toString(),
+      createdAt: _parseDate(json['createdAt'] ?? json['created_at']) ?? DateTime.now(),
+      updatedAt: _parseDate(json['updatedAt'] ?? json['updated_at']) ?? DateTime.now(),
       participants: ((json['participants'] as List<dynamic>?) ?? [])
-          .map((e) => ConversationParticipant.fromJson(e as Map<String, dynamic>))
+          .whereType<Map>()
+          .map((e) => ConversationParticipant.fromJson(Map<String, dynamic>.from(e)))
           .toList(),
-      lastMessage: (json['lastMessage'] ?? json['last_message']) as String?,
-      lastMessageAt: (json['lastMessageAt'] ?? json['last_message_at']) != null
-          ? DateTime.parse((json['lastMessageAt'] ?? json['last_message_at']) as String)
-          : null,
+      lastMessage: (json['lastMessage'] ?? json['last_message'])?.toString(),
+      lastMessageAt: _parseDate(json['lastMessageAt'] ?? json['last_message_at']),
     );
   }
 
