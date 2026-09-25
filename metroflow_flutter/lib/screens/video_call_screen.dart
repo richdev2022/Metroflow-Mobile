@@ -12,6 +12,7 @@ class VideoCallScreen extends StatefulWidget {
   final String title;
   final bool isMeeting;
   final bool enableVideo;
+  final String? userName;
   final FutureOr<void> Function()? onLeave;
 
   const VideoCallScreen({
@@ -20,6 +21,7 @@ class VideoCallScreen extends StatefulWidget {
     required this.title,
     this.isMeeting = false,
     this.enableVideo = true,
+    this.userName,
     this.onLeave,
   });
 
@@ -29,6 +31,7 @@ class VideoCallScreen extends StatefulWidget {
     required String title,
     bool isMeeting = false,
     bool enableVideo = true,
+    String? userName,
     FutureOr<void> Function()? onLeave,
   }) {
     return showDialog<void>(
@@ -40,6 +43,7 @@ class VideoCallScreen extends StatefulWidget {
           title: title,
           isMeeting: isMeeting,
           enableVideo: enableVideo,
+          userName: userName,
           onLeave: onLeave,
         ),
       ),
@@ -200,7 +204,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       if (!mounted) return;
       setState(() {
         _chatLines.add(_ChatLine(
-          userId: payload['userId']?.toString() ?? 'User',
+          userId: payload['senderName']?.toString() ?? payload['userId']?.toString() ?? 'User',
           message: payload['message']?.toString() ?? '',
           timestamp: DateTime.tryParse(payload['timestamp']?.toString() ?? '') ?? DateTime.now(),
         ));
@@ -360,16 +364,13 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   void _sendChatMessage() {
     final message = _chatController.text.trim();
     if (message.isEmpty) return;
+    // Backend broadcasts `meeting-chat:message` to the whole room (including
+    // the sender) with the resolved identity, so we no longer optimistically
+    // add the message locally. senderName is now included.
     _socket.emitMeetingChatMessage({
       'meetingId': widget.roomId,
       'message': message,
-    });
-    setState(() {
-      _chatLines.add(_ChatLine(
-        userId: 'You',
-        message: message,
-        timestamp: DateTime.now(),
-      ));
+      'senderName': widget.userName ?? 'Me',
     });
     _chatController.clear();
   }
