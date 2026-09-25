@@ -12,6 +12,11 @@ class SocketService {
   socket_io.Socket? _socket;
   bool get isConnected => _socket?.connected ?? false;
 
+  /// Auth token attached to the socket handshake so the backend can verify
+  /// identity server-side (see server/lib/socket.ts).
+  String? _authToken;
+  String? get authToken => _authToken;
+
   String get _socketBaseUrl {
     final configured = dotenv.env['EXPO_PUBLIC_API_BASE_URL'] ?? 'https://metroflow-backend.netlify.app';
     return configured.replaceFirst(RegExp(r'/api/?$'), '');
@@ -45,17 +50,25 @@ class SocketService {
   void Function(dynamic)? onMeetingChatMessage;
   void Function(dynamic)? onNotificationNew;
 
-  void connect(String userId, String businessId) {
+  void connect(String userId, String businessId, {String? token}) {
     if (_socket?.connected == true) return;
 
-    _socket = socket_io.io(_socketBaseUrl, socket_io.OptionBuilder()
+    // Keep/refresh the handshake auth token
+    if (token != null && token.isNotEmpty) _authToken = token;
+
+    final optionsBuilder = socket_io.OptionBuilder()
         .setTransports(['websocket'])
         .enableAutoConnect()
         .enableReconnection() // Enable auto reconnection
         .setReconnectionDelay(1000) // Initial delay
         .setReconnectionDelayMax(5000) // Max delay
-        .setReconnectionAttempts(5) // Max attempts
-        .build());
+        .setReconnectionAttempts(5); // Max attempts
+
+    if (_authToken != null && _authToken!.isNotEmpty) {
+      optionsBuilder.setAuth({'token': _authToken});
+    }
+
+    _socket = socket_io.io(_socketBaseUrl, optionsBuilder.build());
 
     _socket?.on('connect', (_) {
       Logger.log('Connected to socket');

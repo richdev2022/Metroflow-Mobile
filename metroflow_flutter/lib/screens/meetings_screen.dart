@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../services/api.dart';
+
 import '../services/socket_service.dart';
 import '../models/meeting.dart';
 import '../models/user.dart';
@@ -179,11 +180,13 @@ class _MeetingsScreenState extends ConsumerState<MeetingsScreen> {
     try {
       final response = await _api.joinMeeting(meeting.id);
       if (response.data['success'] == true && mounted) {
+        final userName = await StorageService().getUserName();
         await VideoCallScreen.showModal(
           context: context,
           roomId: meeting.id,
           title: meeting.title,
           isMeeting: true,
+          userName: userName,
           onLeave: () => _leaveMeeting(meeting.id),
         );
       }
