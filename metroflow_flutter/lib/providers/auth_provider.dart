@@ -267,7 +267,7 @@ class AuthNotifier extends Notifier<AuthState> {
 
       // Connect socket
       if (userId != null && businessId != null) {
-        _socketService.connect(userId, businessId);
+        _socketService.connect(userId, businessId, token: token);
       }
 
       state = state.copyWith(

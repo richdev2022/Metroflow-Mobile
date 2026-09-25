@@ -4,6 +4,7 @@ class VirtualAccount {
   final String? paymentProvider;
   final String? virtualAccountNumber;
   final String? bankCode;
+  final String? bankName; // resolved by the backend from provider metadata / bank-code lookup
   final String? accountName;
   final String? customerIdentifier;
   final String? beneficiaryAccount;
@@ -18,6 +19,7 @@ class VirtualAccount {
     this.paymentProvider,
     this.virtualAccountNumber,
     this.bankCode,
+    this.bankName,
     this.accountName,
     this.customerIdentifier,
     this.beneficiaryAccount,
@@ -34,6 +36,7 @@ class VirtualAccount {
       paymentProvider: json['payment_provider'] as String?,
       virtualAccountNumber: json['virtual_account_number'] as String?,
       bankCode: json['bank_code'] as String?,
+      bankName: json['bank_name'] as String?,
       accountName: json['account_name'] as String?,
       customerIdentifier: json['customer_identifier'] as String?,
       beneficiaryAccount: json['beneficiary_account'] as String?,
@@ -51,6 +54,7 @@ class VirtualAccount {
       'payment_provider': paymentProvider,
       'virtual_account_number': virtualAccountNumber,
       'bank_code': bankCode,
+      'bank_name': bankName,
       'account_name': accountName,
       'customer_identifier': customerIdentifier,
       'beneficiary_account': beneficiaryAccount,

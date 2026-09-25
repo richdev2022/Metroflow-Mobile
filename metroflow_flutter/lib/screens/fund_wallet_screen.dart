@@ -495,6 +495,10 @@ String _getBankName(VirtualAccount? account) {
   if (account == null) return '';
   final provider = account.paymentProvider;
   final providerMetadata = account.providerMetadata;
+  // Backend-resolved bank name (from provider metadata or bank-code lookup)
+  if (account.bankName != null && account.bankName!.trim().isNotEmpty) {
+    return account.bankName!;
+  }
   if (provider == 'monnify' && providerMetadata is Map<String, dynamic>) {
     final responseBody = providerMetadata['responseBody'];
     if (responseBody is Map) {
@@ -503,6 +507,13 @@ String _getBankName(VirtualAccount? account) {
         final firstAccount = accounts.first as Map;
         return firstAccount['bankName'] ?? 'Monnify';
       }
+    }
+  }
+  // Flutterwave stores the full VA response in metadata (data.bank_name)
+  if (provider == 'flutterwave' && providerMetadata is Map<String, dynamic>) {
+    final data = providerMetadata['data'];
+    if (data is Map && data['bank_name'] != null) {
+      return data['bank_name'].toString();
     }
   }
   final bankCode = account.bankCode;
