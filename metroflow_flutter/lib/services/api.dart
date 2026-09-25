@@ -446,9 +446,12 @@ class ApiService {
   }
 
   Future<Response> verifyWalletPayment(String reference, {bool suppressToast = false}) async {
-    return await _dio.get(
-      '/wallet/verify',
-      queryParameters: {'reference': reference},
+    // POST /subscription/verify-payment handles wallet-funding references too:
+    // it verifies with the provider, atomically credits the wallet and returns
+    // JSON. (GET /wallet/verify returns HTML meant for browser redirects.)
+    return await _dio.post(
+      '/subscription/verify-payment',
+      data: {'reference': reference},
       options: Options(extra: {'suppressToast': suppressToast}),
     );
   }

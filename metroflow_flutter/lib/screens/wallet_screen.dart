@@ -556,6 +556,11 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   }
 
   String _getBankName(dynamic account) {
+    // Backend-resolved bank name (from provider metadata or bank-code lookup)
+    final resolvedName = account['bank_name'];
+    if (resolvedName != null && resolvedName.toString().trim().isNotEmpty) {
+      return resolvedName.toString();
+    }
     // Try to get bank name from provider metadata if available
     final provider = account['payment_provider'];
     final providerMetadata = account['provider_metadata'];
@@ -567,6 +572,13 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
           final firstAccount = accounts.first as Map;
           return firstAccount['bankName'] ?? 'Monnify';
         }
+      }
+    }
+    // Flutterwave stores the full VA response in metadata (data.bank_name)
+    if (provider == 'flutterwave' && providerMetadata is Map) {
+      final data = providerMetadata['data'];
+      if (data is Map && data['bank_name'] != null) {
+        return data['bank_name'].toString();
       }
     }
     // Default to bank code or provider
