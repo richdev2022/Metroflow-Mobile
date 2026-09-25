@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../components/google_sign_in_button.dart';
 import '../theme/app_theme.dart';
 import '../providers/auth_provider.dart';
 import '../services/biometrics.dart';
@@ -18,6 +19,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _passwordController = TextEditingController();
   bool _obscurePassword = true;
   bool _isLoading = false;
+  bool _isGoogleLoading = false;
   bool _biometricLoading = false;
   bool _biometricsAvailable = false;
   bool _showBiometricsSetupModal = false;
@@ -227,6 +229,41 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         });
       }
     }
+  }
+
+  /// Google SSO: sign in with the Google account picker, then reuse the
+  /// exact same post-login routing as password login (KYC check → biometrics
+  /// prompt / kyc-prompt / main). Password-setup hint is handled by the
+  /// provider itself (non-blocking).
+  Future<void> _handleGoogleSignIn() async {
+    if (_isGoogleLoading) return;
+    setState(() {
+      _isGoogleLoading = true;
+    });
+
+    try {
+      final success = await ref.read(authProvider.notifier).loginWithGoogle();
+      if (!success) return; // user cancelled — no error, stay on screen
+      await _checkKycAndNavigate();
+    } catch (e) {
+      if (mounted) {
+        await _showAlert('Google Sign-In', _friendlyError(e));
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isGoogleLoading = false;
+        });
+      }
+    }
+  }
+
+  String _friendlyError(Object e) {
+    final message = e.toString();
+    if (message.startsWith('Exception: ')) {
+      return message.substring('Exception: '.length);
+    }
+    return message;
   }
 
   @override
@@ -456,6 +493,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         ),
                       ),
                     ],
+                    const SizedBox(height: 24),
+                    const OrDivider(),
+                    const SizedBox(height: 16),
+                    GoogleSignInButton(
+                      onPressed: _handleGoogleSignIn,
+                      isLoading: _isGoogleLoading,
+                    ),
                     const SizedBox(height: 24),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,

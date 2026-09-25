@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../components/google_sign_in_button.dart';
 import '../providers/auth_provider.dart';
+import '../services/api.dart';
 import '../theme/app_theme.dart';
 
 const List<String> businessIndustries = [
@@ -446,6 +448,66 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     }
   }
 
+  /// Google SSO sign-up/sign-in: reuses loginWithGoogle (isNewUser accounts
+  /// get a trial from the backend), then routes like the login screen does —
+  /// KYC check decides between /kyc-prompt and /main.
+  Future<void> _handleGoogleSignIn() async {
+    if (isLoading) return;
+    setState(() => isLoading = true);
+    try {
+      final success = await ref.read(authProvider.notifier).loginWithGoogle();
+      if (!success) return; // user cancelled — stay on screen
+      if (!mounted) return;
+      await _routeAfterGoogleAuth();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_friendlyError(e)),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
+
+  String _friendlyError(Object e) {
+    final message = e.toString();
+    if (message.startsWith('Exception: ')) {
+      return message.substring('Exception: '.length);
+    }
+    return message;
+  }
+
+  /// Mirrors the login screen's post-login routing: KYC tier 1 not verified
+  /// → /kyc-prompt, otherwise /main.
+  Future<void> _routeAfterGoogleAuth() async {
+    try {
+      final response = await ApiService().getKycStatus();
+      final data = response.data;
+      final user = data['user'] as Map<String, dynamic>?;
+
+      if (user == null && data['bvn_verified'] == null && data['nin_verified'] == null) {
+        if (mounted) context.go('/main');
+        return;
+      }
+
+      final bvnVerified = user?['bvnStatus'] == 'verified' ||
+          user?['bvn_status'] == 'verified' ||
+          data['bvn_verified'] == true;
+      final ninVerified = user?['ninStatus'] == 'verified' ||
+          user?['nin_status'] == 'verified' ||
+          data['nin_verified'] == true;
+      final isTier1Verified = bvnVerified || ninVerified;
+
+      if (mounted) context.go(isTier1Verified ? '/main' : '/kyc-prompt');
+    } catch (_) {
+      if (mounted) context.go('/main');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = AppTheme.colors;
@@ -764,6 +826,13 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                         ),
                       ),
                     ),
+                  ),
+                  const SizedBox(height: 24),
+                  const OrDivider(),
+                  const SizedBox(height: 16),
+                  GoogleSignInButton(
+                    onPressed: _handleGoogleSignIn,
+                    isLoading: isLoading,
                   ),
                   const SizedBox(height: 40),
                   Row(

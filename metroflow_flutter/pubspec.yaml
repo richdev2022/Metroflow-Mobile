@@ -34,6 +34,8 @@ dependencies:
   flutter_dotenv: ^5.2.1
   socket_io_client: ^2.0.3+1
   flutter_webrtc: ^1.5.2
+  google_sign_in: ^6.2.1
+  flutter_secure_storage: ^9.2.2
   mediasoup_client_flutter:
     path: third_party/mediasoup_client_flutter
 

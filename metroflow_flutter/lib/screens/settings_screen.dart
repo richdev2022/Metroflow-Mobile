@@ -95,11 +95,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _pinCreated = false;
   String? _contactType;
 
+  // Sign-in & Security (GET /auth/me, cached in auth_provider)
+  String? _authProvider;
+  bool? _hasPassword;
+  bool _isSecurityLoading = true;
+  bool _isPasswordBusy = false;
+
   @override
   void initState() {
     super.initState();
     _fetchData();
     _checkBiometricAvailability();
+    _loadSignInSecurity();
   }
 
   @override
@@ -354,6 +361,387 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     if (mounted) setState(() => _isSaving = false);
   }
 
+  // ---------------------------------------------------------------------
+  // Sign-in & Security (Google SSO / password management)
+  // ---------------------------------------------------------------------
+
+  Future<void> _loadSignInSecurity({bool forceRefresh = false}) async {
+    if (!mounted) return;
+    setState(() => _isSecurityLoading = true);
+    try {
+      final me = await ref
+          .read(authProvider.notifier)
+          .getMe(forceRefresh: forceRefresh);
+      if (!mounted) return;
+      final notifier = ref.read(authProvider.notifier);
+      final dynamic provider = me?['authProvider'];
+      final dynamic hasPassword = me?['hasPassword'];
+      setState(() {
+        _authProvider = provider is String && provider.isNotEmpty
+            ? provider
+            : notifier.authProvider;
+        _hasPassword =
+            hasPassword is bool ? hasPassword : notifier.hasPassword;
+        _isSecurityLoading = false;
+      });
+    } catch (e) {
+      debugPrint('Failed to load sign-in security info: $e');
+      if (mounted) setState(() => _isSecurityLoading = false);
+    }
+  }
+
+  Future<void> _showCreatePasswordDialog() async {
+    final newPasswordController = TextEditingController();
+    final confirmPasswordController = TextEditingController();
+    bool obscure = true;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Create Password'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: newPasswordController,
+                obscureText: obscure,
+                decoration: InputDecoration(
+                  labelText: 'New password',
+                  hintText: 'Minimum 8 characters',
+                  border: const OutlineInputBorder(),
+                  suffixIcon: IconButton(
+                    icon: Icon(obscure
+                        ? Icons.visibility_off_outlined
+                        : Icons.visibility_outlined),
+                    onPressed: () => setDialogState(() => obscure = !obscure),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: confirmPasswordController,
+                obscureText: obscure,
+                onSubmitted: (_) => Navigator.of(dialogContext).pop(true),
+                decoration: const InputDecoration(
+                  labelText: 'Confirm password',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Create'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (confirmed != true) return;
+    final password = newPasswordController.text;
+    final confirmPassword = confirmPasswordController.text;
+    newPasswordController.dispose();
+    confirmPasswordController.dispose();
+
+    if (password.length < 8) {
+      AppToast.show('Password must be at least 8 characters',
+          type: AppToastType.error);
+      return;
+    }
+    if (password != confirmPassword) {
+      AppToast.show('Passwords do not match', type: AppToastType.error);
+      return;
+    }
+
+    await _submitPassword(() => ref.read(authProvider.notifier).setPassword(password),
+        successMessage: 'Password created. You can now also sign in with your email.');
+  }
+
+  Future<void> _showChangePasswordDialog() async {
+    final currentPasswordController = TextEditingController();
+    final newPasswordController = TextEditingController();
+    final confirmPasswordController = TextEditingController();
+    bool obscure = true;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Change Password'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: currentPasswordController,
+                obscureText: obscure,
+                decoration: const InputDecoration(
+                  labelText: 'Current password',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: newPasswordController,
+                obscureText: obscure,
+                decoration: InputDecoration(
+                  labelText: 'New password',
+                  hintText: 'Minimum 8 characters',
+                  border: const OutlineInputBorder(),
+                  suffixIcon: IconButton(
+                    icon: Icon(obscure
+                        ? Icons.visibility_off_outlined
+                        : Icons.visibility_outlined),
+                    onPressed: () => setDialogState(() => obscure = !obscure),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: confirmPasswordController,
+                obscureText: obscure,
+                onSubmitted: (_) => Navigator.of(dialogContext).pop(true),
+                decoration: const InputDecoration(
+                  labelText: 'Confirm new password',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Change'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (confirmed != true) return;
+    final currentPassword = currentPasswordController.text;
+    final password = newPasswordController.text;
+    final confirmPassword = confirmPasswordController.text;
+    currentPasswordController.dispose();
+    newPasswordController.dispose();
+    confirmPasswordController.dispose();
+
+    if (currentPassword.isEmpty) {
+      AppToast.show('Please enter your current password',
+          type: AppToastType.error);
+      return;
+    }
+    if (password.length < 8) {
+      AppToast.show('New password must be at least 8 characters',
+          type: AppToastType.error);
+      return;
+    }
+    if (password != confirmPassword) {
+      AppToast.show('Passwords do not match', type: AppToastType.error);
+      return;
+    }
+
+    await _submitPassword(
+        () => ref
+            .read(authProvider.notifier)
+            .changePassword(currentPassword, password),
+        successMessage: 'Password updated successfully');
+  }
+
+  Future<void> _submitPassword(Future<void> Function() action,
+      {required String successMessage}) async {
+    if (!mounted) return;
+    setState(() => _isPasswordBusy = true);
+    try {
+      await action();
+      AppToast.show(successMessage, type: AppToastType.success);
+      await _loadSignInSecurity(forceRefresh: true);
+    } catch (e) {
+      AppToast.show(_friendlyError(e), type: AppToastType.error);
+      // PASSWORD_ALREADY_SET / NO_PASSWORD_SET → refresh so the correct
+      // tile (create vs change) is shown.
+      await _loadSignInSecurity(forceRefresh: true);
+    } finally {
+      if (mounted) setState(() => _isPasswordBusy = false);
+    }
+  }
+
+  String _friendlyError(Object e) {
+    final message = e.toString();
+    if (message.startsWith('Exception: ')) {
+      return message.substring('Exception: '.length);
+    }
+    return message;
+  }
+
+  Widget _signInSecurityCard() {
+    final colors = AppTheme.colors;
+    final isGoogle = (_authProvider ?? '').toLowerCase() == 'google';
+    final badgeLabel = isGoogle ? 'Google account' : 'Email & password';
+    final badgeColor = isGoogle ? AppColors.primary : AppColors.success;
+    final badgeBg = isGoogle ? AppColors.primaryBg : AppColors.successBg;
+    final hasPassword = _hasPassword;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 24),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        border: Border.all(color: colors.border),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Sign-in & Security',
+                  style: TextStyle(
+                    color: colors.text,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: badgeBg,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      isGoogle
+                          ? Icons.account_circle_outlined
+                          : Icons.lock_outline,
+                      size: 14,
+                      color: badgeColor,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      badgeLabel,
+                      style: TextStyle(
+                        color: badgeColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (_isSecurityLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: 12),
+                  Text('Loading sign-in info...'),
+                ],
+              ),
+            )
+          else if (hasPassword == false)
+            _securityTile(
+              icon: Icons.password_outlined,
+              title: 'Create password',
+              subtitle:
+                  'Add a password so you can also sign in with your email',
+              onTap: _isPasswordBusy ? null : _showCreatePasswordDialog,
+            )
+          else if (hasPassword == true)
+            _securityTile(
+              icon: Icons.lock_outline,
+              title: 'Change password',
+              subtitle: 'Update your account password',
+              onTap: _isPasswordBusy ? null : _showChangePasswordDialog,
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _securityTile({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    VoidCallback? onTap,
+  }) {
+    final colors = AppTheme.colors;
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: colors.background,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: colors.primaryBg,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Icon(icon, color: colors.primary, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: colors.text,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        color: colors.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right, color: colors.textSecondary, size: 20),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _handleLogout() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -476,6 +864,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   padding: const EdgeInsets.only(bottom: 24),
                   children: [
                     _profileSection(),
+                    _sectionTitle('Sign-in & Security'),
+                    _signInSecurityCard(),
                     _sectionTitle('Verification & KYC'),
                     _kycCard(),
                     _sectionTitle('Business'),

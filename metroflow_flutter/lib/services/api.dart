@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import '../utils/app_toast.dart';
 import 'package:flutter/material.dart';
@@ -185,7 +186,55 @@ class ApiService {
   }
 
   Future<Response> login(String email, String password) async {
-    return await _dio.post('/auth/login', data: {'email': email, 'password': password});
+    try {
+      return await _dio.post('/auth/login', data: {'email': email, 'password': password});
+    } on DioException catch (e) {
+      final data = e.response?.data;
+      if (data is Map && data['code'] == 'GOOGLE_ACCOUNT_NO_PASSWORD') {
+        // SSO-only account tried password login — point them at the Google
+        // button instead of showing the raw backend error.
+        throw Exception('This account uses Google Sign-In. Please continue with Google.');
+      }
+      rethrow;
+    }
+  }
+
+  /// Google Sign-In: exchanges a Google ID token for an app session.
+  /// Response shape mirrors /auth/login: token, userId, businessId,
+  /// isNewUser, requiresPasswordSetup and user { id, name, email, avatarUrl,
+  /// authProvider, hasPassword }.
+  Future<Response> googleAuth(String credential) async {
+    return await _dio.post('/auth/google', data: {'credential': credential});
+  }
+
+  /// Sets an initial password for SSO (Google) accounts that don't have one.
+  /// Backend error code PASSWORD_ALREADY_SET when a password already exists.
+  Future<Response> setPassword(String password) async {
+    return await _dio.post(
+      '/auth/set-password',
+      data: {'password': password},
+      options: Options(extra: {'suppressToast': true}),
+    );
+  }
+
+  /// Changes the password for accounts that already have one.
+  /// Backend error code NO_PASSWORD_SET when no password exists yet.
+  Future<Response> changePassword(String currentPassword, String newPassword) async {
+    return await _dio.post(
+      '/auth/change-password',
+      data: {
+        'currentPassword': currentPassword,
+        'newPassword': newPassword,
+      },
+      options: Options(extra: {'suppressToast': true}),
+    );
+  }
+
+  /// Current authenticated user profile. Returns
+  /// { success, data: { id, businessId, email, name, role, avatarUrl,
+  /// authProvider, hasPassword, emailVerified, kycStatus, phoneNumber } }.
+  Future<Response> getMe() async {
+    return await _dio.get('/auth/me', options: Options(extra: {'suppressToast': true}));
   }
 
   Future<Response> verifyOtp(String email, String otpCode) async {
@@ -827,12 +876,58 @@ class StorageService {
   factory StorageService() => _instance;
   StorageService._internal();
 
+  // Secure storage is the PRIMARY home for the session token. Every access
+  // is guarded — if the platform doesn't support it (or the keychain is
+  // unavailable), we transparently fall back to SharedPreferences.
+  static const FlutterSecureStorage _secureStorage = FlutterSecureStorage(
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+  );
+  static bool _secureStorageAvailable = true;
+
+  Future<void> _writeTokenSecurely(String token) async {
+    if (!_secureStorageAvailable) return;
+    try {
+      await _secureStorage.write(key: 'token', value: token);
+    } catch (e) {
+      // Unsupported platform / plugin failure → keep using SharedPreferences.
+      _secureStorageAvailable = false;
+      debugPrint('Secure token storage unavailable, falling back to SharedPreferences: $e');
+    }
+  }
+
+  Future<String?> _readTokenSecurely() async {
+    if (!_secureStorageAvailable) return null;
+    try {
+      return await _secureStorage.read(key: 'token');
+    } catch (e) {
+      _secureStorageAvailable = false;
+      debugPrint('Secure token storage unavailable, falling back to SharedPreferences: $e');
+      return null;
+    }
+  }
+
+  Future<void> _deleteTokenSecurely() async {
+    if (!_secureStorageAvailable) return;
+    try {
+      await _secureStorage.delete(key: 'token');
+    } catch (e) {
+      _secureStorageAvailable = false;
+      debugPrint('Secure token storage delete failed: $e');
+    }
+  }
+
   Future<void> setToken(String token) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('token', token);
+    // Primary: secure storage. The SharedPreferences copy is kept for
+    // backward compatibility (dio interceptor and existing code paths read
+    // prefs directly).
+    await _writeTokenSecurely(token);
   }
 
   Future<String?> getToken() async {
+    final secureToken = await _readTokenSecurely();
+    if (secureToken != null && secureToken.isNotEmpty) return secureToken;
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString('token');
   }
@@ -840,6 +935,7 @@ class StorageService {
   Future<void> removeToken() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('token');
+    await _deleteTokenSecurely();
   }
 
   Future<void> setUserId(String userId) async {
@@ -870,6 +966,51 @@ class StorageService {
   Future<String?> getUserName() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString('userName');
+  }
+
+  // Google SSO / sign-in security extras
+  Future<void> setAvatarUrl(String? avatarUrl) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (avatarUrl == null || avatarUrl.isEmpty) {
+      await prefs.remove('avatarUrl');
+    } else {
+      await prefs.setString('avatarUrl', avatarUrl);
+    }
+  }
+
+  Future<String?> getAvatarUrl() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('avatarUrl');
+  }
+
+  Future<void> setRequiresPasswordSetup(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('requiresPasswordSetup', value);
+  }
+
+  Future<bool> getRequiresPasswordSetup() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('requiresPasswordSetup') ?? false;
+  }
+
+  Future<void> setAuthProvider(String provider) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('authProvider', provider);
+  }
+
+  Future<String?> getAuthProvider() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('authProvider');
+  }
+
+  Future<void> setHasPassword(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('hasPassword', value);
+  }
+
+  Future<bool?> getHasPassword() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('hasPassword');
   }
 
   // Biometrics credential storage
@@ -972,6 +1113,11 @@ class StorageService {
     await prefs.remove('userId');
     await prefs.remove('businessId');
     await prefs.remove('userName');
+    await prefs.remove('avatarUrl');
+    await prefs.remove('requiresPasswordSetup');
+    await prefs.remove('authProvider');
+    await prefs.remove('hasPassword');
+    await _deleteTokenSecurely();
     // Keep biometricsEnabled, biometricsPromptShown, hasSeenOnboarding, lastRoute, and biometrics credentials
   }
 }
