@@ -202,11 +202,13 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
         setState(() {
           _upsertCall(updatedCall);
         });
+        final userName = await StorageService().getUserName();
         await VideoCallScreen.showModal(
           context: context,
           roomId: updatedCall.id,
           title: '${updatedCall.type.capitalize()} Call',
           enableVideo: updatedCall.type == 'video',
+          userName: userName,
           onLeave: () => _leaveCall(updatedCall.id),
         );
       }
