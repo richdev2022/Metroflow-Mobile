@@ -366,7 +366,7 @@ class ApiService {
     return await _dio.get('/wallet');
   }
 
-  Future<Response> fundWallet(double amount, String walletId, {String? redirectUrl}) async {
+  Future<Response> fundWallet(double amount, String walletId, {String? redirectUrl, String? provider}) async {
     final data = <String, dynamic>{
       'amount': amount,
       'wallet_id': walletId,
@@ -374,7 +374,16 @@ class ApiService {
     if (redirectUrl != null) {
       data['redirect_url'] = redirectUrl;
     }
+    if (provider != null && provider.isNotEmpty) {
+      data['provider'] = provider;
+    }
     return await _dio.post('/wallet/fund/card', data: data);
+  }
+
+  /// Fetch available payment providers and the globally active one.
+  /// Response: { success, data: { providers: [...], activeProvider, defaultProvider, configStatus } }
+  Future<Response> getPaymentProviders() async {
+    return await _dio.get('/providers/list', options: Options(extra: {'suppressToast': true}));
   }
 
   Future<Response> verifyWalletFunding(String reference) async {
@@ -422,7 +431,25 @@ class ApiService {
   }
 
   Future<Response> singleTransfer(Map<String, dynamic> data, {bool suppressToast = true}) async {
-    return await _dio.post('/transfers/single', data: data, options: Options(extra: {'suppressToast': suppressToast}));
+    return await _dio.post('/transfers/single', data: _normalizeTransferPayload(data), options: Options(extra: {'suppressToast': suppressToast}));
+  }
+
+  /// Ensures the /transfers/single payload uses the camelCase keys the
+  /// backend Zod schema expects, while keeping snake_case keys working.
+  Map<String, dynamic> _normalizeTransferPayload(Map<String, dynamic> data) {
+    final normalized = Map<String, dynamic>.from(data);
+    const keyMap = {
+      'bank_code': 'bankCode',
+      'account_number': 'accountNumber',
+      'account_name': 'accountName',
+      'wallet_id': 'walletId',
+    };
+    keyMap.forEach((snake, camel) {
+      if (normalized.containsKey(snake)) {
+        normalized[camel] ??= normalized[snake];
+      }
+    });
+    return normalized;
   }
 
   Future<Response> bulkTransfer(Map<String, dynamic> data, {bool suppressToast = true}) async {

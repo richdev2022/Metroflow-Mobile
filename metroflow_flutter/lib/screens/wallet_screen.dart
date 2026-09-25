@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../theme/app_theme.dart';
@@ -228,6 +229,10 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
       return;
     }
 
+    // Transaction PIN is mandatory on the backend (4 digits)
+    final pin = await _promptForTransactionPin();
+    if (pin == null || pin.isEmpty) return; // user cancelled
+
     setState(() => isOtpLoading = true);
     try {
       final api = ApiService();
@@ -238,9 +243,13 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
         'amount': double.tryParse(amount) ?? 0,
         'remark': remark,
         'otp': otpCode,
+        'pin': pin,
         'wallet_id': wallet['id'],
       });
       if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Transfer submitted successfully')),
+        );
         setState(() {
           showTransferModal = false;
           showOtpModal = false;
@@ -252,14 +261,69 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
           otpCode = '';
         });
         await fetchWalletData();
+        // Navigate to transfers history so the user sees the queued transfer
+        if (mounted) context.push('/main/transfers');
       }
     } catch (e) {
       debugPrint('Transfer failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(ApiService.extractErrorMessage(e))),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() => isOtpLoading = false);
       }
     }
+  }
+
+  /// Shows a secure 4-digit PIN dialog. Returns null when cancelled.
+  Future<String?> _promptForTransactionPin() {
+    final pinController = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Transaction PIN'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Enter your 4-digit transaction PIN to authorize this transfer.'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: pinController,
+              autofocus: true,
+              obscureText: true,
+              keyboardType: TextInputType.number,
+              maxLength: 4,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: const InputDecoration(
+                hintText: '••••',
+                counterText: '',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final pin = pinController.text.trim();
+              if (pin.length == 4) {
+                Navigator.of(dialogContext).pop(pin);
+              }
+            },
+            child: const Text('Confirm'),
+          ),
+        ],
+      ),
+    );
   }
 
   void openTransferModal(String walletType) {

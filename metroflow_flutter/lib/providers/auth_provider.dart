@@ -100,7 +100,7 @@ class AuthNotifier extends Notifier<AuthState> {
 
       // Connect socket if authenticated
       if (isTokenValid && userId != null && businessId != null) {
-        _socketService.connect(userId, businessId);
+        _socketService.connect(userId, businessId, token: token);
       }
 
       state = state.copyWith(
@@ -152,7 +152,7 @@ class AuthNotifier extends Notifier<AuthState> {
 
       // Connect socket
       if (userId != null && businessId != null) {
-        _socketService.connect(userId, businessId);
+        _socketService.connect(userId, businessId, token: token);
       }
 
       state = state.copyWith(
@@ -205,7 +205,7 @@ class AuthNotifier extends Notifier<AuthState> {
 
         // Connect socket
         if (userId != null && businessId != null) {
-          _socketService.connect(userId, businessId);
+          _socketService.connect(userId, businessId, token: token);
         }
 
         state = state.copyWith(
@@ -257,7 +257,7 @@ class AuthNotifier extends Notifier<AuthState> {
 
         // Connect socket
         if (userId != null && businessId != null) {
-          _socketService.connect(userId, businessId);
+          _socketService.connect(userId, businessId, token: token);
         }
 
         state = state.copyWith(
@@ -374,7 +374,7 @@ class AuthNotifier extends Notifier<AuthState> {
           ]);
 
           // Connect socket
-          _socketService.connect(userId, businessId);
+          _socketService.connect(userId, businessId, token: token);
 
           state = state.copyWith(
             token: token,
@@ -442,7 +442,7 @@ class AuthNotifier extends Notifier<AuthState> {
 
       // Connect socket if authenticated
       if (isAuthenticated && userId != null && businessId != null) {
-        _socketService.connect(userId, businessId);
+        _socketService.connect(userId, businessId, token: token);
       }
 
       state = state.copyWith(

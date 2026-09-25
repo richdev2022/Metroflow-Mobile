@@ -26,10 +26,21 @@ class _FundWalletScreenState extends ConsumerState<FundWalletScreen> {
   Wallet? _selectedWallet;
   String _method = 'card';
 
+  /// Available checkout providers from GET /providers/list
+  List<Map<String, dynamic>> _providers = [];
+  String? _selectedProvider;
+
+  static const Map<String, String> _providerLabels = {
+    'squad': 'Squad',
+    'monnify': 'Monnify',
+    'flutterwave': 'Flutterwave',
+  };
+
   @override
   void initState() {
     super.initState();
     _fetchWalletInfo();
+    _fetchProviders();
   }
 
   @override
@@ -57,6 +68,38 @@ class _FundWalletScreenState extends ConsumerState<FundWalletScreen> {
     }
   }
 
+  Future<void> _fetchProviders() async {
+    try {
+      final response = await ApiService().getPaymentProviders();
+      final data = response.data;
+      final payload = data is Map && data['data'] is Map ? data['data'] as Map<String, dynamic> : <String, dynamic>{};
+      final List providersRaw = payload['providers'] as List? ?? const [];
+      final configStatus = payload['configStatus'];
+      final providers = <Map<String, dynamic>>[];
+      for (final name in providersRaw) {
+        final n = name.toString();
+        // Only show providers that are configured (if config status is available)
+        var configured = true;
+        if (configStatus is Map && configStatus[n] is Map) {
+          configured = configStatus[n]['configured'] == true;
+        }
+        if (configured) {
+          providers.add({'name': n, 'label': _providerLabels[n] ?? n});
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _providers = providers;
+        final active = payload['activeProvider']?.toString();
+        _selectedProvider = providers.any((p) => p['name'] == active)
+            ? active
+            : (providers.isNotEmpty ? providers.first['name'] as String? : null);
+      });
+    } catch (e) {
+      debugPrint('Failed to fetch payment providers: $e');
+    }
+  }
+
   Future<void> _handleContinue() async {
     final amountText = _amountController.text;
     if (amountText.isEmpty || double.tryParse(amountText) == null || double.parse(amountText) <= 0) {
@@ -75,6 +118,7 @@ class _FundWalletScreenState extends ConsumerState<FundWalletScreen> {
       final response = await api.fundWallet(
         double.parse(amountText),
         _selectedWallet!.id,
+        provider: _selectedProvider,
       );
       if (response.statusCode == 200) {
         final data = response.data;
@@ -208,6 +252,45 @@ class _FundWalletScreenState extends ConsumerState<FundWalletScreen> {
                 isActive: _method == 'bank',
                 onTap: () => setState(() => _method = 'bank'),
               ),
+              if (_method == 'card' && _providers.isNotEmpty) ...[
+                const SizedBox(height: 24),
+                const Text('Payment Provider', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: _providers.map((p) {
+                    final isActive = _selectedProvider == p['name'];
+                    return GestureDetector(
+                      onTap: () => setState(() => _selectedProvider = p['name'] as String),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: isActive ? AppColors.primary.withValues(alpha: 0.1) : AppTheme.colors.surface,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: isActive ? AppColors.primary : AppTheme.colors.border),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              p['label'] as String,
+                              style: TextStyle(
+                                color: isActive ? AppColors.primary : AppTheme.colors.text,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            if (isActive) ...[
+                              const SizedBox(width: 6),
+                              const Icon(Icons.check_circle, size: 16, color: AppColors.primary),
+                            ],
+                          ],
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
               const SizedBox(height: 40),
               const Text('Amount to Fund', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
               const SizedBox(height: 12),
