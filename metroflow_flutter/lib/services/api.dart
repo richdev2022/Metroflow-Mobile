@@ -7,7 +7,7 @@ import '../utils/app_toast.dart';
 import 'package:flutter/material.dart';
 import '../providers/auth_provider.dart';
 
-final String _apiBaseUrl = dotenv.env['EXPO_PUBLIC_API_BASE_URL'] ?? 'https://metroflow-backend.netlify.app/api';
+final String _apiBaseUrl = dotenv.env['EXPO_PUBLIC_API_BASE_URL'] ?? 'https://api.metricorex.com/api';
 
 // Global key to access navigator context
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
