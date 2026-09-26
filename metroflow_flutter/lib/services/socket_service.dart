@@ -49,6 +49,9 @@ class SocketService {
   void Function(dynamic)? onScreenShareStopped;
   void Function(dynamic)? onMeetingChatMessage;
   void Function(dynamic)? onNotificationNew;
+  void Function(dynamic)? onConversationRead;
+  void Function(dynamic)? onChatTyping;
+  void Function(dynamic)? onChatStopTyping;
 
   void connect(String userId, String businessId, {String? token}) {
     if (_socket?.connected == true) return;
@@ -205,6 +208,18 @@ class SocketService {
     _socket?.on('notification:new', (data) {
       if (onNotificationNew != null) onNotificationNew!(data);
     });
+
+    _socket?.on('conversation:read', (data) {
+      if (onConversationRead != null) onConversationRead!(data);
+    });
+
+    _socket?.on('chat:typing', (data) {
+      if (onChatTyping != null) onChatTyping!(data);
+    });
+
+    _socket?.on('chat:stop-typing', (data) {
+      if (onChatStopTyping != null) onChatStopTyping!(data);
+    });
   }
 
   void disconnect() {
@@ -232,6 +247,10 @@ class SocketService {
 
   void emitCallEnd(Map<String, dynamic> data) {
     _socket?.emit('call:end', data);
+  }
+
+  void emitCallLeave(Map<String, dynamic> data) {
+    _socket?.emit('call:leave', data);
   }
 
   void emitMeetingJoin(Map<String, dynamic> data) {
@@ -300,6 +319,15 @@ class SocketService {
 
   void joinConversation(String conversationId) {
     _socket?.emit('join-conversation', conversationId);
+  }
+
+  /// Notify the conversation room that this user is typing (backend relays to peers)
+  void emitChatTyping(Map<String, dynamic> data) {
+    _socket?.emit('chat:typing', data);
+  }
+
+  void emitChatStopTyping(Map<String, dynamic> data) {
+    _socket?.emit('chat:stop-typing', data);
   }
 
   Future<dynamic> _emitAck(String event, [dynamic data]) {

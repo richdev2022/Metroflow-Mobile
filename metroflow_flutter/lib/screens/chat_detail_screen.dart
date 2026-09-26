@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -25,7 +27,12 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   bool _isLoading = true;
   bool _isSending = false;
   String? _currentUserId;
+  String? _peerTypingName;
+  Timer? _typingDebounce;
+  Timer? _typingStopTimer;
   late final void Function(dynamic) _messageCreatedHandler;
+  late final void Function(dynamic) _typingHandler;
+  late final void Function(dynamic) _stopTypingHandler;
 
   @override
   void initState() {
@@ -33,6 +40,12 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     _loadCurrentUser();
     _loadMessages();
     _socket.joinConversation(widget.conversation.id);
+    // Mark as read on open so the unread badge clears everywhere (web included)
+    _api.markConversationAsRead(widget.conversation.id).catchError((e) {
+      Logger.error('markConversationAsRead failed: $e');
+      return null;
+    });
+
     _messageCreatedHandler = (data) {
       final payload = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
       final conversationId = payload['conversationId'] ?? payload['conversation_id'];
@@ -44,6 +57,22 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       _scrollToBottom();
     };
     _socket.onMessageCreated = _messageCreatedHandler;
+
+    _typingHandler = (data) {
+      final payload = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+      if (!mounted || payload['conversationId'] != widget.conversation.id) return;
+      if (payload['userId'] == _currentUserId) return;
+      setState(() => _peerTypingName = (payload['userName'] as String?) ?? 'Someone');
+    };
+    _socket.onChatTyping = _typingHandler;
+
+    _stopTypingHandler = (data) {
+      final payload = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+      if (!mounted || payload['conversationId'] != widget.conversation.id) return;
+      if (payload['userId'] == _currentUserId) return;
+      setState(() => _peerTypingName = null);
+    };
+    _socket.onChatStopTyping = _stopTypingHandler;
   }
 
   void _upsertMessage(Message message) {
@@ -116,9 +145,41 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     }
   }
 
+  void _onTextChanged(String text) {
+    _typingDebounce?.cancel();
+    if (text.trim().isEmpty) {
+      _typingStopTimer?.cancel();
+      _socket.emitChatStopTyping({
+        'conversationId': widget.conversation.id,
+        'userId': _currentUserId,
+      });
+      return;
+    }
+    _typingDebounce = Timer(const Duration(milliseconds: 400), () {
+      _socket.emitChatTyping({
+        'conversationId': widget.conversation.id,
+        'userId': _currentUserId,
+      });
+      // Auto-stop after 3s of no further keystrokes
+      _typingStopTimer?.cancel();
+      _typingStopTimer = Timer(const Duration(seconds: 3), () {
+        _socket.emitChatStopTyping({
+          'conversationId': widget.conversation.id,
+          'userId': _currentUserId,
+        });
+      });
+    });
+  }
+
   Future<void> _sendMessage() async {
     final content = _messageController.text.trim();
     if (content.isEmpty || _isSending) return;
+
+    _typingStopTimer?.cancel();
+    _socket.emitChatStopTyping({
+      'conversationId': widget.conversation.id,
+      'userId': _currentUserId,
+    });
 
     setState(() => _isSending = true);
     try {
@@ -152,6 +213,14 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     if (_socket.onMessageCreated == _messageCreatedHandler) {
       _socket.onMessageCreated = null;
     }
+    if (_socket.onChatTyping == _typingHandler) {
+      _socket.onChatTyping = null;
+    }
+    if (_socket.onChatStopTyping == _stopTypingHandler) {
+      _socket.onChatStopTyping = null;
+    }
+    _typingDebounce?.cancel();
+    _typingStopTimer?.cancel();
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -246,6 +315,32 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                         },
                       ),
           ),
+          // Typing indicator row
+          if (_peerTypingName != null)
+            Padding(
+              padding: const EdgeInsets.only(left: 20, bottom: 2),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '$_peerTypingName is typing…',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Colors.grey[600],
+                            fontStyle: FontStyle.italic,
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           SafeArea(
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -265,6 +360,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                     child: TextField(
                       controller: _messageController,
                       textCapitalization: TextCapitalization.sentences,
+                      onChanged: _onTextChanged,
                       decoration: InputDecoration(
                         hintText: 'Type a message...',
                         filled: true,
