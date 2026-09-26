@@ -51,6 +51,7 @@ class ApiService {
   }
 
   late final Dio _dio;
+  final StorageService _storage = StorageService();
 
   static String? extractResponseMessage(dynamic data) {
     if (data is Map) {
@@ -104,9 +105,11 @@ class ApiService {
 
     _dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) async {
-        final prefs = await SharedPreferences.getInstance();
-        final token = prefs.getString('token');
-        if (token != null) {
+        // Prefer the secure-storage copy (source of truth), fall back to
+        // SharedPreferences for tokens written by older app versions.
+        String? token = await _storage.getToken();
+        token ??= (await SharedPreferences.getInstance()).getString('token');
+        if (token != null && token.isNotEmpty) {
           options.headers['Authorization'] = 'Bearer $token';
         }
         options.headers['Content-Type'] = options.data is FormData
@@ -782,6 +785,12 @@ class ApiService {
 
   Future<Response> sendMessage(String conversationId, Map<String, dynamic> data) async {
     return await _dio.post('/chat/conversations/$conversationId/messages', data: data);
+  }
+
+  /// Mark a conversation as read (clears unread badge for the current user).
+  /// Backend: PUT /chat/conversations/:conversationId/read
+  Future<Response> markConversationAsRead(String conversationId) async {
+    return await _dio.put('/chat/conversations/$conversationId/read');
   }
 
   // Calls API

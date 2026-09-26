@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -191,9 +192,9 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
     _calls.sort((a, b) => b.createdAt.compareTo(a.createdAt));
   }
 
-  Future<void> _openCallModal(Call call) async {
+  Future<void> _openCallModal(Call call, {String? password}) async {
     try {
-      final response = await _api.joinCall(call.id);
+      final response = await _api.joinCall(call.id, password: password);
       if (response.data['success'] == true && mounted) {
         final responseData = response.data['data'];
         final updatedCall = responseData is Map
@@ -213,6 +214,19 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
         );
       }
     } catch (e) {
+      // Password-protected call → prompt and retry with the entered password
+      final isPasswordError = e is DioException &&
+          e.response?.statusCode == 403 &&
+          e.response?.data is Map &&
+          (e.response!.data['errorCode'] == 'invalid_password' ||
+              (e.response!.data['error']?.toString().toLowerCase() ?? '').contains('password'));
+      if (isPasswordError && mounted) {
+        final entered = await _promptForCallPassword(call);
+        if (entered != null && entered.isNotEmpty) {
+          await _openCallModal(call, password: entered);
+        }
+        return;
+      }
       Logger.error('Error joining call: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -220,6 +234,47 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
         );
       }
     }
+  }
+
+  /// Shows a password dialog for protected calls. Returns null when cancelled.
+  Future<String?> _promptForCallPassword(Call call) async {
+    final controller = TextEditingController();
+    final entered = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Call password'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('This call is protected. Enter the password to join.'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              obscureText: true,
+              decoration: const InputDecoration(
+                hintText: 'Password',
+                border: OutlineInputBorder(),
+              ),
+              onSubmitted: (value) => Navigator.of(dialogContext).pop(value),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(null),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(controller.text.trim()),
+            child: const Text('Join'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    return entered;
   }
 
   Future<void> _leaveCall(String callId) async {

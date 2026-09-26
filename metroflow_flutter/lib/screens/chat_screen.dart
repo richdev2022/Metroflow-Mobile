@@ -237,11 +237,13 @@ class _CreateConversationDialogState extends State<_CreateConversationDialog> {
         if (mounted) {
           final navigator = Navigator.of(context, rootNavigator: true);
           navigator.pop();
-          navigator.push(
-            MaterialPageRoute(
-              builder: (context) => ChatDetailScreen(conversation: conversation),
-            ),
-          );
+          navigator
+              .push(
+                MaterialPageRoute(
+                  builder: (context) => ChatDetailScreen(conversation: conversation),
+                ),
+              )
+              .then((_) => _loadConversations());
         }
       }
     } catch (e) {

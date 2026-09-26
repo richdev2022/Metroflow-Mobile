@@ -381,6 +381,16 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
     if (widget.isMeeting) {
       _socket.emitMeetingLeave({'meetingId': widget.roomId});
+    } else {
+      // Calls: announce our own leave, then end the call for everyone still
+      // waiting (backend relays `call:ended` so an unanswered incoming-call
+      // dialog stops ringing instead of ringing forever).
+      _socket.emitCallLeave({
+        'roomId': widget.roomId,
+        'userId': widget.userName, // resolved server-side from socket auth
+        'userName': widget.userName ?? 'User',
+      });
+      _socket.emitCallEnd({'callId': widget.roomId});
     }
     await Future<void>.sync(() => widget.onLeave?.call());
 
