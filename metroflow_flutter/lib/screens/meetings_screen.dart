@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../services/api.dart';
@@ -7,7 +8,10 @@ import '../services/socket_service.dart';
 import '../models/meeting.dart';
 import '../models/user.dart';
 import '../utils/logger.dart';
+import '../utils/app_toast.dart';
+import '../theme/app_theme.dart';
 import '../utils/timezone_data.dart';
+import '../widgets/modern_ui.dart';
 import 'video_call_screen.dart';
 
 class MeetingsScreen extends ConsumerStatefulWidget {
@@ -23,6 +27,7 @@ class _MeetingsScreenState extends ConsumerState<MeetingsScreen> {
   List<Meeting> _meetings = [];
   List<User> _teamMembers = [];
   bool _isLoading = true;
+  String _filterStatus = 'upcoming';
   late final void Function(dynamic) _meetingCreatedHandler;
   late final void Function(dynamic) _meetingUpdatedHandler;
   late final void Function(dynamic) _meetingDeletedHandler;
@@ -50,7 +55,7 @@ class _MeetingsScreenState extends ConsumerState<MeetingsScreen> {
       if (!mounted) return;
       final id = meetingId is Map ? meetingId['id'] : meetingId;
       setState(() {
-        _meetings.removeWhere((m) => m.id == id);
+        _meetings.removeWhere((item) => item.id == id);
       });
     };
     _socket.onMeetingCreated = _meetingCreatedHandler;
@@ -211,111 +216,462 @@ class _MeetingsScreenState extends ConsumerState<MeetingsScreen> {
     }
   }
 
+  void _copyMeetingLink(Meeting meeting) {
+    final link = meeting.meetingUrl.isNotEmpty
+        ? meeting.meetingUrl
+        : (meeting.meetingCode.isNotEmpty ? meeting.meetingCode : meeting.id);
+    Clipboard.setData(ClipboardData(text: link));
+    AppToast.show('Meeting link copied to clipboard');
+  }
+
+  List<Meeting> get _filteredMeetings {
+    final now = DateTime.now();
+    return _meetings.where((meeting) {
+      switch (_filterStatus) {
+        case 'cancelled':
+          return meeting.status == 'cancelled';
+        case 'completed':
+          return meeting.status == 'completed' ||
+              (meeting.status != 'cancelled' && meeting.endTime.isBefore(now));
+        default:
+          return meeting.status != 'cancelled' &&
+              meeting.status != 'completed' &&
+              !meeting.endTime.isBefore(now);
+      }
+    }).toList();
+  }
+
+  int _countFor(String status) {
+    final now = DateTime.now();
+    return _meetings.where((meeting) {
+      switch (status) {
+        case 'cancelled':
+          return meeting.status == 'cancelled';
+        case 'completed':
+          return meeting.status == 'completed' ||
+              (meeting.status != 'cancelled' && meeting.endTime.isBefore(now));
+        default:
+          return meeting.status != 'cancelled' &&
+              meeting.status != 'completed' &&
+              !meeting.endTime.isBefore(now);
+      }
+    }).length;
+  }
+
+  bool _isMeetingLive(Meeting meeting) {
+    final now = DateTime.now();
+    return meeting.status != 'cancelled' &&
+        meeting.status != 'completed' &&
+        !meeting.startTime.isAfter(now) &&
+        meeting.endTime.isAfter(now);
+  }
+
+  Color _statusColorFor(ThemeColors colors, Meeting meeting) {
+    if (meeting.status == 'cancelled') return colors.error;
+    if (meeting.status == 'completed' || meeting.endTime.isBefore(DateTime.now())) {
+      return colors.textSecondary;
+    }
+    if (_isMeetingLive(meeting)) return colors.success;
+    return colors.primary;
+  }
+
+  String _statusLabelFor(Meeting meeting) {
+    if (meeting.status == 'cancelled') return 'Cancelled';
+    if (meeting.status == 'completed' || meeting.endTime.isBefore(DateTime.now())) {
+      return 'Completed';
+    }
+    if (_isMeetingLive(meeting)) return 'Live';
+    return 'Scheduled';
+  }
+
   @override
   Widget build(BuildContext context) {
+    final colors = AppTheme.colors;
+
+    if (_isLoading) {
+      return SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(24),
+          children: const [
+            SkeletonCard(height: 110),
+            SkeletonCard(height: 110),
+            SkeletonCard(height: 110),
+            SkeletonCard(height: 110),
+          ],
+        ),
+      );
+    }
+
+    final filtered = _filteredMeetings;
+
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Meetings'),
+      backgroundColor: colors.background,
+      body: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 4),
+              child: Text(
+                'Meetings',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w800,
+                  color: colors.text,
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: _buildSegmentedTabs(colors),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: RefreshIndicator(
+                onRefresh: _loadMeetings,
+                color: colors.primary,
+                child: filtered.isEmpty
+                    ? ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        children: [
+                          const SizedBox(height: 40),
+                          _emptyStateForTab(colors),
+                        ],
+                      )
+                    : ListView.separated(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.fromLTRB(24, 12, 24, 96),
+                        itemCount: filtered.length,
+                        separatorBuilder: (context, index) => const SizedBox(height: 12),
+                        itemBuilder: (context, index) {
+                          final meeting = filtered[index];
+                          return _MeetingCard(
+                            meeting: meeting,
+                            colors: colors,
+                            isLive: _isMeetingLive(meeting),
+                            statusColor: _statusColorFor(colors, meeting),
+                            statusLabel: _statusLabelFor(meeting),
+                            onJoin: () => _joinMeeting(meeting),
+                            onCopy: () => _copyMeetingLink(meeting),
+                            onEdit: () => _showCreateMeetingDialog(meeting),
+                            onDelete: () => _deleteMeeting(meeting),
+                          );
+                        },
+                      ),
+              ),
+            ),
+          ],
+        ),
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _meetings.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.event_outlined, size: 80, color: Colors.grey[400]),
-                      const SizedBox(height: 16),
-                      Text('No meetings scheduled', style: TextStyle(color: Colors.grey[600])),
-                      const SizedBox(height: 8),
-                      Text('Create your first meeting!', style: TextStyle(color: Colors.grey[500])),
-                    ],
+      floatingActionButton: ModernFab(
+        icon: Icons.video_call_rounded,
+        label: 'New Meeting',
+        onPressed: () => _showCreateMeetingDialog(),
+      ),
+    );
+  }
+
+  Widget _buildSegmentedTabs(ThemeColors colors) {
+    final tabs = <_MeetingTab>[
+      const _MeetingTab(value: 'upcoming', label: 'Upcoming', icon: Icons.schedule_rounded),
+      const _MeetingTab(value: 'completed', label: 'Completed', icon: Icons.check_circle_outline_rounded),
+      const _MeetingTab(value: 'cancelled', label: 'Cancelled', icon: Icons.cancel_outlined),
+    ];
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: colors.surfaceVariant,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: tabs.map((tab) {
+          final selected = _filterStatus == tab.value;
+          final count = _countFor(tab.value);
+          return Expanded(
+            child: GestureDetector(
+              onTap: () => setState(() => _filterStatus = tab.value),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                decoration: BoxDecoration(
+                  color: selected ? colors.surface : Colors.transparent,
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: selected
+                      ? [
+                          BoxShadow(
+                            color: colors.text.withValues(alpha: 0.06),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ]
+                      : null,
+                ),
+                child: Column(
+                  children: [
+                    Text(
+                      tab.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: selected ? colors.text : colors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '$count',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: selected ? colors.primary : colors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _emptyStateForTab(ThemeColors colors) {
+    switch (_filterStatus) {
+      case 'completed':
+        return const EmptyState(
+          icon: Icons.check_circle_outline_rounded,
+          title: 'No completed meetings',
+          subtitle: 'Meetings that wrap up will show up here with their notes.',
+          tint: AppColors.success,
+        );
+      case 'cancelled':
+        return const EmptyState(
+          icon: Icons.event_busy_outlined,
+          title: 'No cancelled meetings',
+          subtitle: 'Nothing was cancelled — your calendar is clean.',
+          tint: AppColors.error,
+        );
+      default:
+        return EmptyState(
+          icon: Icons.event_outlined,
+          title: 'No upcoming meetings',
+          subtitle: 'Create your first meeting and invite your team to join.',
+          actionLabel: 'New Meeting',
+          onAction: () => _showCreateMeetingDialog(),
+        );
+    }
+  }
+}
+
+class _MeetingTab {
+  final String value;
+  final String label;
+  final IconData icon;
+
+  const _MeetingTab({
+    required this.value,
+    required this.label,
+    required this.icon,
+  });
+}
+
+class _MeetingCard extends StatelessWidget {
+  final Meeting meeting;
+  final ThemeColors colors;
+  final bool isLive;
+  final Color statusColor;
+  final String statusLabel;
+  final VoidCallback onJoin;
+  final VoidCallback onCopy;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  const _MeetingCard({
+    required this.meeting,
+    required this.colors,
+    required this.isLive,
+    required this.statusColor,
+    required this.statusLabel,
+    required this.onJoin,
+    required this.onCopy,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final attendeeCount = meeting.attendees.length;
+    final canJoin = meeting.status != 'cancelled' && meeting.status != 'completed';
+
+    return ModernCard(
+      padding: EdgeInsets.zero,
+      margin: EdgeInsets.zero,
+      onTap: onEdit,
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Left time block
+            Container(
+            width: 78,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            decoration: BoxDecoration(
+              color: statusColor.withValues(alpha: 0.10),
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(20),
+                bottomLeft: Radius.circular(20),
+              ),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  DateFormat.Hm().format(meeting.startTime),
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                    color: statusColor,
+                    height: 1.1,
                   ),
-                )
-              : ListView.separated(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: _meetings.length,
-                  separatorBuilder: (context, index) => const SizedBox(height: 12),
-                  itemBuilder: (context, index) {
-                    final meeting = _meetings[index];
-                    return Card(
-                      elevation: 2,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      child: InkWell(
-                        onTap: () => _showCreateMeetingDialog(meeting),
-                        borderRadius: BorderRadius.circular(12),
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      meeting.title,
-                                      style: const TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                  PopupMenuButton(
-                                    onSelected: (value) {
-                                      if (value == 'edit') {
-                                        _showCreateMeetingDialog(meeting);
-                                      } else if (value == 'delete') {
-                                        _deleteMeeting(meeting);
-                                      }
-                                    },
-                                    itemBuilder: (context) => [
-                                      const PopupMenuItem(value: 'edit', child: Text('Edit')),
-                                      const PopupMenuItem(value: 'delete', child: Text('Delete')),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                              if (meeting.description.isNotEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 8),
-                                  child: Text(meeting.description),
-                                ),
-                              const SizedBox(height: 12),
-                              Row(
-                                children: [
-                                  Icon(Icons.access_time, size: 18, color: Theme.of(context).primaryColor),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    '${DateFormat.yMMMd().format(meeting.startTime)} - ${DateFormat.Hm().format(meeting.startTime)} to ${DateFormat.Hm().format(meeting.endTime)}',
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              if (meeting.attendees.isNotEmpty)
-                                Text(
-                                  '${meeting.attendees.length} attendee${meeting.attendees.length > 1 ? 's' : ''}',
-                                  style: TextStyle(color: Colors.grey[600]),
-                                ),
-                              const SizedBox(height: 12),
-                              SizedBox(
-                                width: double.infinity,
-                                child: ElevatedButton.icon(
-                                  icon: const Icon(Icons.video_call),
-                                  label: const Text('Join Meeting'),
-                                  onPressed: () => _joinMeeting(meeting),
-                                ),
-                              ),
-                            ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  DateFormat('d MMM').format(meeting.startTime),
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                    color: colors.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ModernBadge(
+                  label: statusLabel,
+                  color: statusColor,
+                  icon: isLive ? Icons.fiber_manual_record : null,
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          meeting.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 15.5,
+                            fontWeight: FontWeight.w700,
+                            color: colors.text,
                           ),
                         ),
                       ),
-                    );
-                  },
-                ),
-      floatingActionButton: FloatingActionButton.extended(
-        icon: const Icon(Icons.add),
-        label: const Text('New Meeting'),
-        onPressed: () => _showCreateMeetingDialog(),
+                      PopupMenuButton<String>(
+                        onSelected: (value) {
+                          if (value == 'copy') {
+                            onCopy();
+                          } else if (value == 'edit') {
+                            onEdit();
+                          } else if (value == 'delete') {
+                            onDelete();
+                          }
+                        },
+                        icon: Icon(Icons.more_vert_rounded,
+                            size: 20, color: colors.textSecondary),
+                        itemBuilder: (context) => [
+                          const PopupMenuItem(
+                              value: 'copy', child: Text('Copy link')),
+                          const PopupMenuItem(value: 'edit', child: Text('Edit')),
+                          const PopupMenuItem(
+                              value: 'delete', child: Text('Delete')),
+                        ],
+                      ),
+                    ],
+                  ),
+                  if (meeting.description.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        meeting.description,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          color: colors.textSecondary,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: [
+                      ModernBadge(
+                        label: meeting.timezone,
+                        color: colors.primary,
+                        icon: Icons.public_outlined,
+                      ),
+                      if (attendeeCount > 0)
+                        ModernBadge(
+                          label:
+                              '$attendeeCount attendee${attendeeCount > 1 ? 's' : ''}',
+                          color: const Color(0xFF7C3AED),
+                          icon: Icons.people_outline,
+                        ),
+                      if (meeting.password != null && meeting.password!.isNotEmpty)
+                        ModernBadge(
+                          label: 'Password',
+                          color: colors.warning,
+                          icon: Icons.lock_outline,
+                        ),
+                    ],
+                  ),
+                  if (canJoin) ...[
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      height: 40,
+                      child: ElevatedButton.icon(
+                        onPressed: onJoin,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: isLive ? colors.success : colors.primary,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        icon: Icon(
+                          isLive ? Icons.videocam_rounded : Icons.video_call_outlined,
+                          size: 18,
+                        ),
+                        label: Text(
+                          isLive ? 'Join Live' : 'Join Meeting',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+        ),
       ),
     );
   }
@@ -405,9 +761,9 @@ class _MeetingDialogState extends State<_MeetingDialog> {
 
   List<Map<String, String>> get _filteredTimezones {
     if (_searchTimezone.isEmpty) return timezoneData;
-    return timezoneData.where((tz) => 
-      tz['label']!.toLowerCase().contains(_searchTimezone.toLowerCase()) ||
-      tz['name']!.toLowerCase().contains(_searchTimezone.toLowerCase())
+    return timezoneData.where((tz) =>
+        tz['label']!.toLowerCase().contains(_searchTimezone.toLowerCase()) ||
+        tz['name']!.toLowerCase().contains(_searchTimezone.toLowerCase())
     ).toList();
   }
 
@@ -611,7 +967,7 @@ class _MeetingDialogState extends State<_MeetingDialog> {
                         margin: const EdgeInsets.only(top: 8),
                         constraints: const BoxConstraints(maxHeight: 200),
                         decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey[300]!),
+                          border: Border.all(color: AppTheme.colors.border),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Column(
@@ -643,7 +999,9 @@ class _MeetingDialogState extends State<_MeetingDialog> {
                                   final isSelected = tz['name'] == _selectedTimezone;
                                   return ListTile(
                                     title: Text(tz['label']!),
-                                    trailing: isSelected ? const Icon(Icons.check, color: Colors.green) : null,
+                                    trailing: isSelected
+                                        ? const Icon(Icons.check, color: AppColors.success)
+                                        : null,
                                     onTap: () {
                                       setState(() {
                                         _selectedTimezone = tz['name']!;

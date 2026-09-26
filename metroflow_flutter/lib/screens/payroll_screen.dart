@@ -6,6 +6,7 @@ import '../models/employee.dart';
 import '../models/bank.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_toast.dart';
+import '../widgets/modern_ui.dart';
 
 class PayrollScreen extends StatefulWidget {
   const PayrollScreen({super.key});
@@ -550,8 +551,16 @@ class _PayrollScreenState extends State<PayrollScreen> {
     if (_isLoading) {
       return Scaffold(
         body: SafeArea(
-          child: Center(
-            child: CircularProgressIndicator(color: AppTheme.colors.primary),
+          child: ListView(
+            physics: const NeverScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(24),
+            children: const [
+              ShimmerBox(width: double.infinity, height: 170, radius: 24),
+              SizedBox(height: 24),
+              SkeletonCard(height: 96),
+              SkeletonCard(height: 96),
+              SkeletonCard(height: 96),
+            ],
           ),
         ),
       );
@@ -920,7 +929,16 @@ class _PayrollScreenState extends State<PayrollScreen> {
                         ),
                         const SizedBox(height: 12),
                         if (_adjustments.isEmpty)
-                          const Center(child: Text('No adjustments yet', style: TextStyle(color: Colors.grey)))
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            child: Text(
+                              'No adjustments yet',
+                              style: TextStyle(
+                                color: AppTheme.colors.textSecondary,
+                                fontSize: 13,
+                              ),
+                            ),
+                          )
                         else
                           ..._adjustments.map((adj) {
                             final isBonus = adj['type'] == 'bonus';
@@ -946,7 +964,10 @@ class _PayrollScreenState extends State<PayrollScreen> {
                                         const SizedBox(height: 4),
                                         Text(
                                           adj['reason'] ?? '',
-                                          style: const TextStyle(fontSize: 14, color: Colors.grey),
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            color: AppTheme.colors.textSecondary,
+                                          ),
                                         ),
                                       ],
                                     ),
@@ -958,7 +979,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
                                         style: TextStyle(
                                           fontSize: 16,
                                           fontWeight: FontWeight.bold,
-                                          color: isBonus ? Colors.green : AppColors.error,
+                                          color: isBonus ? AppColors.success : AppColors.error,
                                         ),
                                       ),
                                       IconButton(
@@ -987,7 +1008,13 @@ class _PayrollScreenState extends State<PayrollScreen> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: const TextStyle(fontSize: 14, color: Colors.grey)),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 14,
+            color: AppTheme.colors.textSecondary,
+          ),
+        ),
         Text(
           value,
           style: TextStyle(
@@ -1433,117 +1460,317 @@ class _PayrollScreenState extends State<PayrollScreen> {
 
 
   Widget _buildHeader() {
-    return Row(
-      children: [
-        const Expanded(
-          child: SizedBox.shrink(),
-        ),
-        IconButton(
-          icon: const Icon(Icons.settings_outlined, color: AppColors.primary),
-          onPressed: () => setState(() => _showConfigModal = true),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSummaryCard() {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: AppColors.primary,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    final colors = AppTheme.colors;
+    final intervalLabel = _salaryInterval[0].toUpperCase() + _salaryInterval.substring(1);
+    return ModernCard(
+      margin: EdgeInsets.zero,
+      padding: const EdgeInsets.all(16),
+      child: Row(
         children: [
-          const Text('Payroll Summary', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('${_employees.length}', style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
-                  const Text('Employees', style: TextStyle(color: Color(0xFF93c5fd), fontSize: 12)),
-                ],
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(_formatAmount(_totalNetPay),
-                      style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
-                  const Text('Total Net Pay', style: TextStyle(color: Color(0xFF93c5fd), fontSize: 12)),
-                ],
-              ),
-            ],
+          TintedCircleIcon(
+            icon: Icons.settings_outlined,
+            tint: colors.primary,
+            size: 46,
+            iconSize: 22,
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Payroll Configuration',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: colors.text,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    ModernBadge(
+                      label: intervalLabel,
+                      color: colors.primary,
+                      icon: Icons.schedule_rounded,
+                    ),
+                    if (_salaryInterval == 'custom' && _salaryCustomDate.isNotEmpty) ...[
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          _salaryCustomDate,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: colors.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+          TextButton.icon(
+            onPressed: () => setState(() => _showConfigModal = true),
+            icon: const Icon(Icons.edit_outlined, size: 16),
+            label: const Text('Edit'),
+            style: TextButton.styleFrom(
+              foregroundColor: colors.primary,
+            ),
           ),
         ],
       ),
     );
   }
 
+  Widget _buildSummaryCard() {
+    final colors = AppTheme.colors;
+    return Container(
+      margin: EdgeInsets.zero,
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        gradient: BrandGradient.deep,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: colors.primary.withValues(alpha: 0.35),
+            blurRadius: 24,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Stack(
+          children: [
+            Positioned(
+              right: -32,
+              top: -32,
+              child: Container(
+                width: 120,
+                height: 120,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.10),
+                ),
+              ),
+            ),
+            Positioned(
+              left: -24,
+              bottom: -40,
+              child: Container(
+                width: 100,
+                height: 100,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.08),
+                ),
+              ),
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.16),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.payments_outlined,
+                              size: 14, color: Colors.amber.shade200),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Total payroll this period',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white.withValues(alpha: 0.95),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  _formatAmount(_totalNetPay),
+                  style: const TextStyle(
+                    fontSize: 36,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                    height: 1.05,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.groups_outlined,
+                              size: 16, color: Colors.white),
+                          const SizedBox(width: 6),
+                          Text(
+                            '${_employees.length} employee${_employees.length == 1 ? '' : 's'}',
+                            style: const TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildEmployeesSection() {
+    final colors = AppTheme.colors;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
-            children: [
-              const Expanded(
-                child: Text('Employees', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Employees',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  color: colors.text,
+                ),
               ),
-              TextButton.icon(
-                onPressed: _clearPayrollFilters,
-                icon: const Icon(Icons.refresh_outlined, size: 18),
-                label: const Text('Clear'),
+            ),
+            TextButton.icon(
+              onPressed: _clearPayrollFilters,
+              icon: const Icon(Icons.refresh_outlined, size: 18),
+              label: const Text('Clear'),
+              style: TextButton.styleFrom(
+                foregroundColor: colors.primary,
               ),
-            ],
-          ),
+            ),
+          ],
         ),
         const SizedBox(height: 12),
         _buildPayrollFilters(),
         const SizedBox(height: 12),
         if (_employees.isEmpty)
           const Padding(
-            padding: EdgeInsets.all(16.0),
-            child: Text('No employees found', style: TextStyle(fontSize: 14, color: Colors.grey)),
+            padding: EdgeInsets.only(top: 8),
+            child: EmptyState(
+              icon: Icons.badge_outlined,
+              title: 'No employees found',
+              subtitle: 'Try adjusting your filters or add team members to payroll.',
+            ),
           )
         else
           ..._employees.map((emp) {
+            final adjustmentCount = (emp.adjustments?.bonuses ?? 0) +
+                (emp.adjustments?.deductions ?? 0);
             return InkWell(
+              borderRadius: BorderRadius.circular(16),
               onTap: () => _openEmployeeDetail(emp),
               child: Container(
-                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                padding: const EdgeInsets.all(16),
+                margin: const EdgeInsets.symmetric(vertical: 6),
+                padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
                   color: AppTheme.colors.surface,
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: AppTheme.colors.border),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppTheme.colors.text.withValues(alpha: 0.04),
+                      blurRadius: 10,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
                 ),
                 child: Row(
                   children: [
+                    AvatarInitials(name: emp.name, radius: 22),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(emp.name, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                          Text(
+                            emp.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.w700),
+                          ),
                           const SizedBox(height: 4),
-                          Text(emp.role, style: const TextStyle(fontSize: 14, color: Colors.grey)),
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  emp.role,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: AppTheme.colors.textSecondary,
+                                  ),
+                                ),
+                              ),
+                              if (adjustmentCount > 0) ...[
+                                const SizedBox(width: 8),
+                                ModernBadge(
+                                  label: '$adjustmentCount adjustment${adjustmentCount > 1 ? 's' : ''}',
+                                  color: AppColors.warning,
+                                  icon: Icons.tune,
+                                ),
+                              ],
+                            ],
+                          ),
                         ],
                       ),
                     ),
+                    const SizedBox(width: 8),
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
                         Text(
                           _formatAmount(emp.netSalary),
-                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.primary),
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.primary,
+                          ),
                         ),
-                        const Text('Net Pay', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                        const Text(
+                          'Net Pay',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.primary,
+                          ),
+                        ),
                       ],
+                    ),
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      color: AppTheme.colors.textSecondary,
                     ),
                   ],
                 ),
@@ -1557,7 +1784,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
   Widget _buildPayrollFilters() {
     final colors = AppTheme.colors;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: EdgeInsets.zero,
       child: Column(
         children: [
           TextField(
