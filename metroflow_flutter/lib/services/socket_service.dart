@@ -18,7 +18,7 @@ class SocketService {
   String? get authToken => _authToken;
 
   String get _socketBaseUrl {
-    final configured = dotenv.env['EXPO_PUBLIC_API_BASE_URL'] ?? 'https://metroflow-backend.netlify.app';
+    final configured = dotenv.env['EXPO_PUBLIC_API_BASE_URL'] ?? 'https://api.metricorex.com';
     return configured.replaceFirst(RegExp(r'/api/?$'), '');
   }
 
