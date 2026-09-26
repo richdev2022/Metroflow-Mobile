@@ -38,6 +38,7 @@ class VideoCallScreen extends StatefulWidget {
       context: context,
       barrierDismissible: false,
       builder: (context) => Dialog.fullscreen(
+        backgroundColor: const Color(0xFF05070D),
         child: VideoCallScreen(
           roomId: roomId,
           title: title,
@@ -397,6 +398,27 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     if (mounted) Navigator.of(context).pop();
   }
 
+  // -------------------------------------------------------------------------
+  // UI
+  // -------------------------------------------------------------------------
+
+  Color _connectionColor() {
+    final label = _connectionLabel.toLowerCase();
+    if (label.contains('fail') ||
+        label.contains('unable') ||
+        label.contains('error') ||
+        label.contains('closed')) {
+      return const Color(0xFFEF4444);
+    }
+    if (label.contains('connected')) {
+      return const Color(0xFF22C55E);
+    }
+    if (label.contains('connect') || label.contains('new')) {
+      return const Color(0xFFF59E0B);
+    }
+    return const Color(0xFF94A3B8);
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -405,50 +427,24 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         if (!didPop) _leave();
       },
       child: Scaffold(
-        backgroundColor: Colors.black,
-        appBar: AppBar(
-          backgroundColor: Colors.black,
-          foregroundColor: Colors.white,
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(widget.title),
-              Text(
-                _connectionLabel,
-                style: const TextStyle(fontSize: 12, color: Colors.white70),
-              ),
-            ],
-          ),
-          leading: IconButton(
-            icon: const Icon(Icons.close),
-            onPressed: _leave,
-          ),
-          actions: [
-            if (widget.isMeeting)
-              IconButton(
-                tooltip: 'Chat',
-                icon: const Icon(Icons.chat_bubble_outline),
-                onPressed: () => setState(() => _showChat = !_showChat),
-              ),
-            IconButton(
-              tooltip: _isRecording ? 'Stop recording' : 'Start recording',
-              icon: Icon(_isRecording ? Icons.fiber_manual_record : Icons.radio_button_unchecked),
-              color: _isRecording ? Colors.redAccent : Colors.white,
-              onPressed: _toggleRecording,
-            ),
-          ],
-        ),
+        backgroundColor: const Color(0xFF05070D),
         body: Stack(
           children: [
-            Positioned.fill(child: _buildVideoGrid()),
+            Positioned.fill(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 86, bottom: 112),
+                child: _buildVideoGrid(),
+              ),
+            ),
+            _buildTopBar(),
             Positioned(
-              top: 16,
               right: 16,
+              top: 96,
               child: _buildLocalPreview(),
             ),
             if (_showChat) _buildChatPanel(),
             Positioned(
-              bottom: 32,
+              bottom: 28,
               left: 0,
               right: 0,
               child: _buildControls(),
@@ -459,9 +455,112 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     );
   }
 
+  Widget _buildTopBar() {
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      child: Container(
+        padding: EdgeInsets.fromLTRB(12, MediaQuery.of(context).padding.top + 10, 12, 12),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xCC05070D), Color(0x0005070D)],
+          ),
+        ),
+        child: Row(
+          children: [
+            _roundIconButton(
+              icon: Icons.close_rounded,
+              onTap: _leave,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 7,
+                          height: 7,
+                          decoration: BoxDecoration(
+                            color: _connectionColor(),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            _connectionLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white.withValues(alpha: 0.85),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            if (widget.isMeeting)
+              _roundIconButton(
+                icon: _showChat ? Icons.chat_bubble_rounded : Icons.chat_bubble_outline_rounded,
+                active: _showChat,
+                onTap: () => setState(() => _showChat = !_showChat),
+              ),
+            if (widget.isMeeting) const SizedBox(width: 8),
+            _roundIconButton(
+              icon: _isRecording ? Icons.fiber_manual_record : Icons.radio_button_unchecked,
+              iconColor: _isRecording ? const Color(0xFFEF4444) : Colors.white,
+              onTap: _toggleRecording,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildVideoGrid() {
     if (_isConnecting) {
-      return const Center(child: CircularProgressIndicator(color: Colors.white));
+      return const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(color: Colors.white),
+            SizedBox(height: 16),
+            Text(
+              'Connecting to the room…',
+              style: TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+          ],
+        ),
+      );
     }
 
     final participants = _buildParticipantTiles();
@@ -478,8 +577,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       padding: const EdgeInsets.all(12),
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: participants.length <= 2 ? 1 : 2,
-        mainAxisSpacing: 8,
-        crossAxisSpacing: 8,
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
       ),
       itemCount: participants.length,
       itemBuilder: (context, index) {
@@ -551,12 +650,19 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     return AnimatedContainer(
       duration: const Duration(milliseconds: 220),
       decoration: BoxDecoration(
-        color: const Color(0xFF202124),
-        borderRadius: BorderRadius.circular(8),
+        color: const Color(0xFF0F172A),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: isSpeaking ? const Color(0xFF34A853) : Colors.white12,
-          width: isSpeaking ? 3 : 1,
+          color: isSpeaking ? const Color(0xFF22C55E) : Colors.white12,
+          width: isSpeaking ? 2 : 1,
         ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.4),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
       clipBehavior: Clip.antiAlias,
       child: Stack(
@@ -574,23 +680,45 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
             Positioned(
               left: 12,
               top: 12,
-              child: _statusChip(Icons.screen_share, participant.isLocal ? 'You are presenting' : 'Presenting'),
+              child: _statusChip(
+                Icons.screen_share,
+                participant.isLocal ? 'You are presenting' : 'Presenting',
+              ),
             ),
           Positioned(
-            left: 12,
-            right: 12,
-            bottom: 12,
+            left: 10,
+            right: 10,
+            bottom: 10,
             child: Row(
               children: [
                 Expanded(
-                  child: Text(
-                    participant.displayName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                      shadows: [Shadow(color: Colors.black87, blurRadius: 8)],
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.55),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            participant.displayName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        if (participant.isScreenShare) ...[
+                          const SizedBox(width: 6),
+                          const Icon(Icons.screen_share,
+                              size: 13, color: Colors.white70),
+                        ],
+                      ],
                     ),
                   ),
                 ),
@@ -609,15 +737,17 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
   Widget _buildMicIndicator({required bool muted, required bool active}) {
     return Container(
-      padding: const EdgeInsets.all(4),
+      padding: const EdgeInsets.all(5),
       decoration: BoxDecoration(
-        color: muted ? Colors.red : (active ? const Color(0xFF34A853) : Colors.white12),
-        borderRadius: BorderRadius.circular(12),
+        color: muted
+            ? const Color(0xFFEF4444)
+            : (active ? const Color(0xFF22C55E) : Colors.black.withValues(alpha: 0.55)),
+        shape: BoxShape.circle,
       ),
       child: Icon(
         muted ? Icons.mic_off : Icons.mic,
         color: Colors.white,
-        size: 16,
+        size: 15,
       ),
     );
   }
@@ -626,21 +756,31 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
-          colors: [Color(0xFF1F2937), Color(0xFF0F766E)],
+          colors: [Color(0xFF1E293B), Color(0xFF0F172A)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
       ),
       child: Center(
-        child: CircleAvatar(
-          radius: large ? 52 : 28,
-          backgroundColor: Colors.white.withValues(alpha: 0.16),
-          child: Text(
-            _initials(name),
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w800,
-              fontSize: large ? 34 : 18,
+        child: Container(
+          width: large ? 104 : 56,
+          height: large ? 104 : 56,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF2563EB), Color(0xFF3B82F6)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            shape: BoxShape.circle,
+          ),
+          child: Center(
+            child: Text(
+              _initials(name),
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                fontSize: large ? 34 : 18,
+              ),
             ),
           ),
         ),
@@ -679,91 +819,170 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   }
 
   Widget _buildLocalPreview() {
-    return SizedBox(
-      width: 120,
-      height: 160,
+    return Container(
+      width: 110,
+      height: 150,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white24),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.45),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          color: Colors.grey[900],
-          child: _isScreenSharing && _screenRenderer.srcObject != null
-              ? RTCVideoView(
-                  _screenRenderer,
-                  mirror: false,
-                  objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
-                )
-              : (_localRenderer.srcObject != null && _isVideoEnabled && widget.enableVideo)
-                  ? RTCVideoView(
-                      _localRenderer,
-                      mirror: true,
-                      objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
-                    )
-                  : _buildAvatarFallback('You'),
+        borderRadius: BorderRadius.circular(14),
+        child: _isScreenSharing && _screenRenderer.srcObject != null
+            ? RTCVideoView(
+                _screenRenderer,
+                mirror: false,
+                objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+              )
+            : (_localRenderer.srcObject != null && _isVideoEnabled && widget.enableVideo)
+                ? RTCVideoView(
+                    _localRenderer,
+                    mirror: true,
+                    objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                  )
+                : _buildAvatarFallback('You'),
+      ),
+    );
+  }
+
+  Widget _roundIconButton({
+    required IconData icon,
+    required VoidCallback onTap,
+    bool active = false,
+    Color? iconColor,
+    Color? background,
+    double size = 42,
+  }) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: IconButton(
+        style: IconButton.styleFrom(
+          backgroundColor:
+              background ?? (active ? Colors.white24 : Colors.white.withValues(alpha: 0.10)),
+          foregroundColor: Colors.white,
+          shape: const CircleBorder(),
         ),
+        icon: Icon(icon, color: iconColor ?? Colors.white, size: 20),
+        onPressed: onTap,
       ),
     );
   }
 
   Widget _buildControls() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        _controlButton(
-          icon: _isAudioEnabled ? Icons.mic : Icons.mic_off,
-          active: _isAudioEnabled,
-          onPressed: _toggleAudio,
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0B1220).withValues(alpha: 0.92),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: Colors.white10),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.5),
+              blurRadius: 24,
+              offset: const Offset(0, 10),
+            ),
+          ],
         ),
-        const SizedBox(width: 12),
-        if (widget.enableVideo) ...[
-          _controlButton(
-            icon: _isVideoEnabled ? Icons.videocam : Icons.videocam_off,
-            active: _isVideoEnabled,
-            onPressed: _toggleVideo,
-          ),
-          const SizedBox(width: 12),
-          _controlButton(
-            icon: Icons.flip_camera_ios,
-            active: true,
-            onPressed: _switchCamera,
-          ),
-          const SizedBox(width: 12),
-        ],
-        _controlButton(
-          icon: _isScreenSharing ? Icons.stop_screen_share : Icons.screen_share,
-          active: _isScreenSharing,
-          onPressed: _isSwitchingScreenShare ? null : _toggleScreenShare,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _dockButton(
+              icon: _isAudioEnabled ? Icons.mic : Icons.mic_off,
+              active: _isAudioEnabled,
+              onPressed: _toggleAudio,
+            ),
+            if (widget.enableVideo) ...[
+              const SizedBox(width: 10),
+              _dockButton(
+                icon: _isVideoEnabled ? Icons.videocam : Icons.videocam_off,
+                active: _isVideoEnabled,
+                onPressed: _toggleVideo,
+              ),
+              const SizedBox(width: 10),
+              _dockButton(
+                icon: Icons.flip_camera_ios,
+                active: true,
+                onPressed: _switchCamera,
+              ),
+            ],
+            const SizedBox(width: 10),
+            _dockButton(
+              icon: _isScreenSharing ? Icons.stop_screen_share : Icons.screen_share,
+              active: _isScreenSharing,
+              onPressed: _isSwitchingScreenShare ? null : _toggleScreenShare,
+            ),
+            if (widget.isMeeting) ...[
+              const SizedBox(width: 10),
+              _dockButton(
+                icon: Icons.chat_bubble_outline_rounded,
+                active: _showChat,
+                onPressed: () => setState(() => _showChat = !_showChat),
+              ),
+            ],
+            const SizedBox(width: 10),
+            _dockButton(
+              icon: _isRecording ? Icons.fiber_manual_record : Icons.radio_button_unchecked,
+              active: _isRecording,
+              activeColor: const Color(0xFFEF4444),
+              onPressed: _toggleRecording,
+            ),
+            const SizedBox(width: 14),
+            _leaveButton(),
+          ],
         ),
-        const SizedBox(width: 12),
-        _controlButton(
-          icon: Icons.call_end,
-          active: false,
-          backgroundColor: Colors.red,
-          size: 60,
-          onPressed: _leave,
-        ),
-      ],
+      ),
     );
   }
 
-  Widget _controlButton({
+  Widget _dockButton({
     required IconData icon,
     required bool active,
     required FutureOr<void> Function()? onPressed,
-    Color? backgroundColor,
-    double size = 50,
+    Color? activeColor,
+    double size = 48,
   }) {
     return SizedBox(
       width: size,
       height: size,
       child: IconButton.filled(
         style: IconButton.styleFrom(
-          backgroundColor: backgroundColor ?? (active ? Colors.white24 : Colors.red.shade800),
+          backgroundColor: active
+              ? (activeColor ?? Colors.white.withValues(alpha: 0.20))
+              : Colors.white.withValues(alpha: 0.10),
           foregroundColor: Colors.white,
+          shape: const CircleBorder(),
         ),
-        icon: Icon(icon),
-        onPressed: onPressed == null ? null : () async {
-          await onPressed();
-        },
+        icon: Icon(icon, size: 21),
+        onPressed: onPressed == null
+            ? null
+            : () async {
+                await onPressed();
+              },
+      ),
+    );
+  }
+
+  Widget _leaveButton() {
+    return SizedBox(
+      width: 58,
+      height: 58,
+      child: IconButton.filled(
+        style: IconButton.styleFrom(
+          backgroundColor: const Color(0xFFEF4444),
+          foregroundColor: Colors.white,
+          shape: const CircleBorder(),
+        ),
+        icon: const Icon(Icons.call_end, size: 26),
+        onPressed: _leave,
       ),
     );
   }
@@ -776,57 +995,175 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       width: 320,
       child: SafeArea(
         child: Container(
-          color: Colors.white,
+          margin: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0F172A).withValues(alpha: 0.98),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.white12),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.5),
+                blurRadius: 24,
+                offset: const Offset(-6, 0),
+              ),
+            ],
+          ),
           child: Column(
             children: [
-              ListTile(
-                title: const Text('Meeting chat'),
-                trailing: IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => setState(() => _showChat = false),
-                ),
-              ),
-              const Divider(height: 1),
-              Expanded(
-                child: ListView.builder(
-                  padding: const EdgeInsets.all(12),
-                  itemCount: _chatLines.length,
-                  itemBuilder: (context, index) {
-                    final line = _chatLines[index];
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            line.userId,
-                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-                          ),
-                          Text(line.message),
-                          Text(
-                            TimeOfDay.fromDateTime(line.timestamp).format(context),
-                            style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-              ),
               Padding(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+                child: Row(
+                  children: [
+                    const Icon(Icons.chat_bubble_outline_rounded,
+                        size: 18, color: Colors.white70),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Text(
+                        'Meeting chat',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded, size: 20),
+                      color: Colors.white70,
+                      onPressed: () => setState(() => _showChat = false),
+                    ),
+                  ],
+                ),
+              ),
+              Divider(height: 1, color: Colors.white.withValues(alpha: 0.08)),
+              Expanded(
+                child: _chatLines.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.forum_outlined,
+                                size: 40, color: Colors.white.withValues(alpha: 0.25)),
+                            const SizedBox(height: 10),
+                            Text(
+                              'No messages yet',
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.5),
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : ListView.builder(
+                        padding: const EdgeInsets.all(12),
+                        itemCount: _chatLines.length,
+                        itemBuilder: (context, index) {
+                          final line = _chatLines[index];
+                          final isMe = widget.userName != null &&
+                              line.userId == widget.userName;
+                          return Align(
+                            alignment:
+                                isMe ? Alignment.centerRight : Alignment.centerLeft,
+                            child: Container(
+                              margin: const EdgeInsets.only(bottom: 10),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 8),
+                              constraints: BoxConstraints(
+                                maxWidth: 220,
+                              ),
+                              decoration: BoxDecoration(
+                                color: isMe
+                                    ? const Color(0xFF2563EB)
+                                    : const Color(0xFF1E293B),
+                                borderRadius: BorderRadius.only(
+                                  topLeft: const Radius.circular(14),
+                                  topRight: const Radius.circular(14),
+                                  bottomLeft:
+                                      isMe ? const Radius.circular(14) : Radius.zero,
+                                  bottomRight:
+                                      isMe ? Radius.zero : const Radius.circular(14),
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: isMe
+                                    ? CrossAxisAlignment.end
+                                    : CrossAxisAlignment.start,
+                                children: [
+                                  if (!isMe)
+                                    Padding(
+                                      padding: const EdgeInsets.only(bottom: 2),
+                                      child: Text(
+                                        line.userId,
+                                        style: const TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w700,
+                                          color: Color(0xFF60A5FA),
+                                        ),
+                                      ),
+                                    ),
+                                  Text(
+                                    line.message,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 13.5,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    TimeOfDay.fromDateTime(line.timestamp)
+                                        .format(context),
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: Colors.white.withValues(alpha: 0.6),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+              Divider(height: 1, color: Colors.white.withValues(alpha: 0.08)),
+              Padding(
+                padding: const EdgeInsets.all(10),
                 child: Row(
                   children: [
                     Expanded(
                       child: TextField(
                         controller: _chatController,
-                        decoration: const InputDecoration(hintText: 'Message'),
+                        style: const TextStyle(color: Colors.white, fontSize: 14),
+                        decoration: InputDecoration(
+                          hintText: 'Message',
+                          hintStyle: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.4),
+                          ),
+                          filled: true,
+                          fillColor: Colors.white.withValues(alpha: 0.08),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(24),
+                            borderSide: BorderSide.none,
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 10,
+                          ),
+                        ),
                         onSubmitted: (_) => _sendChatMessage(),
                       ),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.send),
-                      onPressed: _sendChatMessage,
+                    const SizedBox(width: 8),
+                    Container(
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF2563EB),
+                        shape: BoxShape.circle,
+                      ),
+                      child: IconButton(
+                        icon: const Icon(Icons.send_rounded,
+                            color: Colors.white, size: 19),
+                        onPressed: _sendChatMessage,
+                      ),
                     ),
                   ],
                 ),
