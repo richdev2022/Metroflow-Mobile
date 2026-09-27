@@ -239,7 +239,16 @@ class MediasoupRoomService {
 
   Future<void> _startLocalMedia() async {
     localStream = await navigator.mediaDevices.getUserMedia({
-      'audio': produceAudio,
+      // Explicit AEC/NS/AGC: without echoCancellation the phone's speaker
+      // output is re-captured by the mic and every remote participant hears
+      // themselves echoed back.
+      'audio': produceAudio
+          ? {
+              'echoCancellation': true,
+              'noiseSuppression': true,
+              'autoGainControl': true,
+            }
+          : false,
       'video': produceVideo
           ? {
               'facingMode': 'user',

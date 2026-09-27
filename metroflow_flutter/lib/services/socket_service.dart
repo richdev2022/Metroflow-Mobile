@@ -58,6 +58,11 @@ class SocketService {
   void Function(dynamic)? onCallDurationActive;
   void Function(dynamic)? onCallCountdownWarning;
 
+  /// Server-verified echo-risk alert: the same account joined this room on
+  /// 2+ devices (backend counts sockets per room). Payload:
+  /// { roomId, userId, userName, deviceCount, message }
+  void Function(dynamic)? onCallMultiDevice;
+
   void connect(String userId, String businessId, {String? token}) {
     // A socket in reconnect-limbo (connected == false but not disposed) used to
     // be abandoned here and replaced by a fresh one -> duplicate event delivery
@@ -166,6 +171,10 @@ class SocketService {
 
     _socket?.on('call:countdown-warning', (data) {
       if (onCallCountdownWarning != null) onCallCountdownWarning!(data);
+    });
+
+    _socket?.on('call:multi-device', (data) {
+      if (onCallMultiDevice != null) onCallMultiDevice!(data);
     });
 
     _socket?.on('call:created', (data) {
