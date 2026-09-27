@@ -137,6 +137,9 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   void Function(dynamic)? _previousDurationStartHandler;
   void Function(dynamic)? _previousDurationActiveHandler;
   void Function(dynamic)? _previousCountdownWarnHandler;
+  void Function(dynamic)? _previousMultiDeviceHandler;
+  int? _multiDeviceCount;
+  String? _multiDeviceMessage;
 
   // Live duration tracking: elapsed since joining + plan cap remaining.
   Timer? _elapsedTicker;
@@ -258,6 +261,23 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _previousDurationStartHandler = _socket.onCallDurationStarted;
     _previousDurationActiveHandler = _socket.onCallDurationActive;
     _previousCountdownWarnHandler = _socket.onCallCountdownWarning;
+    _previousMultiDeviceHandler = _socket.onCallMultiDevice;
+
+    // Server-verified echo-risk alert (same account on multiple devices).
+    // Shows a persistent in-room banner — the user must know WHY they hear
+    // themselves echoed and which device to drop.
+    _socket.onCallMultiDevice = (data) {
+      _previousMultiDeviceHandler?.call(data);
+      if (!mounted || data is! Map) return;
+      final payload = Map<String, dynamic>.from(data);
+      final count = payload['deviceCount'] is num ? (payload['deviceCount'] as num).toInt() : 2;
+      final name = payload['userName']?.toString() ?? 'This account';
+      setState(() {
+        _multiDeviceCount = count;
+        _multiDeviceMessage = payload['message']?.toString() ??
+            '$name is in this room on $count devices — leave on all but one or use headphones.';
+      });
+    };
 
     // Plan-based duration tracking (see FRONTEND_CALL_DURATION_GUIDE.md):
     // duration-started fires when the 2nd participant joins, duration-active
@@ -409,6 +429,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _socket.onCallEnded = _previousCallEndedHandler;
     _socket.onCallDurationStarted = _previousDurationStartHandler;
     _socket.onCallDurationActive = _previousDurationActiveHandler;
+    _socket.onCallMultiDevice = _previousMultiDeviceHandler;
     _socket.onCallCountdownWarning = _previousCountdownWarnHandler;
     _elapsedTicker?.cancel();
     _elapsedTicker = null;
@@ -600,6 +621,37 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
               ),
             ),
             _buildTopBar(),
+            // Server-verified multi-device (echo risk) banner
+            if (_multiDeviceCount != null && _multiDeviceCount! >= 2)
+              Positioned(
+                top: 86,
+                left: 12,
+                right: 12,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF451A03).withValues(alpha: 0.92),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFF59E0B).withValues(alpha: 0.5)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.warning_amber_rounded, color: Color(0xFFFBBF24), size: 18),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _multiDeviceMessage ?? '',
+                          style: const TextStyle(color: Color(0xFFFDE68A), fontSize: 12, height: 1.3),
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: () => setState(() => _multiDeviceCount = null),
+                        child: const Icon(Icons.close, color: Color(0xFFFDE68A), size: 16),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             Positioned(
               right: 16,
               top: 96,
