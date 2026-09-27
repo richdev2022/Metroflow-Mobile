@@ -123,25 +123,36 @@ class IncomingCallDialog extends ConsumerWidget {
                   child: IconButton(
                     icon: const Icon(Icons.call, color: Colors.white, size: 35),
                     onPressed: () async {
+                      // Capture the ROOT navigator context BEFORE accepting:
+                      // acceptCall clears the ringing state, which unmounts
+                      // this overlay dialog — using `context` afterwards
+                      // silently skipped opening the call screen.
+                      final navContext = navigatorKey.currentContext;
                       try {
-                        // First accept the call
                         await callNotifier.acceptCall(call);
-                        
-                        // Then show the call screen
-                        if (context.mounted) {
-                          await VideoCallScreen.showModal(
-                            context: context,
-                            roomId: call.id,
-                            title: '$callType with $callerName',
-                            isMeeting: false,
-                            enableVideo: call.type == 'video',
-                            onLeave: () async {
-                              await ApiService().leaveCall(call.id);
-                            },
-                          );
-                        }
                       } catch (e) {
-                        debugPrint('Error joining call: $e');
+                        debugPrint('Error accepting call: $e');
+                      }
+                      if (navContext == null || !navContext.mounted) return;
+                      try {
+                        await VideoCallScreen.showModal(
+                          context: navContext,
+                          roomId: call.id,
+                          title: '$callType with $callerName',
+                          isMeeting: false,
+                          enableVideo: call.type == 'video',
+                          isHost: false,
+                          isGroupCall: call.isGroupCall,
+                          onLeave: () async {
+                            try {
+                              await ApiService().leaveCall(call.id);
+                            } catch (e) {
+                              debugPrint('leaveCall failed (non-fatal): $e');
+                            }
+                          },
+                        );
+                      } catch (e) {
+                        debugPrint('Error opening call screen: $e');
                       }
                     },
                   ),

@@ -28,6 +28,11 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
   List<CardModel> _cards = [];
   List<PaymentTransaction> _transactions = [];
   String? _selectedPlanId;
+  // Deep-link highlight (?plan=pro) — driven by the upgrade dialog CTA.
+  String? _highlightedPlanId;
+  String? _deepLinkPlanParam;
+  bool _deepLinkApplied = false;
+  final GlobalKey _highlightedPlanKey = GlobalKey();
   int _page = 1;
   bool _hasMore = true;
   String _statusFilter = 'all';
@@ -40,6 +45,52 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
   void initState() {
     super.initState();
     _fetchData();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Read the deep-link param once (GoRouterState.of needs an inherited
+    // widget, so this cannot run in initState).
+    if (!_deepLinkApplied && _deepLinkPlanParam == null) {
+      try {
+        final state = GoRouterState.of(context);
+        _deepLinkPlanParam = state.uri.queryParameters['plan'];
+      } catch (_) {
+        _deepLinkPlanParam = null;
+      }
+    }
+  }
+
+  void _applyDeepLinkHighlight() {
+    if (_deepLinkApplied) return;
+    final param = _deepLinkPlanParam;
+    if (param == null || param.trim().isEmpty || _plans.isEmpty) return;
+    final needle = param.trim().toLowerCase();
+    Plan? match;
+    for (final plan in _plans) {
+      if (plan.id.toLowerCase() == needle || plan.name.toLowerCase().contains(needle)) {
+        match = plan;
+        break;
+      }
+    }
+    _deepLinkApplied = true;
+    if (match == null) return;
+    setState(() {
+      _highlightedPlanId = match!.id;
+      _selectedPlanId = match!.id;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _highlightedPlanKey.currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(
+          ctx,
+          duration: const Duration(milliseconds: 500),
+          curve: Curves.easeOutCubic,
+          alignment: 0.25,
+        );
+      }
+    });
   }
 
   Future<void> _fetchData() async {
@@ -73,6 +124,7 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
               _plans.add(Plan.fromJson(planJson as Map<String, dynamic>));
             }
           });
+          _applyDeepLinkHighlight();
         }
       }
 
@@ -474,7 +526,12 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(
-                  (sub.subscriptionStatus[0].toUpperCase() + sub.subscriptionStatus.substring(1)),
+                  // Guard: an empty subscription_status string would throw
+                  // RangeError on [0].
+                  sub.subscriptionStatus.isEmpty
+                      ? 'Unknown'
+                      : (sub.subscriptionStatus[0].toUpperCase() +
+                          sub.subscriptionStatus.substring(1)),
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
@@ -565,21 +622,35 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
         ...sortedPlans.map((plan) {
           final isActive = currentPlanId == plan.id;
           final isSelected = _selectedPlanId == plan.id;
+          final isHighlighted = _highlightedPlanId == plan.id;
+          final planKey = isHighlighted ? _highlightedPlanKey : null;
           
           // Determine if this is upgrade or downgrade
           final currentPrice = _currentSubscription?.price ?? 0;
           final action = isActive ? null : (plan.price > currentPrice ? 'Upgrade' : 'Downgrade');
           
           return Container(
+            key: planKey,
             margin: const EdgeInsets.only(bottom: 12),
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
               color: AppTheme.colors.surface,
               borderRadius: BorderRadius.circular(16),
               border: Border.all(
-                color: isActive ? AppColors.primary : (isSelected ? AppColors.primary : Colors.transparent),
-                width: isActive ? 2 : (isSelected ? 2 : 1),
+                color: isActive || isHighlighted
+                    ? AppColors.primary
+                    : (isSelected ? AppColors.primary : Colors.transparent),
+                width: isActive || isHighlighted ? 2 : (isSelected ? 2 : 1),
               ),
+              boxShadow: isHighlighted
+                  ? [
+                      BoxShadow(
+                        color: AppColors.primary.withValues(alpha: 0.18),
+                        blurRadius: 18,
+                        offset: const Offset(0, 6),
+                      ),
+                    ]
+                  : null,
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -587,7 +658,18 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(plan.name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                    Expanded(child: Text(plan.name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600))),
+                    if (isHighlighted) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(colors: [AppColors.primary, Color(0xFF7C3AED)]),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Text('RECOMMENDED', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Colors.white, letterSpacing: 0.6)),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
                     if (isActive)
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),

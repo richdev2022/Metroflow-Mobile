@@ -31,6 +31,7 @@ class MediasoupRoomService {
     required this.produceVideo,
     required this.produceAudio,
     this.onRemoteStream,
+    this.onRemoteStreamRemoved,
     this.onConnectionStateChanged,
     this.onScreenShareStarted,
     this.onScreenShareStopped,
@@ -41,6 +42,10 @@ class MediasoupRoomService {
   final bool produceVideo;
   final bool produceAudio;
   final void Function(RemoteMediaStream stream)? onRemoteStream;
+  /// Called when a remote producer was closed (peer left/stopped sharing) —
+  /// carries the consumer id of the affected remote stream so the UI can drop
+  /// the matching tile.
+  final void Function(String consumerId)? onRemoteStreamRemoved;
   final void Function(String state)? onConnectionStateChanged;
   final void Function(MediaStream stream)? onScreenShareStarted;
   final void Function()? onScreenShareStopped;
@@ -57,6 +62,7 @@ class MediasoupRoomService {
   MediaStream? _screenStream;
   Producer? _screenProducer;
   void Function(dynamic)? _previousNewProducerHandler;
+  void Function(dynamic)? _previousProducerClosedHandler;
   bool _started = false;
 
   Future<void> start() async {
@@ -65,8 +71,10 @@ class MediasoupRoomService {
 
     _previousNewProducerHandler = socket.onMediasoupNewProducer;
     socket.onMediasoupNewProducer = _handleNewProducer;
+    _previousProducerClosedHandler = socket.onMediasoupProducerClosed;
+    socket.onMediasoupProducerClosed = _handleProducerClosed;
 
-    final routerResponse = await socket.mediasoupGetRouterRtpCapabilities();
+    final routerResponse = await socket.mediasoupGetRouterRtpCapabilities(roomId: roomId);
     final routerCapabilities = _payload(routerResponse)['rtpCapabilities'] ?? routerResponse;
     await _device.load(
       routerRtpCapabilities: RtpCapabilities.fromMap(
@@ -76,10 +84,14 @@ class MediasoupRoomService {
 
     await _createTransports();
     await _startLocalMedia();
+    // Late-joiner discovery: consume producers that already exist in the room.
+    // Without this a joiner never sees/hears participants who joined earlier.
+    await _consumeExistingProducers();
   }
 
   Future<void> stop() async {
     socket.onMediasoupNewProducer = _previousNewProducerHandler;
+    socket.onMediasoupProducerClosed = _previousProducerClosedHandler;
 
     for (final producer in _producers.values) {
       producer.close();
@@ -268,6 +280,45 @@ class MediasoupRoomService {
       return;
     }
     await consumeProducer(producerId, kind: payload['kind']?.toString());
+  }
+
+  /// A remote producer was closed (peer left, stopped camera/mic/screen).
+  /// Close every consumer of that producer and tell the UI to drop the tiles.
+  Future<void> _handleProducerClosed(dynamic data) async {
+    final payload = _payload(data);
+    final producerId = payload['producerId']?.toString();
+    if (producerId == null) return;
+
+    final affected = _consumers.values
+        .where((c) => c.producerId == producerId)
+        .toList(growable: false);
+    for (final consumer in affected) {
+      _consumers.remove(consumer.id);
+      try {
+        await consumer.close();
+      } catch (_) {}
+      onRemoteStreamRemoved?.call(consumer.id);
+    }
+  }
+
+  Future<void> _consumeExistingProducers() async {
+    try {
+      final response = _payload(await socket.mediasoupGetProducers({'roomId': roomId}));
+      final producers = response['producers'];
+      if (producers is! List) return;
+      for (final entry in producers) {
+        if (entry is! Map) continue;
+        final producerId = entry['producerId']?.toString() ?? entry['id']?.toString();
+        if (producerId == null) continue;
+        if (_consumers.values.any((c) => c.producerId == producerId)) continue;
+        await consumeProducer(
+          producerId,
+          kind: entry['kind']?.toString(),
+        );
+      }
+    } catch (error) {
+      Logger.error('Error fetching existing mediasoup producers: $error');
+    }
   }
 
   Future<void> consumeProducer(String producerId, {String? kind}) async {

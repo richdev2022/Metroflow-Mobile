@@ -447,18 +447,24 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
     return ErrorBoundary(
       child: IdleTimeoutHandler(
-        child: Stack(
-          children: [
-            MaterialApp.router(
-              title: 'Metricorex',
-              debugShowCheckedModeBanner: false,
-              theme: AppTheme.lightTheme,
-              darkTheme: AppTheme.darkTheme,
-              themeMode: themeState.mode,
-              routerConfig: _router,
-            ),
-            const IncomingCallDialog(),
-          ],
+        child: MaterialApp.router(
+          title: 'Metricorex',
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.lightTheme,
+          darkTheme: AppTheme.darkTheme,
+          themeMode: themeState.mode,
+          routerConfig: _router,
+          // The global incoming-call overlay MUST live BELOW MaterialApp:
+          // as a sibling in a raw Stack it had no Theme/Directionality/
+          // MaterialLocalizations ancestor and crashed on every incoming call.
+          builder: (context, child) {
+            return Stack(
+              children: [
+                child ?? const SizedBox.shrink(),
+                const IncomingCallDialog(),
+              ],
+            );
+          },
         ),
       ),
     );

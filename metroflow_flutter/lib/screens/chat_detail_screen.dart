@@ -7,6 +7,8 @@ import '../services/api.dart';
 import '../services/socket_service.dart';
 import '../models/message.dart';
 import '../models/conversation.dart';
+import '../models/call.dart';
+import 'video_call_screen.dart';
 import '../utils/logger.dart';
 
 class ChatDetailScreen extends ConsumerStatefulWidget {
@@ -81,6 +83,70 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       _messages.add(message);
     } else {
       _messages[index] = message;
+    }
+  }
+
+  /// Start an audio/video call with the other chat participants (parity with
+  /// the web chat call button). The backend emits `call:incoming` to every
+  /// invitee — no manual socket invites needed.
+  Future<void> _startCall(String type) async {
+    if (_isSending) return;
+    final otherIds = widget.conversation.participants
+        .map((p) => p.userId)
+        .where((id) => id.isNotEmpty && id != _currentUserId)
+        .toList();
+    if (otherIds.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No one to call in this conversation')),
+        );
+      }
+      return;
+    }
+
+    setState(() => _isSending = true);
+    try {
+      final response = await _api.createCall({
+        'type': type,
+        'isGroupCall': otherIds.length > 1,
+        'waitingRoomEnabled': otherIds.length > 1,
+        'recordingEnabled': false,
+        'participantIds': otherIds,
+      });
+      if (response.data['success'] != true || !mounted) return;
+      final data = response.data['data'];
+      if (data is! Map) return;
+      final call = Call.fromJson(Map<String, dynamic>.from(data));
+
+      await _api.joinCall(call.id);
+      if (!mounted) return;
+      final userName = await _storage.getUserName();
+      if (!mounted) return;
+      await VideoCallScreen.showModal(
+        context: context,
+        roomId: call.id,
+        title: type == 'video' ? 'Video Call' : 'Audio Call',
+        enableVideo: type == 'video',
+        userName: userName,
+        isHost: true,
+        isGroupCall: call.isGroupCall,
+        onLeave: () async {
+          try {
+            await _api.leaveCall(call.id);
+          } catch (e) {
+            Logger.error('leaveCall failed (non-fatal): $e');
+          }
+        },
+      );
+    } catch (e) {
+      Logger.error('Error starting call from chat: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(ApiService.extractErrorMessage(e))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSending = false);
     }
   }
 
@@ -233,6 +299,18 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       appBar: AppBar(
         title: Text(widget.conversation.name ?? 'Chat'),
         centerTitle: false,
+        actions: [
+          IconButton(
+            tooltip: 'Audio call',
+            icon: const Icon(Icons.call_outlined),
+            onPressed: () => _startCall('audio'),
+          ),
+          IconButton(
+            tooltip: 'Video call',
+            icon: const Icon(Icons.videocam_outlined),
+            onPressed: () => _startCall('video'),
+          ),
+        ],
       ),
       body: Column(
         children: [
