@@ -78,7 +78,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         });
         // Re-sync the bottom-nav chat badge with server truth
         final totalUnread = _conversations.fold<int>(0, (sum, c) => sum + c.unreadCount);
-        ref.read(chatUnreadProvider.notifier).state = totalUnread;
+        ref.read(chatUnreadProvider.notifier).set(totalUnread);
       }
     } catch (e) {
       Logger.error('Error loading conversations: $e');

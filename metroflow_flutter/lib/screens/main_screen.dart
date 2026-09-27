@@ -69,7 +69,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     }
     // Viewing the Meetings tab clears its "new invite" dot
     if (index == 2) {
-      ref.read(meetingsUnreadProvider.notifier).state = 0;
+      ref.read(meetingsUnreadProvider.notifier).clear();
     }
     setState(() {
       _selectedIndex = index;

@@ -114,8 +114,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         final attachmentType = payload['attachmentType']?.toString();
 
         // Badge increment
-        final badge = ref.read(chatUnreadProvider.notifier);
-        badge.state = badge.state + 1;
+        ref.read(chatUnreadProvider.notifier).increment();
 
         // Sound + haptic pop
         AppFeedback.playMessageSound();

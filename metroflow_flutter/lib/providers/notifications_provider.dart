@@ -126,7 +126,7 @@ class NotificationsNotifier extends Notifier<NotificationsState> {
         accentColor: accent,
         onTap: () {
           if (type == 'meeting') {
-            ref.read(meetingsUnreadProvider.notifier).state = 0;
+            ref.read(meetingsUnreadProvider.notifier).clear();
           }
           navigateToAction(notification.actionUrl);
         },
@@ -135,8 +135,7 @@ class NotificationsNotifier extends Notifier<NotificationsState> {
 
     // Meetings tab dot: a fresh meeting invite lights the badge up
     if (type == 'meeting') {
-      final meetings = ref.read(meetingsUnreadProvider.notifier);
-      meetings.state = meetings.state + 1;
+      ref.read(meetingsUnreadProvider.notifier).increment();
     }
   }
 
