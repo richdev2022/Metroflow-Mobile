@@ -11,6 +11,17 @@ class Subscription {
   final List<String> features;
   final int teamUsage;
   final String? nextDueSubscriptionDate;
+  // Admin-configured RTC limits / capability flags
+  final int? maxMeetingDuration;
+  final int? maxParticipants;
+  final int? maxRecordingDuration;
+  final int? maxRecordingStorage;
+  final bool waitingRoomEnabled;
+  final bool recordingEnabled;
+  final bool screenSharingEnabled;
+  final bool breakoutRoomsEnabled;
+  final bool virtualBackgrounds;
+  final bool liveCaptions;
 
   Subscription({
     required this.id,
@@ -25,6 +36,16 @@ class Subscription {
     required this.features,
     required this.teamUsage,
     this.nextDueSubscriptionDate,
+    this.maxMeetingDuration,
+    this.maxParticipants,
+    this.maxRecordingDuration,
+    this.maxRecordingStorage,
+    this.waitingRoomEnabled = false,
+    this.recordingEnabled = false,
+    this.screenSharingEnabled = true,
+    this.breakoutRoomsEnabled = false,
+    this.virtualBackgrounds = false,
+    this.liveCaptions = false,
   });
 
   // Getter to parse plan price to double
@@ -56,7 +77,23 @@ class Subscription {
       features: features,
       teamUsage: (json['team_usage'] is num) ? (json['team_usage'] as num).toInt() : int.tryParse('${json['team_usage']}') ?? 0,
       nextDueSubscriptionDate: json['next_due_subscription_date'] as String?,
+      maxMeetingDuration: _optionalInt(json['max_meeting_duration']),
+      maxParticipants: _optionalInt(json['max_participants']),
+      maxRecordingDuration: _optionalInt(json['max_recording_duration']),
+      maxRecordingStorage: _optionalInt(json['max_recording_storage']),
+      waitingRoomEnabled: json['waiting_room_enabled'] == true,
+      recordingEnabled: json['recording_enabled'] == true,
+      screenSharingEnabled: json['screen_sharing_enabled'] != false,
+      breakoutRoomsEnabled: json['breakout_rooms_enabled'] == true,
+      virtualBackgrounds: json['virtual_backgrounds'] == true,
+      liveCaptions: json['live_captions'] == true,
     );
+  }
+
+  static int? _optionalInt(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toInt();
+    return int.tryParse(value.toString());
   }
 
   Map<String, dynamic> toJson() {

@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../models/notification.dart';
 import '../services/api.dart';
 import '../services/socket_service.dart';
+import '../theme/app_theme.dart';
+import '../utils/app_feedback.dart';
+import '../widgets/inapp_banner.dart';
 import 'auth_provider.dart';
+import 'badge_provider.dart';
 
 class NotificationsState {
   final List<AppNotification> notifications;
@@ -102,6 +107,85 @@ class NotificationsNotifier extends Notifier<NotificationsState> {
       notifications: updatedNotifications,
       unreadCount: updatedUnreadCount,
     );
+
+    if (notification.isRead) return;
+
+    // In-app pop for new notifications: sound + sliding banner.
+    // Chat messages have their own dedicated banner in main.dart and calls
+    // ring via the IncomingCallDialog, so skip both here to avoid
+    // double alerts.
+    final type = notification.type.toLowerCase();
+    if (type != 'chat' && type != 'call') {
+      AppFeedback.playMessageSound();
+      final icon = _iconForType(type);
+      final accent = _colorForType(type);
+      InAppBanner.show(
+        title: notification.title,
+        message: notification.message,
+        icon: icon,
+        accentColor: accent,
+        onTap: () {
+          if (type == 'meeting') {
+            ref.read(meetingsUnreadProvider.notifier).state = 0;
+          }
+          navigateToAction(notification.actionUrl);
+        },
+      );
+    }
+
+    // Meetings tab dot: a fresh meeting invite lights the badge up
+    if (type == 'meeting') {
+      final meetings = ref.read(meetingsUnreadProvider.notifier);
+      meetings.state = meetings.state + 1;
+    }
+  }
+
+  /// Route to a sensible screen for the notification. Only in-app
+  /// "/main/..." locations are routable on mobile; anything else (web-only
+  /// urls like "/calls/<code>") falls back to the notifications screen.
+  void navigateToAction(String? actionUrl) {
+    final target = (actionUrl != null && actionUrl.startsWith('/main/'))
+        ? actionUrl
+        : '/main/notifications';
+    final context = navigatorKey.currentContext;
+    if (context == null) return;
+    try {
+      GoRouter.of(context).go(target);
+    } catch (e) {
+      debugPrint('Notification navigation failed: $e');
+    }
+  }
+
+  static IconData _iconForType(String type) {
+    switch (type) {
+      case 'meeting':
+        return Icons.calendar_month_rounded;
+      case 'call':
+        return Icons.videocam_rounded;
+      case 'task':
+        return Icons.check_circle_outline_rounded;
+      case 'credit':
+        return Icons.south_west_rounded;
+      case 'debit':
+        return Icons.north_east_rounded;
+      default:
+        return Icons.notifications_active_rounded;
+    }
+  }
+
+  static Color? _colorForType(String type) {
+    switch (type) {
+      case 'meeting':
+        return AppColors.primary;
+      case 'call':
+        return AppColors.warning;
+      case 'credit':
+        return AppColors.success;
+      case 'debit':
+        return AppColors.error;
+      default:
+        return null;
+    }
   }
 
   Future<void> markAsRead(String id) async {

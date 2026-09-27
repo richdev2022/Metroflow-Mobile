@@ -134,12 +134,25 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   void Function(dynamic)? _previousRecordingStopHandler;
   void Function(dynamic)? _previousRecordingPauseHandler;
   void Function(dynamic)? _previousCallEndedHandler;
+  void Function(dynamic)? _previousDurationStartHandler;
+  void Function(dynamic)? _previousDurationActiveHandler;
+  void Function(dynamic)? _previousCountdownWarnHandler;
+
+  // Live duration tracking: elapsed since joining + plan cap remaining.
+  Timer? _elapsedTicker;
+  int _elapsedSeconds = 0;
+  DateTime? _planEndsAt;
+  int? _planMaxMinutes;
 
   @override
   void initState() {
     super.initState();
     _isVideoEnabled = widget.enableVideo;
     _isCallHost = widget.isHost;
+    _elapsedTicker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() => _elapsedSeconds += 1);
+    });
     _initRoom();
   }
 
@@ -242,6 +255,45 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _previousRecordingStopHandler = _socket.onRecordingStopped;
     _previousRecordingPauseHandler = _socket.onRecordingPaused;
     _previousCallEndedHandler = _socket.onCallEnded;
+    _previousDurationStartHandler = _socket.onCallDurationStarted;
+    _previousDurationActiveHandler = _socket.onCallDurationActive;
+    _previousCountdownWarnHandler = _socket.onCallCountdownWarning;
+
+    // Plan-based duration tracking (see FRONTEND_CALL_DURATION_GUIDE.md):
+    // duration-started fires when the 2nd participant joins, duration-active
+    // on late joins, countdown-warning at the 5-min/1-min marks.
+    void applyEndsAt(dynamic data) {
+      if (!mounted || data is! Map) return;
+      final payload = Map<String, dynamic>.from(data);
+      if (!widget.isMeeting) {
+        final roomId = payload['roomId']?.toString();
+        if (roomId != null && roomId.isNotEmpty && roomId != widget.roomId) return;
+      }
+      final endsAtRaw = payload['endsAt'] ?? payload['ends_at'];
+      final maxRaw = payload['maxMeetingDuration'] ?? payload['max_meeting_duration'];
+      DateTime? endsAt;
+      if (endsAtRaw is String) endsAt = DateTime.tryParse(endsAtRaw);
+      final int? maxMinutes = maxRaw is num ? maxRaw.toInt() : int.tryParse(maxRaw?.toString() ?? '');
+      setState(() {
+        _planEndsAt = endsAt ?? _planEndsAt;
+        _planMaxMinutes = maxMinutes ?? _planMaxMinutes;
+      });
+    }
+
+    _socket.onCallDurationStarted = applyEndsAt;
+    _socket.onCallDurationActive = applyEndsAt;
+    _socket.onCallCountdownWarning = (data) {
+      _previousCountdownWarnHandler?.call(data);
+      // The payload carries remainingMs; recompute the visible remaining time.
+      if (!mounted || data is! Map) return;
+      final payload = Map<String, dynamic>.from(data);
+      final remainingMs = payload['remainingMs'] is num
+          ? (payload['remainingMs'] as num).toInt()
+          : int.tryParse(payload['remainingMs']?.toString() ?? '');
+      if (remainingMs != null) {
+        setState(() => _planEndsAt = DateTime.now().add(Duration(milliseconds: remainingMs)));
+      }
+    };
 
     // Someone ended the call remotely (host / other party / plan limit) —
     // tear the room down and exit instead of hanging on a dead call.
@@ -355,6 +407,11 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _socket.onRecordingStopped = _previousRecordingStopHandler;
     _socket.onRecordingPaused = _previousRecordingPauseHandler;
     _socket.onCallEnded = _previousCallEndedHandler;
+    _socket.onCallDurationStarted = _previousDurationStartHandler;
+    _socket.onCallDurationActive = _previousDurationActiveHandler;
+    _socket.onCallCountdownWarning = _previousCountdownWarnHandler;
+    _elapsedTicker?.cancel();
+    _elapsedTicker = null;
 
     if (_cleanupDone) return;
     _cleanupDone = true;
@@ -561,6 +618,74 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     );
   }
 
+  String _formatClock(int totalSeconds) {
+    final h = totalSeconds ~/ 3600;
+    final m = (totalSeconds % 3600) ~/ 60;
+    final s = totalSeconds % 60;
+    if (h > 0) {
+      return '$h:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+    }
+    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+  }
+
+  /// Elapsed time chip + optional plan-limit remaining countdown.
+  Widget _buildDurationChip() {
+    final remaining = _planEndsAt != null
+        ? _planEndsAt!.difference(DateTime.now()).inSeconds
+        : null;
+    final urgent = remaining != null && remaining <= 60;
+    final warning = remaining != null && remaining <= 5 * 60;
+    final color = urgent
+        ? const Color(0xFFEF4444)
+        : warning
+            ? const Color(0xFFF59E0B)
+            : Colors.white.withValues(alpha: 0.85);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: urgent
+            ? const Color(0xFFEF4444).withValues(alpha: 0.2)
+            : Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: urgent
+              ? const Color(0xFFEF4444).withValues(alpha: 0.6)
+              : Colors.transparent,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.timer_outlined, size: 12, color: color),
+          const SizedBox(width: 4),
+          Text(
+            _formatClock(_elapsedSeconds),
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
+              fontFeatures: const [FontFeature.tabularFigures()],
+              color: color,
+            ),
+          ),
+          if (remaining != null) ...[
+            Text(' / ',
+                style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.4))),
+            Text(
+              _formatClock(remaining < 0 ? 0 : remaining),
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                fontFeatures: const [FontFeature.tabularFigures()],
+                color: color,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildTopBar() {
     return Positioned(
       top: 0,
@@ -597,38 +722,45 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                     ),
                   ),
                   const SizedBox(height: 3),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 7,
-                          height: 7,
-                          decoration: BoxDecoration(
-                            color: _connectionColor(),
-                            shape: BoxShape.circle,
-                          ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(999),
                         ),
-                        const SizedBox(width: 6),
-                        Flexible(
-                          child: Text(
-                            _connectionLabel,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 11.5,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.white.withValues(alpha: 0.85),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 7,
+                              height: 7,
+                              decoration: BoxDecoration(
+                                color: _connectionColor(),
+                                shape: BoxShape.circle,
+                              ),
                             ),
-                          ),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                _connectionLabel,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.white.withValues(alpha: 0.85),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(width: 6),
+                      _buildDurationChip(),
+                    ],
                   ),
                 ],
               ),

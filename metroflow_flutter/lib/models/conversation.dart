@@ -32,6 +32,11 @@ DateTime? _parseDate(dynamic value) {
   return DateTime.tryParse(value.toString());
 }
 
+int _parseIntOrZero(dynamic value) {
+  if (value is num) return value.toInt();
+  return int.tryParse(value?.toString() ?? '') ?? 0;
+}
+
 class Conversation {
   final String id;
   final String? name;
@@ -42,6 +47,7 @@ class Conversation {
   final List<ConversationParticipant> participants;
   final String? lastMessage;
   final DateTime? lastMessageAt;
+  final int unreadCount;
 
   Conversation({
     required this.id,
@@ -53,6 +59,7 @@ class Conversation {
     required this.participants,
     this.lastMessage,
     this.lastMessageAt,
+    this.unreadCount = 0,
   });
 
   factory Conversation.fromJson(Map<String, dynamic> json) {
@@ -69,6 +76,7 @@ class Conversation {
           .toList(),
       lastMessage: (json['lastMessage'] ?? json['last_message'])?.toString(),
       lastMessageAt: _parseDate(json['lastMessageAt'] ?? json['last_message_at']),
+      unreadCount: _parseIntOrZero(json['unreadCount'] ?? json['unread_count']),
     );
   }
 
@@ -83,6 +91,7 @@ class Conversation {
       'participants': participants.map((e) => e.toJson()).toList(),
       'lastMessage': lastMessage,
       'lastMessageAt': lastMessageAt?.toIso8601String(),
+      'unreadCount': unreadCount,
     };
   }
 }

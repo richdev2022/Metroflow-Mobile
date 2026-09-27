@@ -53,6 +53,10 @@ class SocketService {
   void Function(dynamic)? onConversationRead;
   void Function(dynamic)? onChatTyping;
   void Function(dynamic)? onChatStopTyping;
+  void Function(dynamic)? onChatNewMessageNotification;
+  void Function(dynamic)? onCallDurationStarted;
+  void Function(dynamic)? onCallDurationActive;
+  void Function(dynamic)? onCallCountdownWarning;
 
   void connect(String userId, String businessId, {String? token}) {
     // A socket in reconnect-limbo (connected == false but not disposed) used to
@@ -146,6 +150,22 @@ class SocketService {
 
     _socket?.on('message:created', (data) {
       if (onMessageCreated != null) onMessageCreated!(data);
+    });
+
+    _socket?.on('chat:new-message-notification', (data) {
+      if (onChatNewMessageNotification != null) onChatNewMessageNotification!(data);
+    });
+
+    _socket?.on('call:duration-started', (data) {
+      if (onCallDurationStarted != null) onCallDurationStarted!(data);
+    });
+
+    _socket?.on('call:duration-active', (data) {
+      if (onCallDurationActive != null) onCallDurationActive!(data);
+    });
+
+    _socket?.on('call:countdown-warning', (data) {
+      if (onCallCountdownWarning != null) onCallCountdownWarning!(data);
     });
 
     _socket?.on('call:created', (data) {

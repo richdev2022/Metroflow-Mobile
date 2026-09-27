@@ -9,6 +9,17 @@ class Plan {
   final List<String> features;
   final int maxTeamMembers;
   final int trialDays;
+  // Admin-configured RTC limits / capability flags
+  final int? maxMeetingDuration;
+  final int? maxParticipants;
+  final int? maxRecordingDuration;
+  final int? maxRecordingStorage;
+  final bool waitingRoomEnabled;
+  final bool recordingEnabled;
+  final bool screenSharingEnabled;
+  final bool breakoutRoomsEnabled;
+  final bool virtualBackgrounds;
+  final bool liveCaptions;
 
   Plan({
     required this.id,
@@ -21,6 +32,16 @@ class Plan {
     required this.features,
     required this.maxTeamMembers,
     required this.trialDays,
+    this.maxMeetingDuration,
+    this.maxParticipants,
+    this.maxRecordingDuration,
+    this.maxRecordingStorage,
+    this.waitingRoomEnabled = false,
+    this.recordingEnabled = false,
+    this.screenSharingEnabled = true,
+    this.breakoutRoomsEnabled = false,
+    this.virtualBackgrounds = false,
+    this.liveCaptions = false,
   });
 
   factory Plan.fromJson(Map<String, dynamic> json) {
@@ -38,7 +59,23 @@ class Plan {
       features: features,
       maxTeamMembers: (json['max_team_members'] is num) ? (json['max_team_members'] as num).toInt() : int.tryParse('${json['max_team_members']}') ?? 0,
       trialDays: (json['trial_days'] is num) ? (json['trial_days'] as num).toInt() : int.tryParse('${json['trial_days']}') ?? 0,
+      maxMeetingDuration: _optionalInt(json['max_meeting_duration']),
+      maxParticipants: _optionalInt(json['max_participants']),
+      maxRecordingDuration: _optionalInt(json['max_recording_duration']),
+      maxRecordingStorage: _optionalInt(json['max_recording_storage']),
+      waitingRoomEnabled: json['waiting_room_enabled'] == true,
+      recordingEnabled: json['recording_enabled'] == true,
+      screenSharingEnabled: json['screen_sharing_enabled'] != false,
+      breakoutRoomsEnabled: json['breakout_rooms_enabled'] == true,
+      virtualBackgrounds: json['virtual_backgrounds'] == true,
+      liveCaptions: json['live_captions'] == true,
     );
+  }
+
+  static int? _optionalInt(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toInt();
+    return int.tryParse(value.toString());
   }
 
   Map<String, dynamic> toJson() {
