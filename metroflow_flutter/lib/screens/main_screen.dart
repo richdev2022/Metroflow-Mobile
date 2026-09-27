@@ -6,6 +6,7 @@ import '../theme/app_theme.dart';
 import '../providers/theme_provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/notifications_provider.dart';
+import '../providers/badge_provider.dart';
 import '../services/api.dart';
 import '../utils/app_toast.dart';
 import 'dashboard_screen.dart';
@@ -66,9 +67,76 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     if ((index == 5 || index == 6) && !await _canAccessWalletOrPayroll()) {
       return;
     }
+    // Viewing the Meetings tab clears its "new invite" dot
+    if (index == 2) {
+      ref.read(meetingsUnreadProvider.notifier).state = 0;
+    }
     setState(() {
       _selectedIndex = index;
     });
+  }
+
+  /// Inactive nav icon wrapped with an optional badge (chat unread count)
+  /// or a small dot (new meeting invites).
+  Widget _navIconWithBadge({
+    required IconData icon,
+    required int index,
+    required ThemeColors colors,
+    int badgeCount = 0,
+    bool dot = false,
+  }) {
+    final selected = _selectedIndex == index;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+          decoration: selected
+              ? BoxDecoration(
+                  color: colors.primary,
+                  borderRadius: BorderRadius.circular(12),
+                )
+              : null,
+          child: Icon(icon, color: selected ? Colors.white : null),
+        ),
+        if (badgeCount > 0 || dot)
+          Positioned(
+            top: -4,
+            right: -6,
+            child: badgeCount > 0
+                ? Container(
+                    constraints: const BoxConstraints(minWidth: 17),
+                    height: 17,
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: colors.error,
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: colors.background, width: 1.5),
+                    ),
+                    child: Text(
+                      badgeCount > 99 ? '99+' : '$badgeCount',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                        height: 1,
+                      ),
+                    ),
+                  )
+                : Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: colors.error,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: colors.background, width: 1.5),
+                    ),
+                  ),
+          ),
+      ],
+    );
   }
 
   Future<bool> _canAccessWalletOrPayroll() async {
@@ -515,15 +583,11 @@ class _MainScreenState extends ConsumerState<MainScreen> {
             label: 'Tasks',
           ),
           BottomNavigationBarItem(
-            icon: Container(
-              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-              decoration: _selectedIndex == 2
-                  ? BoxDecoration(
-                      color: colors.primary,
-                      borderRadius: BorderRadius.circular(12),
-                    )
-                  : null,
-              child: Icon(Icons.calendar_today_outlined, color: _selectedIndex == 2 ? Colors.white : null),
+            icon: _navIconWithBadge(
+              icon: Icons.calendar_today_outlined,
+              index: 2,
+              colors: colors,
+              dot: ref.watch(meetingsUnreadProvider) > 0,
             ),
             activeIcon: Container(
               padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
@@ -536,15 +600,11 @@ class _MainScreenState extends ConsumerState<MainScreen> {
             label: 'Meetings',
           ),
           BottomNavigationBarItem(
-            icon: Container(
-              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-              decoration: _selectedIndex == 3
-                  ? BoxDecoration(
-                      color: colors.primary,
-                      borderRadius: BorderRadius.circular(12),
-                    )
-                  : null,
-              child: Icon(Icons.chat_outlined, color: _selectedIndex == 3 ? Colors.white : null),
+            icon: _navIconWithBadge(
+              icon: Icons.chat_outlined,
+              index: 3,
+              colors: colors,
+              badgeCount: ref.watch(chatUnreadProvider),
             ),
             activeIcon: Container(
               padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),

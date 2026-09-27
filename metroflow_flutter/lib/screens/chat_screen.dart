@@ -8,6 +8,7 @@ import '../models/user.dart';
 import '../theme/app_theme.dart';
 import '../utils/logger.dart';
 import '../providers/auth_provider.dart';
+import '../providers/badge_provider.dart';
 import '../widgets/modern_ui.dart';
 import 'chat_detail_screen.dart';
 
@@ -75,6 +76,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               .map((json) => Conversation.fromJson(Map<String, dynamic>.from(json)))
               .toList();
         });
+        // Re-sync the bottom-nav chat badge with server truth
+        final totalUnread = _conversations.fold<int>(0, (sum, c) => sum + c.unreadCount);
+        ref.read(chatUnreadProvider.notifier).state = totalUnread;
       }
     } catch (e) {
       Logger.error('Error loading conversations: $e');
@@ -270,7 +274,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                                 itemBuilder: (context, index) {
                                   final conversation = filtered[index];
                                   final name = conversation.name ?? 'Direct Chat';
-                                  final hasUnread = _hasUnread(conversation, currentUserId);
+                                  final hasUnread = conversation.unreadCount > 0 ||
+                                      _hasUnread(conversation, currentUserId);
                                   return _ConversationTile(
                                     conversation: conversation,
                                     name: name,
@@ -278,6 +283,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                                         ? _timeLabel(conversation.lastMessageAt!)
                                         : null,
                                     hasUnread: hasUnread,
+                                    unreadCount: conversation.unreadCount,
                                     colors: colors,
                                     onTap: () {
                                       Navigator.push(
@@ -310,6 +316,7 @@ class _ConversationTile extends StatelessWidget {
   final String name;
   final String? timeLabel;
   final bool hasUnread;
+  final int unreadCount;
   final ThemeColors colors;
   final VoidCallback onTap;
 
@@ -318,13 +325,16 @@ class _ConversationTile extends StatelessWidget {
     required this.name,
     required this.timeLabel,
     required this.hasUnread,
+    this.unreadCount = 0,
     required this.colors,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
+    final hasPreview = (conversation.lastMessage ?? '').isNotEmpty;
     final preview = conversation.lastMessage ?? 'No messages yet';
+    final isGroup = conversation.type == 'group';
 
     return ModernCard(
       margin: EdgeInsets.zero,
@@ -334,7 +344,28 @@ class _ConversationTile extends StatelessWidget {
       onTap: onTap,
       child: Row(
         children: [
-          AvatarInitials(name: name, radius: 23),
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              AvatarInitials(name: name, radius: 23),
+              if (isGroup)
+                Positioned(
+                  bottom: -2,
+                  right: -2,
+                  child: Container(
+                    width: 18,
+                    height: 18,
+                    decoration: BoxDecoration(
+                      color: colors.surface,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: colors.border),
+                    ),
+                    child: Icon(Icons.group_rounded,
+                        size: 11, color: colors.textSecondary),
+                  ),
+                ),
+            ],
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -349,7 +380,7 @@ class _ConversationTile extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 15,
-                          fontWeight: hasUnread ? FontWeight.w700 : FontWeight.w600,
+                          fontWeight: hasUnread ? FontWeight.w800 : FontWeight.w600,
                           color: colors.text,
                         ),
                       ),
@@ -359,7 +390,7 @@ class _ConversationTile extends StatelessWidget {
                         timeLabel!,
                         style: TextStyle(
                           fontSize: 11.5,
-                          fontWeight: hasUnread ? FontWeight.w700 : FontWeight.w500,
+                          fontWeight: hasUnread ? FontWeight.w800 : FontWeight.w500,
                           color: hasUnread ? colors.primary : colors.textSecondary,
                         ),
                       ),
@@ -375,23 +406,31 @@ class _ConversationTile extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 13,
-                          color: colors.textSecondary,
+                          height: 1.3,
+                          fontWeight: hasUnread ? FontWeight.w600 : FontWeight.w400,
+                          fontStyle: hasPreview ? FontStyle.normal : FontStyle.italic,
+                          color: hasUnread ? colors.text.withValues(alpha: 0.85) : colors.textSecondary,
                         ),
                       ),
                     ),
                     if (hasUnread) ...[
                       const SizedBox(width: 8),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        constraints: const BoxConstraints(minWidth: 20),
+                        height: 20,
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        alignment: Alignment.center,
                         decoration: BoxDecoration(
-                          color: colors.primary,
+                          gradient: LinearGradient(
+                            colors: [colors.primary, colors.primaryDark],
+                          ),
                           borderRadius: BorderRadius.circular(999),
                         ),
-                        child: const Text(
-                          'New',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
+                        child: Text(
+                          unreadCount > 99 ? '99+' : (unreadCount > 0 ? '$unreadCount' : 'New'),
+                          style: const TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w800,
                             color: Colors.white,
                           ),
                         ),

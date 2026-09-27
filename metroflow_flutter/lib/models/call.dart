@@ -46,6 +46,12 @@ int _parseInt(dynamic value, int fallback) {
   return int.tryParse(value?.toString() ?? '') ?? fallback;
 }
 
+int? _parseNullableInt(dynamic value) {
+  if (value == null) return null;
+  if (value is num) return value.toInt();
+  return int.tryParse(value.toString());
+}
+
 bool _parseBool(dynamic value, bool fallback) {
   if (value is bool) return value;
   if (value is num) return value != 0;
@@ -61,6 +67,10 @@ class Call {
   final String status;
   final DateTime? startedAt;
   final DateTime? endedAt;
+  /// When the duration countdown actually began (2nd participant joined).
+  final DateTime? durationStartedAt;
+  /// Talk-time in seconds for finished calls (backend-computed).
+  final int? duration;
   final String createdById;
   final String hostId;
   final String? coHostId;
@@ -82,6 +92,8 @@ class Call {
     required this.status,
     this.startedAt,
     this.endedAt,
+    this.durationStartedAt,
+    this.duration,
     required this.createdById,
     required this.hostId,
     this.coHostId,
@@ -104,6 +116,8 @@ class Call {
       status: (json['status'] as String?) ?? 'ongoing',
       startedAt: _parseDate(json['startedAt'] ?? json['started_at']),
       endedAt: _parseDate(json['endedAt'] ?? json['ended_at']),
+      durationStartedAt: _parseDate(json['durationStartedAt'] ?? json['duration_started_at']),
+      duration: _parseNullableInt(json['duration']),
       createdById: (json['createdById'] ?? json['created_by'] ?? '').toString(),
       hostId: (json['hostId'] ?? json['host_id'] ?? '').toString(),
       coHostId: (json['coHostId'] ?? json['co_host_id'])?.toString(),
@@ -130,6 +144,8 @@ class Call {
       'status': status,
       'startedAt': startedAt?.toIso8601String(),
       'endedAt': endedAt?.toIso8601String(),
+      'durationStartedAt': durationStartedAt?.toIso8601String(),
+      'duration': duration,
       'createdById': createdById,
       'hostId': hostId,
       'coHostId': coHostId,

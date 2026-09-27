@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/socket_service.dart';
 import '../services/api.dart';
 import '../models/call.dart';
+import '../utils/app_feedback.dart';
 
 class IncomingCallState {
   final Call? call;
@@ -48,6 +49,7 @@ class CallNotifier extends Notifier<IncomingCallState> {
     ref.onDispose(() {
       _ringTimeout?.cancel();
       _ringTimeout = null;
+      AppFeedback.stopRingtone();
     });
 
     return IncomingCallState();
@@ -95,6 +97,9 @@ class CallNotifier extends Notifier<IncomingCallState> {
         isRinging: true,
       );
 
+      // Audible + haptic ring (no third-party audio package needed)
+      AppFeedback.startRingtone();
+
       // Auto-dismiss after 45s so the dialog can never ring forever.
       _ringTimeout = Timer(const Duration(seconds: 45), () {
         if (state.isRinging && state.call?.id == call.id) {
@@ -122,6 +127,7 @@ class CallNotifier extends Notifier<IncomingCallState> {
     // stop ringing and drop the dialog.
     if (_matchesCurrentCall(data)) {
       _ringTimeout?.cancel();
+      AppFeedback.stopRingtone();
       state = IncomingCallState();
     }
   }
@@ -129,6 +135,7 @@ class CallNotifier extends Notifier<IncomingCallState> {
   void _handleCallRejected(dynamic data) {
     if (_matchesCurrentCall(data)) {
       _ringTimeout?.cancel();
+      AppFeedback.stopRingtone();
       state = IncomingCallState();
     }
   }
@@ -136,6 +143,7 @@ class CallNotifier extends Notifier<IncomingCallState> {
   void _handleCallEnded(dynamic data) {
     if (_matchesCurrentCall(data)) {
       _ringTimeout?.cancel();
+      AppFeedback.stopRingtone();
       state = IncomingCallState();
     }
   }
@@ -146,6 +154,7 @@ class CallNotifier extends Notifier<IncomingCallState> {
   /// regardless of REST failures.
   Future<void> acceptCall(Call call) async {
     _ringTimeout?.cancel();
+    AppFeedback.stopRingtone();
     try {
       _socketService.emitCallAccept({'callId': call.id});
     } catch (e) {
@@ -163,6 +172,7 @@ class CallNotifier extends Notifier<IncomingCallState> {
 
   Future<void> rejectCall(Call call) async {
     _ringTimeout?.cancel();
+    AppFeedback.stopRingtone();
     try {
       _socketService.emitCallReject({'callId': call.id});
     } catch (e) {
@@ -173,6 +183,7 @@ class CallNotifier extends Notifier<IncomingCallState> {
 
   void clearIncomingCall() {
     _ringTimeout?.cancel();
+    AppFeedback.stopRingtone();
     state = IncomingCallState();
   }
 }

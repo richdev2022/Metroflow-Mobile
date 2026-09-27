@@ -25,6 +25,7 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
   List<User> _teamMembers = [];
   bool _isLoading = true;
   String _filterType = 'all';
+  Timer? _durationTicker;
   late final void Function(dynamic) _callCreatedHandler;
   late final void Function(dynamic) _callUpdatedHandler;
   late final void Function(dynamic) _callDeletedHandler;
@@ -41,6 +42,7 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
       setState(() {
         _upsertCall(Call.fromJson(Map<String, dynamic>.from(data)));
       });
+      _syncDurationTicker();
     };
     _callUpdatedHandler = (data) {
       if (!mounted) return;
@@ -48,6 +50,7 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
       setState(() {
         _upsertCall(Call.fromJson(Map<String, dynamic>.from(data)));
       });
+      _syncDurationTicker();
     };
     _callDeletedHandler = (callId) {
       if (!mounted) return;
@@ -65,10 +68,26 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
     _socket.onCallDeleted = _callDeletedHandler;
     _socket.onCallParticipantJoined = _callParticipantChangedHandler;
     _socket.onCallParticipantLeft = _callParticipantChangedHandler;
+    _syncDurationTicker();
+  }
+
+  /// Live-rebuild while any call is ongoing so the duration badge ticks.
+  void _syncDurationTicker() {
+    final hasOngoing = _calls.any((c) => c.status == 'ongoing');
+    if (hasOngoing && _durationTicker == null) {
+      _durationTicker = Timer.periodic(const Duration(seconds: 30), (_) {
+        if (mounted) setState(() {});
+      });
+    } else if (!hasOngoing && _durationTicker != null) {
+      _durationTicker?.cancel();
+      _durationTicker = null;
+    }
   }
 
   @override
   void dispose() {
+    _durationTicker?.cancel();
+    _durationTicker = null;
     if (_socket.onCallCreated == _callCreatedHandler) {
       _socket.onCallCreated = null;
     }
@@ -141,6 +160,7 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
               .toList()
             ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
         });
+        _syncDurationTicker();
       }
     } catch (e) {
       Logger.error('Error loading calls: $e');
@@ -324,14 +344,32 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
   }
 
   String _durationLabel(Call call) {
-    final started = call.startedAt;
-    final ended = call.endedAt;
-    if (started == null) return '';
-    final end = ended ?? DateTime.now();
-    final minutes = end.difference(started).inMinutes;
-    if (minutes <= 0) return '';
-    if (minutes < 60) return '$minutes min';
-    return '${minutes ~/ 60}h ${minutes % 60}m';
+    // Backend now computes talk-time for finished calls: endedAt -
+    // durationStartedAt (fall back to startedAt). For ongoing calls, tick
+    // from durationStartedAt (fall back to startedAt) — refreshed by the
+    // 30s ticker in the screen state.
+    int? seconds;
+    if (call.status != 'ongoing') {
+      seconds = call.duration;
+      if (seconds == null && call.endedAt != null) {
+        final start = call.durationStartedAt ?? call.startedAt;
+        if (start != null) {
+          seconds = call.endedAt!.difference(start).inSeconds;
+        }
+      }
+    } else {
+      final start = call.durationStartedAt ?? call.startedAt;
+      if (start != null) {
+        seconds = DateTime.now().difference(start).inSeconds;
+      }
+    }
+    if (seconds == null || seconds <= 0) return '';
+    final h = seconds ~/ 3600;
+    final m = (seconds % 3600) ~/ 60;
+    final s = seconds % 60;
+    if (h > 0) return '${h}h ${m.toString().padLeft(2, '0')}m';
+    if (m > 0) return '${m}m ${s.toString().padLeft(2, '0')}s';
+    return '${s}s';
   }
 
   List<Call> get _filteredCalls {
@@ -590,8 +628,9 @@ class _CallCard extends StatelessWidget {
                     if (durationLabel.isNotEmpty) ...[
                       const SizedBox(width: 8),
                       ModernBadge(
-                        label: durationLabel,
-                        color: colors.textSecondary,
+                        label: isOngoing ? '$durationLabel live' : durationLabel,
+                        color: isOngoing ? colors.success : colors.textSecondary,
+                        icon: isOngoing ? Icons.fiber_manual_record : null,
                       ),
                     ],
                   ],

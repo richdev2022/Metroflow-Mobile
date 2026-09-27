@@ -8,6 +8,12 @@ import 'providers/theme_provider.dart';
 import 'providers/auth_provider.dart';
 import 'services/api.dart';
 import 'services/biometrics.dart';
+import 'services/socket_service.dart';
+import 'utils/app_feedback.dart';
+import 'utils/logger.dart';
+import 'widgets/inapp_banner.dart';
+import 'providers/badge_provider.dart';
+import 'screens/chat_detail_screen.dart';
 import 'components/error_boundary.dart';
 import 'screens/splash_screen.dart';
 import 'screens/login_screen.dart';
@@ -82,6 +88,63 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     });
   }
 
+  // Global handler for `chat:new-message-notification` pushes: sound +
+  // sliding banner + bottom-nav badge. Suppressed while the user is already
+  // inside the conversation the message belongs to (ChatDetailScreen plays
+  // its own arrival feedback there).
+  void _setupGlobalChatNotifications() {
+    final socketService = SocketService();
+    socketService.onChatNewMessageNotification = (data) {
+      try {
+        if (data is! Map) return;
+        final payload = Map<String, dynamic>.from(data);
+        final conversationId = (payload['conversationId'] ?? payload['conversation_id'] ?? '').toString();
+
+        // Inside the open conversation? The detail screen handles UX.
+        if (conversationId.isNotEmpty &&
+            conversationId == ChatDetailScreen.activeConversationId) {
+          return;
+        }
+
+        final senderName = (payload['senderName'] ?? payload['sender_name'] ?? 'Someone').toString();
+        final conversationName = (payload['conversationName'] ?? '').toString();
+        final isGroup = payload['conversationType'] == 'group' ||
+            (payload['conversationType'] == null && conversationName.isNotEmpty);
+        final content = (payload['content'] ?? '').toString();
+        final attachmentType = payload['attachmentType']?.toString();
+
+        // Badge increment
+        final badge = ref.read(chatUnreadProvider.notifier);
+        badge.state = badge.state + 1;
+
+        // Sound + haptic pop
+        AppFeedback.playMessageSound();
+
+        // Sliding in-app banner
+        InAppBanner.show(
+          title: isGroup && conversationName.isNotEmpty
+              ? '$senderName · $conversationName'
+              : senderName,
+          message: content.isNotEmpty
+              ? content
+              : (attachmentType != null && attachmentType.startsWith('image/')
+                  ? 'Sent a photo'
+                  : 'Sent an attachment'),
+          icon: Icons.chat_bubble_outline_rounded,
+          accentColor: AppColors.success,
+          onTap: () {
+            final context = navigatorKey.currentContext;
+            if (context != null) {
+              GoRouter.of(context).go('/main/chat');
+            }
+          },
+        );
+      } catch (e) {
+        Logger.error('chat:new-message-notification handler: $e');
+      }
+    };
+  }
+
   String _routeValue(GoRouterState state, String key) {
     final extra = state.extra;
     if (extra is Map) {
@@ -95,7 +158,8 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    
+    _setupGlobalChatNotifications();
+
     _router = GoRouter(
       navigatorKey: navigatorKey,
       initialLocation: '/',

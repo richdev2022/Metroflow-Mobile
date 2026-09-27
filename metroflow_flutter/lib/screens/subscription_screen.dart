@@ -557,6 +557,22 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
                   ],
                 ),
               )),
+          _CapabilityChips(
+            recording: sub.recordingEnabled,
+            waitingRoom: sub.waitingRoomEnabled,
+            screenSharing: sub.screenSharingEnabled,
+            breakoutRooms: sub.breakoutRoomsEnabled,
+            virtualBackgrounds: sub.virtualBackgrounds,
+            liveCaptions: sub.liveCaptions,
+          ),
+          const SizedBox(height: 10),
+          _LimitGrid(
+            maxMeetingDuration: sub.maxMeetingDuration,
+            maxParticipants: sub.maxParticipants,
+            maxRecordingDuration: sub.maxRecordingDuration,
+            maxRecordingStorage: sub.maxRecordingStorage,
+            maxTeamMembers: sub.maxTeamMembers,
+          ),
           const SizedBox(height: 16),
           Container(
             padding: const EdgeInsets.all(12),
@@ -699,6 +715,23 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
                         ],
                       ),
                     )),
+                const SizedBox(height: 10),
+                _CapabilityChips(
+                  recording: plan.recordingEnabled,
+                  waitingRoom: plan.waitingRoomEnabled,
+                  screenSharing: plan.screenSharingEnabled,
+                  breakoutRooms: plan.breakoutRoomsEnabled,
+                  virtualBackgrounds: plan.virtualBackgrounds,
+                  liveCaptions: plan.liveCaptions,
+                ),
+                const SizedBox(height: 10),
+                _LimitGrid(
+                  maxMeetingDuration: plan.maxMeetingDuration,
+                  maxParticipants: plan.maxParticipants,
+                  maxRecordingDuration: plan.maxRecordingDuration,
+                  maxRecordingStorage: plan.maxRecordingStorage,
+                  maxTeamMembers: plan.maxTeamMembers,
+                ),
                 if (action != null) ...[
                   const SizedBox(height:16),
                   ElevatedButton(
@@ -1031,5 +1064,133 @@ class _PaymentWebViewScreenState extends State<_PaymentWebViewScreen> {
       await widget.onComplete();
       if (mounted) Navigator.pop(context);
     }
+  }
+}
+/// Capability chips (check/cross) for admin-configured plan features.
+class _CapabilityChips extends StatelessWidget {
+  final bool recording;
+  final bool waitingRoom;
+  final bool screenSharing;
+  final bool breakoutRooms;
+  final bool virtualBackgrounds;
+  final bool liveCaptions;
+
+  const _CapabilityChips({
+    required this.recording,
+    required this.waitingRoom,
+    required this.screenSharing,
+    required this.breakoutRooms,
+    required this.virtualBackgrounds,
+    required this.liveCaptions,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final caps = <(String, bool)>[
+      ('Recording', recording),
+      ('Waiting room', waitingRoom),
+      ('Screen sharing', screenSharing),
+      ('Breakout rooms', breakoutRooms),
+      ('Virtual backgrounds', virtualBackgrounds),
+      ('Live captions', liveCaptions),
+    ];
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: caps.map((entry) {
+        final enabled = entry.$2;
+        final color = enabled ? AppColors.success : Colors.grey;
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: enabled ? AppColors.success.withValues(alpha: 0.1) : Colors.grey.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                enabled ? Icons.check_rounded : Icons.close_rounded,
+                size: 13,
+                color: color,
+              ),
+              const SizedBox(width: 3),
+              Text(
+                entry.$1,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: enabled ? color : AppTheme.colors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
+    );
+  }
+}
+
+/// Numeric plan limits grid (Unlimited when null).
+class _LimitGrid extends StatelessWidget {
+  final int? maxMeetingDuration;
+  final int? maxParticipants;
+  final int? maxRecordingDuration;
+  final int? maxRecordingStorage;
+  final int maxTeamMembers;
+
+  const _LimitGrid({
+    required this.maxMeetingDuration,
+    required this.maxParticipants,
+    required this.maxRecordingDuration,
+    required this.maxRecordingStorage,
+    required this.maxTeamMembers,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    String fmt(int? value, String unit) =>
+        (value == null || value > 9999) ? 'Unlimited' : '$value$unit';
+
+    final limits = <(String, String)>[
+      ('Call length', fmt(maxMeetingDuration, ' min')),
+      ('Participants', fmt(maxParticipants, '')),
+      ('Recording', fmt(maxRecordingDuration, ' min')),
+      ('Storage', fmt(maxRecordingStorage, ' MB')),
+      ('Team size', maxTeamMembers > 9999 ? 'Unlimited' : '$maxTeamMembers'),
+    ];
+
+    return Column(
+      children: limits.map((entry) {
+        return Container(
+          margin: const EdgeInsets.only(bottom: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: AppTheme.colors.background,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                entry.$1,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  color: AppTheme.colors.textSecondary,
+                ),
+              ),
+              Text(
+                entry.$2,
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.primary,
+                ),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
+    );
   }
 }
