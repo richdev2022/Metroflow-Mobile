@@ -6,6 +6,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import '../utils/app_toast.dart';
 import 'package:flutter/material.dart';
 import '../providers/auth_provider.dart';
+import '../widgets/upgrade_dialog.dart';
 
 final String _apiBaseUrl = dotenv.env['EXPO_PUBLIC_API_BASE_URL'] ?? 'https://api.metricorex.com/api';
 
@@ -48,6 +49,15 @@ class ApiService {
   factory ApiService() => _instance;
   ApiService._internal() {
     _initializeDio();
+  }
+
+  /// Matches the backend plan gate (server/middleware/auth.ts):
+  /// 403 { success:false, code:"PLAN_UPGRADE_REQUIRED", error:"Kindly upgrade your plan..." }
+  static bool _isPlanUpgradeFailure(dynamic data) {
+    if (data is! Map) return false;
+    if (data['code'] == 'PLAN_UPGRADE_REQUIRED') return true;
+    final error = data['error'];
+    return error is String && error.toLowerCase().contains('upgrade your plan');
   }
 
   late final Dio _dio;
@@ -143,6 +153,11 @@ class ApiService {
         
         // Show error toast if success is false (and not token error)
         if (isFailure && response.requestOptions.extra['suppressToast'] != true) {
+          // Plan gate: show the upgrade dialog instead of a plain error toast
+          if (_isPlanUpgradeFailure(data)) {
+            showUpgradeDialog();
+            return handler.next(response);
+          }
           final errorMessage = extractResponseMessage(data) ?? 'Something went wrong';
           AppToast.show(errorMessage, type: AppToastType.error);
         }
@@ -152,9 +167,14 @@ class ApiService {
       onError: (error, handler) async {
         final message = extractResponseMessage(error.response?.data) ?? 'Something went wrong';
         final errorData = error.response?.data;
-        final isPlanUpgradeError = errorData is Map && 
-            errorData['error'] != null && 
-            errorData['error'].toString().toLowerCase().contains('upgrade');
+        final isPlanUpgradeError = _isPlanUpgradeFailure(errorData);
+
+        // Plan gate: always present the upgrade modal (with CTA to the
+        // subscription screen) instead of a generic error toast.
+        if (isPlanUpgradeError) {
+          showUpgradeDialog();
+          return handler.next(error);
+        }
 
         // Only logout for actual auth failures
         if (error.response?.statusCode == 401 || error.response?.statusCode == 403) {
