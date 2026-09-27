@@ -586,7 +586,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Widget _signInSecurityCard() {
     final colors = AppTheme.colors;
-    final isGoogle = (_authProvider ?? '').toLowerCase() == 'google';
+    // 'local+google' (and any linked-provider variant) must be treated as a
+    // Google-capable account, not only the exact 'google' value.
+    final isGoogle = (_authProvider ?? '').toLowerCase().contains('google');
     final badgeLabel = isGoogle ? 'Google account' : 'Email & password';
     final badgeColor = isGoogle ? AppColors.primary : AppColors.success;
     final badgeBg = isGoogle ? AppColors.primaryBg : AppColors.successBg;
@@ -661,7 +663,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ],
               ),
             )
-          else if (hasPassword == false)
+          else if (hasPassword != true)
+            // null (unknown) and false both fall into "Create password": if a
+            // password actually exists, the backend answers with the
+            // PASSWORD_ALREADY_SET code and the app surfaces it — the user is
+            // never left without a password action.
             _securityTile(
               icon: Icons.password_outlined,
               title: 'Create password',
@@ -669,7 +675,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   'Add a password so you can also sign in with your email',
               onTap: _isPasswordBusy ? null : _showCreatePasswordDialog,
             )
-          else if (hasPassword == true)
+          else
             _securityTile(
               icon: Icons.lock_outline,
               title: 'Change password',
