@@ -207,12 +207,17 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
           _upsertCall(updatedCall);
         });
         final userName = await StorageService().getUserName();
+        final currentUserId = await StorageService().getUserId();
+        final isHost = updatedCall.createdById == currentUserId ||
+            updatedCall.hostId == currentUserId;
         await VideoCallScreen.showModal(
           context: context,
           roomId: updatedCall.id,
           title: '${updatedCall.type.capitalize()} Call',
           enableVideo: updatedCall.type == 'video',
           userName: userName,
+          isHost: isHost,
+          isGroupCall: updatedCall.isGroupCall,
           onLeave: () => _leaveCall(updatedCall.id),
         );
       }
@@ -678,7 +683,6 @@ class _CreateCallDialog extends StatefulWidget {
 
 class _CreateCallDialogState extends State<_CreateCallDialog> {
   final ApiService _api = ApiService();
-  final SocketService _socket = SocketService();
   final List<String> _selectedMemberIds = [];
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _maxParticipantsController = TextEditingController(text: '10');
@@ -719,14 +723,9 @@ class _CreateCallDialogState extends State<_CreateCallDialog> {
         }
         final call = Call.fromJson(Map<String, dynamic>.from(responseData));
 
-        // Emit call invites to selected participants
-        for (final userId in _selectedMemberIds) {
-          _socket.emitCallInvite({
-            'callId': call.id,
-            'targetUserId': userId,
-            'type': _callType,
-          });
-        }
+        // NOTE: no client-side call:invite here — POST /calls already emits
+        // `call:incoming` to every invitee server-side. Emitting again caused
+        // every callee to receive the ringing event twice.
 
         if (mounted) Navigator.pop(context);
         widget.onCreated(call);

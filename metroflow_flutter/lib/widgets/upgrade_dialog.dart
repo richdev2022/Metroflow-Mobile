@@ -198,8 +198,11 @@ class UpgradeDialog extends StatelessWidget {
                         ),
                         child: ElevatedButton(
                           onPressed: () {
-                            Navigator.of(dialogContext).pop();
-                            GoRouter.of(context).go('/main/subscription');
+                            Navigator.of(context).pop();
+                            // Deep-link to the recommended tier: the
+                            // subscription screen reads ?plan= and highlights
+                            // + scrolls to the matching plan card.
+                            GoRouter.of(context).go('/main/subscription?plan=pro');
                           },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.transparent,
@@ -229,7 +232,7 @@ class UpgradeDialog extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     TextButton(
-                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      onPressed: () => Navigator.of(context).pop(),
                       child: const Text(
                         'Maybe later',
                         style: TextStyle(

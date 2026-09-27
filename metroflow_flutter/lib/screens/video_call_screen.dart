@@ -5,6 +5,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../services/mediasoup_room_service.dart';
 import '../services/socket_service.dart';
+import '../services/api.dart' show StorageService;
 import '../utils/logger.dart';
 
 class VideoCallScreen extends StatefulWidget {
@@ -13,6 +14,8 @@ class VideoCallScreen extends StatefulWidget {
   final bool isMeeting;
   final bool enableVideo;
   final String? userName;
+  final bool isHost;
+  final bool isGroupCall;
   final FutureOr<void> Function()? onLeave;
 
   const VideoCallScreen({
@@ -22,6 +25,8 @@ class VideoCallScreen extends StatefulWidget {
     this.isMeeting = false,
     this.enableVideo = true,
     this.userName,
+    this.isHost = false,
+    this.isGroupCall = false,
     this.onLeave,
   });
 
@@ -32,6 +37,8 @@ class VideoCallScreen extends StatefulWidget {
     bool isMeeting = false,
     bool enableVideo = true,
     String? userName,
+    bool isHost = false,
+    bool isGroupCall = false,
     FutureOr<void> Function()? onLeave,
   }) {
     return showDialog<void>(
@@ -45,6 +52,8 @@ class VideoCallScreen extends StatefulWidget {
           isMeeting: isMeeting,
           enableVideo: enableVideo,
           userName: userName,
+          isHost: isHost,
+          isGroupCall: isGroupCall,
           onLeave: onLeave,
         ),
       ),
@@ -111,20 +120,26 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   bool _isRecording = false;
   bool _showChat = false;
   bool _hasLeft = false;
+  bool _cleanupDone = false;
   bool _isConnecting = true;
   bool _isSwitchingScreenShare = false;
   String _connectionLabel = 'Connecting...';
+  String _resolvedUserId = '';
+  String _resolvedUserName = 'User';
+  bool _isCallHost = false;
   void Function(dynamic)? _previousChatHandler;
   void Function(dynamic)? _previousScreenStartHandler;
   void Function(dynamic)? _previousScreenStopHandler;
   void Function(dynamic)? _previousRecordingStartHandler;
   void Function(dynamic)? _previousRecordingStopHandler;
   void Function(dynamic)? _previousRecordingPauseHandler;
+  void Function(dynamic)? _previousCallEndedHandler;
 
   @override
   void initState() {
     super.initState();
     _isVideoEnabled = widget.enableVideo;
+    _isCallHost = widget.isHost;
     _initRoom();
   }
 
@@ -136,13 +151,41 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   }
 
   Future<void> _initRoom() async {
+    // Resolve identity once — used for socket room join + participant events.
+    try {
+      final storage = StorageService();
+      _resolvedUserId = await storage.getUserId() ?? '';
+      _resolvedUserName = await storage.getUserName() ?? widget.userName ?? 'User';
+    } catch (_) {
+      _resolvedUserName = widget.userName ?? 'User';
+    }
+    if (_resolvedUserName.trim().isEmpty) _resolvedUserName = widget.userName ?? 'User';
+
     await _localRenderer.initialize();
     await _screenRenderer.initialize();
     _wireRoomEvents();
 
     try {
       if (widget.isMeeting) {
-        _socket.emitMeetingJoin({'meetingId': widget.roomId});
+        _socket.emitMeetingJoin({
+          'meetingId': widget.roomId,
+          'userId': _resolvedUserId,
+          'userName': _resolvedUserName,
+          'isHost': false,
+        });
+      } else {
+        // CRITICAL for calls: the socket must join the server-side room
+        // (`room:{id}`) — without `call:join` no mediasoup events (newProducer,
+        // participant-joined, ...) are ever delivered and remote media stays
+        // blank. Meetings join via `meeting:join` instead.
+        _socket.emitCallJoin({
+          'roomId': widget.roomId,
+          'userId': _resolvedUserId,
+          'userName': _resolvedUserName,
+          'isHost': _isCallHost,
+          'audioEnabled': _isAudioEnabled,
+          'videoEnabled': _isVideoEnabled,
+        });
       }
 
       final room = MediasoupRoomService(
@@ -155,6 +198,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
           setState(() => _connectionLabel = state);
         },
         onRemoteStream: _addRemoteStream,
+        onRemoteStreamRemoved: _removeRemoteStream,
         onScreenShareStarted: (stream) {
           if (!mounted) return;
           setState(() {
@@ -197,6 +241,23 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _previousRecordingStartHandler = _socket.onRecordingStarted;
     _previousRecordingStopHandler = _socket.onRecordingStopped;
     _previousRecordingPauseHandler = _socket.onRecordingPaused;
+    _previousCallEndedHandler = _socket.onCallEnded;
+
+    // Someone ended the call remotely (host / other party / plan limit) —
+    // tear the room down and exit instead of hanging on a dead call.
+    _socket.onCallEnded = (data) {
+      _previousCallEndedHandler?.call(data);
+      final payload = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+      final endedCallId = payload['callId']?.toString();
+      if (widget.isMeeting) return;
+      if (endedCallId != null && endedCallId != widget.roomId) return;
+      if (_hasLeft) return;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Call ended')),
+      );
+      _leave();
+    };
 
     _socket.onMeetingChatMessage = (data) {
       _previousChatHandler?.call(data);
@@ -248,7 +309,28 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
   bool _isRoomPayload(Map<String, dynamic> payload) {
     final id = payload['meetingId'] ?? payload['callId'] ?? payload['roomId'];
-    return id == null || id.toString() == widget.roomId;
+    // STRICT match: a null id is NOT ours. Treating null as "mine" leaked
+    // chats/notifications from other rooms into this room's panels.
+    return id != null && id.toString() == widget.roomId;
+  }
+
+  Future<void> _removeRemoteStream(String consumerId) async {
+    _RemoteTile? tile;
+    for (final t in _remoteTiles) {
+      if (t.media.id == consumerId) {
+        tile = t;
+        break;
+      }
+    }
+    if (tile == null) return;
+    if (!mounted) {
+      await tile.renderer.dispose();
+      return;
+    }
+    setState(() {
+      _remoteTiles.remove(tile);
+    });
+    await tile.renderer.dispose();
   }
 
   Future<void> _addRemoteStream(RemoteMediaStream media) async {
@@ -272,7 +354,10 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _socket.onRecordingStarted = _previousRecordingStartHandler;
     _socket.onRecordingStopped = _previousRecordingStopHandler;
     _socket.onRecordingPaused = _previousRecordingPauseHandler;
+    _socket.onCallEnded = _previousCallEndedHandler;
 
+    if (_cleanupDone) return;
+    _cleanupDone = true;
     await _room?.stop();
     for (final tile in _remoteTiles) {
       await tile.renderer.dispose();
@@ -367,11 +452,13 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     if (message.isEmpty) return;
     // Backend broadcasts `meeting-chat:message` to the whole room (including
     // the sender) with the resolved identity, so we no longer optimistically
-    // add the message locally. senderName is now included.
+    // add the message locally. The room key must match what the server
+    // resolves: `meetingId` for meetings, `roomId`/`callId` for calls.
     _socket.emitMeetingChatMessage({
-      'meetingId': widget.roomId,
+      if (widget.isMeeting) 'meetingId': widget.roomId else 'roomId': widget.roomId,
       'message': message,
-      'senderName': widget.userName ?? 'Me',
+      'senderName': _resolvedUserName,
+      'userId': _resolvedUserId,
     });
     _chatController.clear();
   }
@@ -380,22 +467,41 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     if (_hasLeft) return;
     _hasLeft = true;
 
-    if (widget.isMeeting) {
-      _socket.emitMeetingLeave({'meetingId': widget.roomId});
-    } else {
-      // Calls: announce our own leave, then end the call for everyone still
-      // waiting (backend relays `call:ended` so an unanswered incoming-call
-      // dialog stops ringing instead of ringing forever).
-      _socket.emitCallLeave({
-        'roomId': widget.roomId,
-        'userId': widget.userName, // resolved server-side from socket auth
-        'userName': widget.userName ?? 'User',
-      });
-      _socket.emitCallEnd({'callId': widget.roomId});
+    // POP FIRST: previously we awaited onLeave (a REST call that could throw,
+    // e.g. joining with an empty id) before popping, which trapped the user on
+    // a dead call screen with canPop:false. Navigation must never depend on a
+    // network round-trip.
+    if (mounted) {
+      Navigator.of(context).pop();
     }
-    await Future<void>.sync(() => widget.onLeave?.call());
 
-    if (mounted) Navigator.of(context).pop();
+    try {
+      if (widget.isMeeting) {
+        _socket.emitMeetingLeave({'meetingId': widget.roomId});
+      } else {
+        // Announce our own leave so the server drops us from the room.
+        _socket.emitCallLeave({
+          'roomId': widget.roomId,
+          'userId': _resolvedUserId,
+          'userName': _resolvedUserName,
+        });
+        // End the call for everyone ONLY when it makes sense: 1:1 calls or the
+        // host leaving. In group calls a single participant leaving must not
+        // kill the call for everybody else.
+        final isOneToOne = !widget.isGroupCall;
+        if (_isCallHost || isOneToOne) {
+          _socket.emitCallEnd({'callId': widget.roomId});
+        }
+      }
+    } catch (e) {
+      Logger.error('Error during call leave: $e');
+    }
+
+    try {
+      await Future<void>.sync(() => widget.onLeave?.call());
+    } catch (e) {
+      Logger.error('onLeave callback failed: $e');
+    }
   }
 
   // -------------------------------------------------------------------------

@@ -42,6 +42,7 @@ class SocketService {
   void Function(dynamic)? onCallDeleted;
   void Function(dynamic)? onUserPresenceUpdated;
   void Function(dynamic)? onMediasoupNewProducer;
+  void Function(dynamic)? onMediasoupProducerClosed;
   void Function(dynamic)? onRecordingStarted;
   void Function(dynamic)? onRecordingPaused;
   void Function(dynamic)? onRecordingStopped;
@@ -54,6 +55,16 @@ class SocketService {
   void Function(dynamic)? onChatStopTyping;
 
   void connect(String userId, String businessId, {String? token}) {
+    // A socket in reconnect-limbo (connected == false but not disposed) used to
+    // be abandoned here and replaced by a fresh one -> duplicate event delivery
+    // (e.g. double incoming-call rings). Tear the old one down first.
+    if (_socket != null && _socket?.connected != true) {
+      try {
+        _socket?.disconnect();
+        _socket?.dispose();
+      } catch (_) {}
+      _socket = null;
+    }
     if (_socket?.connected == true) return;
 
     // Keep/refresh the handshake auth token
@@ -181,6 +192,12 @@ class SocketService {
       if (onMediasoupNewProducer != null) onMediasoupNewProducer!(data);
     });
 
+    // Fired when a remote producer is closed (peer left / stopped track).
+    // Clients must drop the matching consumer + remote tile.
+    _socket?.on('mediasoup:producerClosed', (data) {
+      if (onMediasoupProducerClosed != null) onMediasoupProducerClosed!(data);
+    });
+
     _socket?.on('recording:started', (data) {
       if (onRecordingStarted != null) onRecordingStarted!(data);
     });
@@ -255,6 +272,13 @@ class SocketService {
 
   void emitMeetingJoin(Map<String, dynamic> data) {
     _socket?.emit('meeting:join', data);
+  }
+
+  /// Join a call room on the server. REQUIRED for calls (meetings join via
+  /// meeting:join): without it the socket is never added to `room:{id}`, so
+  /// mediasoup events (newProducer etc.) are never delivered for calls.
+  void emitCallJoin(Map<String, dynamic> data) {
+    _socket?.emit('call:join', data);
   }
 
   void emitMeetingLeave(Map<String, dynamic> data) {
@@ -350,8 +374,17 @@ class SocketService {
     );
   }
 
-  Future<dynamic> mediasoupGetRouterRtpCapabilities() {
-    return _emitAck('mediasoup:getRouterRtpCapabilities', []);
+  Future<dynamic> mediasoupGetRouterRtpCapabilities({String? roomId}) {
+    // The server handler destructures `{ roomId }` from the first argument.
+    // Emitting an empty list used to leave roomId undefined forever ->
+    // "Router not initialized" -> mobile could never load the device.
+    return _emitAck('mediasoup:getRouterRtpCapabilities', {'roomId': roomId});
+  }
+
+  /// Existing producers in the room (late-joiner discovery). Without this a
+  /// joiner can never see/hear participants who joined earlier.
+  Future<dynamic> mediasoupGetProducers(Map<String, dynamic> data) {
+    return _emitAck('mediasoup:getProducers', data);
   }
 
   Future<dynamic> mediasoupCreateWebRtcTransport(Map<String, dynamic> data) {
