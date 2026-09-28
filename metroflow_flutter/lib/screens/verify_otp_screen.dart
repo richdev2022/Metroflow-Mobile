@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../providers/auth_provider.dart';
 import '../services/api.dart';
 import '../theme/app_theme.dart';
+import '../widgets/auth_ui.dart';
 
 class VerifyOtpScreen extends ConsumerStatefulWidget {
   const VerifyOtpScreen({super.key, required this.email});
@@ -136,149 +137,166 @@ class _VerifyOtpScreenState extends ConsumerState<VerifyOtpScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = AppTheme.colors;
     return Scaffold(
-      body: SafeArea(
-        child: Stack(
-          children: [
-            SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  GestureDetector(
-                    onTap: () => context.pop(),
-                    child: const Text(
-                      '← Back',
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: AppColors.primary,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Verify OTP',
-                    style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: colors.text,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    "We've sent a 6-digit verification code to ${widget.email}",
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: colors.textSecondary,
-                    ),
-                  ),
-                  const SizedBox(height: 32),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: colors.surface,
-                      border: Border.all(color: colors.border, width: 1),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: TextField(
-                      controller: _otpController,
-                      decoration: InputDecoration(
-                        hintText: 'Enter 6-digit OTP',
-                        hintStyle: TextStyle(color: colors.textSecondary),
-                        border: InputBorder.none,
-                        contentPadding:
-                            const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                        counterText: '',
-                      ),
-                      keyboardType: TextInputType.number,
-                      maxLength: 6,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 24,
-                        letterSpacing: 8,
-                        color: AppColors.primary,
-                      ),
-                      autofocus: true,
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Container(
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: colors.primary,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: TextButton(
-                      onPressed: _isLoading ? null : _handleVerify,
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        backgroundColor: _isLoading
-                            ? colors.primary.withValues(alpha: 0.5)
-                            : colors.primary,
-                      ),
-                      child: _isLoading
-                          ? const SizedBox(
-                              height: 20,
-                              width: 20,
-                              child: CircularProgressIndicator(
-                                color: Colors.white,
-                                strokeWidth: 2,
-                              ),
-                            )
-                          : const Text(
-                              'Verify OTP',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        "Didn't receive the code? ",
-                        style: TextStyle(color: colors.textSecondary, fontSize: 14),
-                      ),
-                      _canResend
-                          ? GestureDetector(
-                              onTap: _resendLoading ? null : _handleResend,
-                              child: _resendLoading
-                                  ? const SizedBox(
-                                      height: 16,
-                                      width: 16,
-                                      child: CircularProgressIndicator(
-                                        color: AppColors.primary,
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : Text(
-                                      'Resend',
-                                      style: TextStyle(
-                                        color: colors.primary,
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                            )
-                          : Text(
-                              'Resend in $_countdown\u{00A0}s',
-                              style: TextStyle(
-                                color: colors.textSecondary,
-                                fontSize: 14,
-                              ),
-                            ),
-                    ],
-                  ),
-                ],
+      body: Stack(
+        children: [
+          // Gradient accent band behind the header (clipped with a curve).
+          ClipPath(
+            clipper: _AuthHeaderCurve(),
+            child: Container(
+              height: 170,
+              decoration: const BoxDecoration(
+                gradient: BrandSplashGradient.buttonGradient,
               ),
             ),
-          ],
+          ),
+          AuthScreenShell(
+            onBack: () => context.pop(),
+            children: [
+              const SizedBox(height: 6),
+              AuthBrandHeader(
+                title: 'Verify OTP',
+                subtitle:
+                    'We\u2019ve sent a 6-digit verification code to ${widget.email}',
+              ),
+              const SizedBox(height: 32),
+              _OtpField(controller: _otpController),
+              const SizedBox(height: 24),
+              AuthGradientButton(
+                label: 'Verify OTP',
+                loading: _isLoading,
+                onPressed: _handleVerify,
+                icon: Icons.verified_outlined,
+              ),
+              const SizedBox(height: 24),
+              _ResendRow(
+                colors: AppTheme.colors,
+                canResend: _canResend,
+                countdown: _countdown,
+                loading: _resendLoading,
+                onResend: _handleResend,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ResendRow extends StatelessWidget {
+  final ThemeColors colors;
+  final bool canResend;
+  final int countdown;
+  final bool loading;
+  final VoidCallback onResend;
+
+  const _ResendRow({
+    required this.colors,
+    required this.canResend,
+    required this.countdown,
+    required this.loading,
+    required this.onResend,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Text(
+          "Didn't receive the code? ",
+          style: TextStyle(color: colors.textSecondary, fontSize: 14),
+        ),
+        if (canResend)
+          GestureDetector(
+            onTap: loading ? null : onResend,
+            child: loading
+                ? const SizedBox(
+                    height: 16,
+                    width: 16,
+                    child: CircularProgressIndicator(
+                      color: AppColors.primary,
+                      strokeWidth: 2,
+                    ),
+                  )
+                : Text(
+                    'Resend',
+                    style: TextStyle(
+                      color: colors.primary,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+          )
+        else
+          Text(
+            'Resend in $countdown\u{00A0}s',
+            style: TextStyle(
+              color: colors.textSecondary,
+              fontSize: 14,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _OtpField extends StatelessWidget {
+  final TextEditingController controller;
+
+  const _OtpField({required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppTheme.colors;
+    return Container(
+      decoration: BoxDecoration(
+        color: colors.surface,
+        border: Border.all(color: colors.border, width: 1.4),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: TextField(
+        controller: controller,
+        decoration: InputDecoration(
+          hintText: 'Enter 6-digit OTP',
+          hintStyle: TextStyle(color: colors.textSecondary, fontSize: 15),
+          border: InputBorder.none,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+          counterText: '',
+        ),
+        keyboardType: TextInputType.number,
+        maxLength: 6,
+        textAlign: TextAlign.center,
+        autofocus: true,
+        autocorrect: false,
+        enableSuggestions: false,
+        style: const TextStyle(
+          fontSize: 24,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 8,
+          color: AppColors.primary,
         ),
       ),
     );
   }
+}
+
+/// Soft curved bottom edge for the gradient header band.
+class _AuthHeaderCurve extends CustomClipper<Path> {
+  @override
+  Path getClip(Size size) {
+    final path = Path()
+      ..moveTo(0, 0)
+      ..lineTo(0, size.height - 40)
+      ..quadraticBezierTo(
+          size.width / 2, size.height + 30, size.width, size.height - 40)
+      ..lineTo(size.width, 0)
+      ..close();
+    return path;
+  }
+
+  @override
+  bool shouldReclip(covariant CustomClipper<Path> oldDelegate) => false;
 }

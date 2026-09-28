@@ -53,11 +53,14 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   @override
   void initState() {
     super.initState();
-    _selectedIndex = widget.initialIndex == 5 || widget.initialIndex == 6 ? 0 : widget.initialIndex;
+    // Bottom nav has 5 visible tabs (0-3 + "More"). Legacy deep links that
+    // point at Wallet (5) / Payroll (6) start on Home and re-enter through
+    // the KYC gate post-frame, exactly as before.
+    _selectedIndex = widget.initialIndex >= 0 && widget.initialIndex <= 3
+        ? widget.initialIndex
+        : 0;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && (_selectedIndex == 5 || _selectedIndex == 6)) {
-        _onItemTapped(_selectedIndex);
-      } else if (mounted && (widget.initialIndex == 5 || widget.initialIndex == 6)) {
+      if (mounted && (widget.initialIndex == 5 || widget.initialIndex == 6)) {
         _onItemTapped(widget.initialIndex);
       }
     });
@@ -68,7 +71,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       return;
     }
     // Viewing the Meetings tab clears its "new invite" dot
-    if (index == 2) {
+    if (index == 3) {
       ref.read(meetingsUnreadProvider.notifier).clear();
     }
     setState(() {
@@ -76,9 +79,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     });
   }
 
-  /// Inactive nav icon wrapped with an optional badge (chat unread count)
-  /// or a small dot (new meeting invites).
-  Widget _navIconWithBadge({
+  /// Bottom-nav icon with an optional unread badge (Chat) or a small dot
+  /// (new meeting invites). Kept compact (no pill background) so five tabs
+  /// fit comfortably on narrow screens.
+  Widget _navIcon({
     required IconData icon,
     required int index,
     required ThemeColors colors,
@@ -89,20 +93,18 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     return Stack(
       clipBehavior: Clip.none,
       children: [
-        Container(
-          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-          decoration: selected
-              ? BoxDecoration(
-                  color: colors.primary,
-                  borderRadius: BorderRadius.circular(12),
-                )
-              : null,
-          child: Icon(icon, color: selected ? Colors.white : null),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+          child: Icon(
+            icon,
+            size: 24,
+            color: selected ? colors.primary : colors.textSecondary,
+          ),
         ),
         if (badgeCount > 0 || dot)
           Positioned(
-            top: -4,
-            right: -6,
+            top: -2,
+            right: -2,
             child: badgeCount > 0
                 ? Container(
                     constraints: const BoxConstraints(minWidth: 17),
@@ -112,7 +114,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     decoration: BoxDecoration(
                       color: colors.error,
                       borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: colors.background, width: 1.5),
+                      border: Border.all(color: colors.surface, width: 1.5),
                     ),
                     child: Text(
                       badgeCount > 99 ? '99+' : '$badgeCount',
@@ -131,7 +133,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     decoration: BoxDecoration(
                       color: colors.error,
                       shape: BoxShape.circle,
-                      border: Border.all(color: colors.background, width: 1.5),
+                      border: Border.all(color: colors.surface, width: 1.5),
                     ),
                   ),
           ),
@@ -533,154 +535,267 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       body: _pages[_selectedIndex],
       bottomNavigationBar: BottomNavigationBar(
         type: BottomNavigationBarType.fixed,
-        currentIndex: _selectedIndex,
-        onTap: (index) => _onItemTapped(index),
+        currentIndex: _selectedIndex > 3 ? 4 : _selectedIndex,
+        onTap: (index) {
+          if (index == 4) {
+            _showMoreSheet();
+          } else {
+            _onItemTapped(index);
+          }
+        },
         backgroundColor: colors.surface,
         selectedItemColor: colors.primary,
         unselectedItemColor: colors.textSecondary,
-        selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600),
+        selectedFontSize: 11.5,
+        unselectedFontSize: 11,
+        showUnselectedLabels: true,
+        selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w700),
         items: [
           BottomNavigationBarItem(
-            icon: Container(
-              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-              decoration: _selectedIndex == 0
-                  ? BoxDecoration(
-                      color: colors.primary,
-                      borderRadius: BorderRadius.circular(12),
-                    )
-                  : null,
-              child: Icon(Icons.home_outlined, color: _selectedIndex == 0 ? Colors.white : null),
-            ),
-            activeIcon: Container(
-              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-              decoration: BoxDecoration(
-                color: colors.primary,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(Icons.home, color: Colors.white),
-            ),
+            icon: _navIcon(icon: Icons.home_outlined, index: 0, colors: colors),
+            activeIcon: _navIcon(icon: Icons.home_rounded, index: 0, colors: colors),
             label: 'Home',
           ),
           BottomNavigationBarItem(
-            icon: Container(
-              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-              decoration: _selectedIndex == 1
-                  ? BoxDecoration(
-                      color: colors.primary,
-                      borderRadius: BorderRadius.circular(12),
-                    )
-                  : null,
-              child: Icon(Icons.list_outlined, color: _selectedIndex == 1 ? Colors.white : null),
-            ),
-            activeIcon: Container(
-              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-              decoration: BoxDecoration(
-                color: colors.primary,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(Icons.list, color: Colors.white),
-            ),
+            icon: _navIcon(icon: Icons.task_outlined, index: 1, colors: colors),
+            activeIcon: _navIcon(icon: Icons.task_alt_rounded, index: 1, colors: colors),
             label: 'Tasks',
           ),
           BottomNavigationBarItem(
-            icon: _navIconWithBadge(
-              icon: Icons.calendar_today_outlined,
+            icon: _navIcon(
+              icon: Icons.chat_bubble_outline_rounded,
               index: 2,
-              colors: colors,
-              dot: ref.watch(meetingsUnreadProvider) > 0,
-            ),
-            activeIcon: Container(
-              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-              decoration: BoxDecoration(
-                color: colors.primary,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(Icons.calendar_today, color: Colors.white),
-            ),
-            label: 'Meetings',
-          ),
-          BottomNavigationBarItem(
-            icon: _navIconWithBadge(
-              icon: Icons.chat_outlined,
-              index: 3,
               colors: colors,
               badgeCount: ref.watch(chatUnreadProvider),
             ),
-            activeIcon: Container(
-              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-              decoration: BoxDecoration(
-                color: colors.primary,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(Icons.chat, color: Colors.white),
+            activeIcon: _navIcon(
+              icon: Icons.chat_bubble_rounded,
+              index: 2,
+              colors: colors,
+              badgeCount: ref.watch(chatUnreadProvider),
             ),
             label: 'Chat',
           ),
           BottomNavigationBarItem(
-            icon: Container(
-              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-              decoration: _selectedIndex == 4
-                  ? BoxDecoration(
-                      color: colors.primary,
-                      borderRadius: BorderRadius.circular(12),
-                    )
-                  : null,
-              child: Icon(Icons.video_call_outlined, color: _selectedIndex == 4 ? Colors.white : null),
+            icon: _navIcon(
+              icon: Icons.calendar_today_outlined,
+              index: 3,
+              colors: colors,
+              dot: ref.watch(meetingsUnreadProvider) > 0,
             ),
-            activeIcon: Container(
-              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-              decoration: BoxDecoration(
-                color: colors.primary,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(Icons.video_call, color: Colors.white),
+            activeIcon: _navIcon(
+              icon: Icons.calendar_month_rounded,
+              index: 3,
+              colors: colors,
+              dot: ref.watch(meetingsUnreadProvider) > 0,
             ),
-            label: 'Calls',
+            label: 'Meetings',
           ),
           BottomNavigationBarItem(
-            icon: Container(
-              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-              decoration: _selectedIndex == 5
-                  ? BoxDecoration(
-                      color: colors.primary,
-                      borderRadius: BorderRadius.circular(12),
-                    )
-                  : null,
-              child: Icon(Icons.account_balance_wallet_outlined, color: _selectedIndex == 5 ? Colors.white : null),
+            icon: _navIcon(
+              icon: Icons.apps_rounded,
+              index: 4,
+              colors: colors,
             ),
-            activeIcon: Container(
-              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-              decoration: BoxDecoration(
-                color: colors.primary,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(Icons.account_balance_wallet, color: Colors.white),
+            activeIcon: _navIcon(
+              icon: Icons.apps_rounded,
+              index: 4,
+              colors: colors,
             ),
-            label: 'Wallet',
-          ),
-          BottomNavigationBarItem(
-            icon: Container(
-              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-              decoration: _selectedIndex == 6
-                  ? BoxDecoration(
-                      color: colors.primary,
-                      borderRadius: BorderRadius.circular(12),
-                    )
-                  : null,
-              child: Icon(Icons.payments_outlined, color: _selectedIndex == 6 ? Colors.white : null),
-            ),
-            activeIcon: Container(
-              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-              decoration: BoxDecoration(
-                color: colors.primary,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(Icons.payments, color: Colors.white),
-            ),
-            label: 'Payroll',
+            label: 'More',
           ),
         ],
       ),
+    );
+  }
+
+  /// "More" overflow sheet: everything that no longer earns a bottom-nav
+  /// slot (Calls, Wallet, Payroll + routed destinations like Board, Team,
+  /// Transfers…). Wallet/Payroll still go through the KYC gate.
+  void _showMoreSheet() {
+    final colors = AppTheme.colors;
+    final themeState = ref.read(themeProvider);
+
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: colors.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 10),
+              Container(
+                width: 44,
+                height: 4.5,
+                decoration: BoxDecoration(
+                  color: colors.borderVariant,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+              const SizedBox(height: 12),
+              GridView.count(
+                crossAxisCount: 4,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                childAspectRatio: 0.92,
+                children: [
+                  _MoreTile(
+                    icon: Icons.video_call_outlined,
+                    label: 'Calls',
+                    colors: colors,
+                    onTap: () {
+                      Navigator.of(sheetContext).pop();
+                      _onItemTapped(4);
+                    },
+                  ),
+                  _MoreTile(
+                    icon: Icons.account_balance_wallet_outlined,
+                    label: 'Wallet',
+                    colors: colors,
+                    onTap: () async {
+                      Navigator.of(sheetContext).pop();
+                      await _onItemTapped(5);
+                    },
+                  ),
+                  _MoreTile(
+                    icon: Icons.payments_outlined,
+                    label: 'Payroll',
+                    colors: colors,
+                    onTap: () async {
+                      Navigator.of(sheetContext).pop();
+                      await _onItemTapped(6);
+                    },
+                  ),
+                  _MoreTile(
+                    icon: Icons.view_kanban_outlined,
+                    label: 'Board',
+                    colors: colors,
+                    onTap: () {
+                      Navigator.of(sheetContext).pop();
+                      context.go('/main/board');
+                    },
+                  ),
+                  _MoreTile(
+                    icon: Icons.people_outline,
+                    label: 'Team',
+                    colors: colors,
+                    onTap: () {
+                      Navigator.of(sheetContext).pop();
+                      context.push('/main/team');
+                    },
+                  ),
+                  _MoreTile(
+                    icon: Icons.swap_horiz_outlined,
+                    label: 'Transfers',
+                    colors: colors,
+                    onTap: () {
+                      Navigator.of(sheetContext).pop();
+                      context.push('/main/transfers');
+                    },
+                  ),
+                  _MoreTile(
+                    icon: Icons.lightbulb_outline,
+                    label: 'Ideas',
+                    colors: colors,
+                    onTap: () {
+                      Navigator.of(sheetContext).pop();
+                      context.push('/main/ideas');
+                    },
+                  ),
+                  _MoreTile(
+                    icon: Icons.archive_outlined,
+                    label: 'Backlog',
+                    colors: colors,
+                    onTap: () {
+                      Navigator.of(sheetContext).pop();
+                      context.push('/main/backlog');
+                    },
+                  ),
+                  _MoreTile(
+                    icon: Icons.leaderboard_outlined,
+                    label: 'Rankings',
+                    colors: colors,
+                    onTap: () {
+                      Navigator.of(sheetContext).pop();
+                      context.push('/main/ranking');
+                    },
+                  ),
+                  _MoreTile(
+                    icon: Icons.receipt_long_outlined,
+                    label: 'Activity Logs',
+                    colors: colors,
+                    onTap: () {
+                      Navigator.of(sheetContext).pop();
+                      context.push('/main/activity-logs');
+                    },
+                  ),
+                  _MoreTile(
+                    icon: Icons.credit_card_outlined,
+                    label: 'Plan',
+                    colors: colors,
+                    onTap: () {
+                      Navigator.of(sheetContext).pop();
+                      context.push('/main/subscription');
+                    },
+                  ),
+                  _MoreTile(
+                    icon: Icons.local_offer_outlined,
+                    label: 'Pricing',
+                    colors: colors,
+                    onTap: () {
+                      Navigator.of(sheetContext).pop();
+                      context.push('/main/fees');
+                    },
+                  ),
+                  _MoreTile(
+                    icon: Icons.person_outline,
+                    label: 'Profile',
+                    colors: colors,
+                    onTap: () {
+                      Navigator.of(sheetContext).pop();
+                      context.push('/main/profile');
+                    },
+                  ),
+                  _MoreTile(
+                    icon: Icons.settings_outlined,
+                    label: 'Settings',
+                    colors: colors,
+                    onTap: () {
+                      Navigator.of(sheetContext).pop();
+                      context.push('/main/settings');
+                    },
+                  ),
+                  _MoreTile(
+                    icon: themeState.mode == ThemeMode.dark
+                        ? Icons.light_mode_outlined
+                        : Icons.dark_mode_outlined,
+                    label: themeState.mode == ThemeMode.dark
+                        ? 'Light Mode'
+                        : 'Dark Mode',
+                    colors: colors,
+                    onTap: () {
+                      Navigator.of(sheetContext).pop();
+                      ref.read(themeProvider.notifier).toggleTheme(
+                            themeState.mode == ThemeMode.dark
+                                ? ThemeMode.light
+                                : ThemeMode.dark,
+                          );
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -690,7 +805,6 @@ class _KycGateStatus {
   final bool ninVerified;
 
   const _KycGateStatus({required this.bvnVerified, required this.ninVerified});
-
   factory _KycGateStatus.fromResponse(dynamic data) {
     final root = data is Map<String, dynamic> ? data : <String, dynamic>{};
     final user = root['user'] is Map<String, dynamic> ? root['user'] as Map<String, dynamic> : null;
@@ -701,6 +815,58 @@ class _KycGateStatus {
       ninVerified: user?['ninStatus'] == 'verified' ||
           user?['nin_status'] == 'verified' ||
           root['nin_verified'] == true,
+    );
+  }
+}
+
+/// Icon tile used inside the "More" bottom sheet.
+class _MoreTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final ThemeColors colors;
+  final VoidCallback onTap;
+
+  const _MoreTile({
+    required this.icon,
+    required this.label,
+    required this.colors,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: colors.primary.withValues(alpha: 0.09),
+                borderRadius: BorderRadius.circular(13),
+              ),
+              child: Icon(icon, size: 21, color: colors.primary),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 10.5,
+                fontWeight: FontWeight.w600,
+                color: colors.text,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

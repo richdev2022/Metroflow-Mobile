@@ -18,6 +18,8 @@ import '../utils/app_feedback.dart';
 import '../widgets/modern_ui.dart';
 import 'video_call_screen.dart';
 import '../utils/logger.dart';
+import '../widgets/avatar_with_initials.dart';
+import '../widgets/user_profile_sheet.dart';
 
 class ChatDetailScreen extends ConsumerStatefulWidget {
   final Conversation conversation;
@@ -109,6 +111,45 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     } else {
       _messages[index] = message;
     }
+  }
+
+  /// Opens the profile sheet for the chat partner (direct) or the member
+  /// list (group). Uses the enriched participants the backend returns with
+  /// every conversation.
+  void _openChatProfile() {
+    final conversation = widget.conversation;
+    final currentId = _currentUserId;
+    final members = conversation.participants
+        .map((p) => ChatUserProfile(
+              userId: p.userId,
+              name: p.name.trim().isNotEmpty
+                  ? p.name.trim()
+                  : (p.email.isNotEmpty ? p.email : 'Member'),
+              email: p.email,
+              avatarUrl: p.avatarUrl,
+            ))
+        .toList();
+    final other = conversation.otherParticipant(currentId);
+    final ChatUserProfile profile = (other != null && other.name.trim().isNotEmpty)
+        ? ChatUserProfile(
+            userId: other.userId,
+            name: other.name.trim(),
+            email: other.email,
+            avatarUrl: other.avatarUrl,
+          )
+        : (members.isNotEmpty
+            ? members.first
+            : ChatUserProfile(
+                userId: '',
+                name: conversation.displayTitle(currentId),
+              ));
+
+    UserProfileSheet.show(
+      context,
+      profile: profile,
+      members: members,
+      conversationName: conversation.displayTitle(currentId),
+    );
   }
 
   /// Start an audio/video call with the other chat participants (parity with
@@ -493,38 +534,43 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         shadowColor: colors.border,
         iconTheme: IconThemeData(color: colors.text),
         titleSpacing: 0,
-        title: Row(
-          children: [
-            AvatarInitials(
-              name: widget.conversation.name ?? 'Chat',
-              radius: 17,
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.conversation.name ?? 'Chat',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: colors.text,
-                    ),
-                  ),
-                  Text(
-                    isDirect ? 'Direct message' : '$memberCount members',
-                    style: TextStyle(
-                      fontSize: 11.5,
-                      color: colors.textSecondary,
-                    ),
-                  ),
-                ],
+        title: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => _openChatProfile(),
+          child: Row(
+            children: [
+              AvatarWithInitials(
+                name: widget.conversation.displayTitle(_currentUserId),
+                imageUrl: widget.conversation.displayAvatar(_currentUserId),
+                radius: 17,
               ),
-            ),
-          ],
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.conversation.displayTitle(_currentUserId),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: colors.text,
+                      ),
+                    ),
+                    Text(
+                      isDirect ? 'Direct message' : '$memberCount members',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
         actions: [
           _RoundIconAction(

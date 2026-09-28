@@ -330,7 +330,11 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
           path: '/main',
           builder: (context, state) {
             final index = int.tryParse(state.uri.queryParameters['tab'] ?? '0') ?? 0;
-            return MainScreen(initialIndex: index);
+            // Keyed by tab: navigating from inside the shell (e.g. a
+            // dashboard quick action → /main?tab=3) rebuilds MainScreen with
+            // the new initialIndex — without the key the State is reused and
+            // the tab never switches (dead CTA).
+            return MainScreen(key: ValueKey('main-tab-$index'), initialIndex: index);
           },
           routes: [
             GoRoute(

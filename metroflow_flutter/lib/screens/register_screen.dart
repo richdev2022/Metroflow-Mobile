@@ -5,6 +5,7 @@ import '../components/google_sign_in_button.dart';
 import '../providers/auth_provider.dart';
 import '../services/api.dart';
 import '../theme/app_theme.dart';
+import '../widgets/auth_ui.dart';
 
 const List<String> businessIndustries = [
   'Technology',
@@ -379,7 +380,6 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
 
   String? selectedIndustry;
   String industrySearchQuery = '';
-  bool showPassword = false;
   bool isLoading = false;
   bool showIndustryModal = false;
 
@@ -507,471 +507,327 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
       if (mounted) context.go('/main');
     }
   }
-
   @override
   Widget build(BuildContext context) {
     final colors = AppTheme.colors;
     return Scaffold(
-      body: SafeArea(
-        child: Stack(
-          children: [
-            SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 100,
-                      height: 100,
-                      margin: const EdgeInsets.only(bottom: 24),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(28),
-                        boxShadow: [
-                          BoxShadow(
-                            color: colors.primary.withValues(alpha:0.3),
-                            offset: const Offset(0, 8),
-                            blurRadius: 20,
-                            spreadRadius: 0,
-                          ),
-                        ],
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(28),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [colors.primary, colors.primaryLight],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            ),
-                          ),
-                          child: const Icon(Icons.person_add_outlined, size: 48, color: Colors.white),
-                        ),
-                      ),
-                    ),
-                  ),
-                  Text(
-                    'Create Account',
-                    style: TextStyle(
-                      fontSize: 32,
-                      fontWeight: FontWeight.bold,
-                      color: colors.primary,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Join Metricorex today',
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: colors.textSecondary,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 28),
-                  Text(
-                    'Business Information',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      color: colors.text,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: colors.surface,
-                      border: Border.all(color: colors.border, width: 1.5),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Row(
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: Icon(Icons.business_outlined, color: colors.textSecondary),
-                        ),
-                        Expanded(
-                          child: TextField(
-                            controller: businessNameController,
-                            decoration: InputDecoration(
-                              hintText: 'Business Name',
-                              hintStyle: TextStyle(color: colors.textSecondary),
-                              border: InputBorder.none,
-                            ),
-                            style: TextStyle(color: colors.text, fontSize: 16),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: colors.surface,
-                      border: Border.all(color: colors.border, width: 1.5),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Row(
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: Icon(Icons.mail_outlined, color: colors.textSecondary),
-                        ),
-                        Expanded(
-                          child: TextField(
-                            controller: businessEmailController,
-                            decoration: InputDecoration(
-                              hintText: 'Business Email',
-                              hintStyle: TextStyle(color: colors.textSecondary),
-                              border: InputBorder.none,
-                            ),
-                            keyboardType: TextInputType.emailAddress,
-                            autocorrect: false,
-                            style: TextStyle(color: colors.text, fontSize: 16),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: colors.surface,
-                      border: Border.all(color: colors.border, width: 1.5),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Row(
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: Icon(Icons.work_outline, color: colors.textSecondary),
-                        ),
-                        Expanded(
-                          child: GestureDetector(
-                            onTap: () => setState(() => showIndustryModal = true),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 16),
-                              child: Text(
-                                selectedIndustry ?? 'Business Industry',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  color: selectedIndustry != null
-                                      ? colors.text
-                                      : colors.textSecondary,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        if (selectedIndustry != null)
-                          GestureDetector(
-                            onTap: () => setState(() => selectedIndustry = null),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 16),
-                              child: Icon(Icons.close_outlined, color: colors.textSecondary),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Admin Information',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      color: colors.text,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: colors.surface,
-                      border: Border.all(color: colors.border, width: 1.5),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Row(
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: Icon(Icons.person_outlined, color: colors.textSecondary),
-                        ),
-                        Expanded(
-                          child: TextField(
-                            controller: adminNameController,
-                            decoration: InputDecoration(
-                              hintText: 'Admin Full Name',
-                              hintStyle: TextStyle(color: colors.textSecondary),
-                              border: InputBorder.none,
-                            ),
-                            style: TextStyle(color: colors.text, fontSize: 16),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: colors.surface,
-                      border: Border.all(color: colors.border, width: 1.5),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Row(
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: Icon(Icons.mail_outlined, color: colors.textSecondary),
-                        ),
-                        Expanded(
-                          child: TextField(
-                            controller: adminEmailController,
-                            decoration: InputDecoration(
-                              hintText: 'Admin Email',
-                              hintStyle: TextStyle(color: colors.textSecondary),
-                              border: InputBorder.none,
-                            ),
-                            keyboardType: TextInputType.emailAddress,
-                            autocorrect: false,
-                            style: TextStyle(color: colors.text, fontSize: 16),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: colors.surface,
-                      border: Border.all(color: colors.border, width: 1.5),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Row(
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: Icon(Icons.lock_outlined, color: colors.textSecondary),
-                        ),
-                        Expanded(
-                          child: TextField(
-                            controller: passwordController,
-                            obscureText: !showPassword,
-                            decoration: InputDecoration(
-                              hintText: 'Password',
-                              hintStyle: TextStyle(color: colors.textSecondary),
-                              border: InputBorder.none,
-                            ),
-                            style: TextStyle(color: colors.text, fontSize: 16),
-                          ),
-                        ),
-                        GestureDetector(
-                          onTap: () => setState(() => showPassword = !showPassword),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            child: Icon(
-                              showPassword
-                                  ? Icons.visibility_off_outlined
-                                  : Icons.visibility_outlined,
-                              color: colors.textSecondary,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Container(
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: colors.primary.withValues(alpha:0.3),
-                          offset: const Offset(0, 8),
-                          blurRadius: 16,
-                          spreadRadius: 0,
-                        ),
-                      ],
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [colors.primary, colors.primaryLight],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                        ),
-                        child: TextButton(
-                          onPressed: isLoading ? null : handleRegister,
-                          style: TextButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 18),
-                          ),
-                          child: isLoading
-                              ? const SizedBox(
-                                  height: 24,
-                                  width: 24,
-                                  child: CircularProgressIndicator(color: Colors.white),
-                                )
-                              : const Text(
-                                  'Create Account',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 17,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  const OrDivider(),
-                  const SizedBox(height: 16),
-                  GoogleSignInButton(
-                    onPressed: _handleGoogleSignIn,
-                    isLoading: isLoading,
-                  ),
-                  const SizedBox(height: 40),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        'Already have an account? ',
-                        style: TextStyle(fontSize: 15, color: colors.textSecondary),
-                      ),
-                      GestureDetector(
-                        onTap: () => context.go('/login'),
-                        child: Text(
-                          'Sign In',
-                          style: TextStyle(
-                            fontSize: 15,
-                            color: colors.primary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+      body: Stack(
+        children: [
+          // Gradient accent band behind the header (clipped with a curve).
+          ClipPath(
+            clipper: _AuthHeaderCurve(),
+            child: Container(
+              height: 170,
+              decoration: const BoxDecoration(
+                gradient: BrandSplashGradient.buttonGradient,
               ),
             ),
-            if (showIndustryModal)
-              Stack(
-                children: [
-                  ModalBarrier(
-                    color: Colors.black.withValues(alpha:0.5),
-                  ),
-                  DraggableScrollableSheet(
-                    initialChildSize: 0.7,
-                    minChildSize: 0.5,
-                    maxChildSize: 0.9,
-                    builder: (context, scrollController) => Container(
-                      decoration: BoxDecoration(
-                        color: colors.background,
-                        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(24),
-                        child: Column(
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          ),
+          AuthScreenShell(
+            children: [
+              const SizedBox(height: 6),
+              AuthBrandHeader(
+                title: 'Create your workspace',
+                subtitle: 'Join Metricorex and run your business in one place.',
+              ),
+              const SizedBox(height: 30),
+              _SectionLabel(label: 'Business Information', colors: colors),
+              const SizedBox(height: 12),
+              AuthTextField(
+                controller: businessNameController,
+                hint: 'Business Name',
+                icon: Icons.business_outlined,
+                textInputAction: TextInputAction.next,
+              ),
+              const SizedBox(height: 12),
+              AuthTextField(
+                controller: businessEmailController,
+                hint: 'Business Email',
+                icon: Icons.alternate_email_rounded,
+                keyboardType: TextInputType.emailAddress,
+                textInputAction: TextInputAction.next,
+              ),
+              const SizedBox(height: 12),
+              _IndustryField(
+                selectedIndustry: selectedIndustry,
+                onOpen: () => setState(() => showIndustryModal = true),
+                onClear: () => setState(() => selectedIndustry = null),
+              ),
+              const SizedBox(height: 22),
+              _SectionLabel(label: 'Admin Information', colors: colors),
+              const SizedBox(height: 12),
+              AuthTextField(
+                controller: adminNameController,
+                hint: 'Admin Full Name',
+                icon: Icons.person_outline_rounded,
+                textInputAction: TextInputAction.next,
+              ),
+              const SizedBox(height: 12),
+              AuthTextField(
+                controller: adminEmailController,
+                hint: 'Admin Email',
+                icon: Icons.alternate_email_rounded,
+                keyboardType: TextInputType.emailAddress,
+                textInputAction: TextInputAction.next,
+              ),
+              const SizedBox(height: 12),
+              AuthPasswordField(
+                controller: passwordController,
+                hint: 'Password',
+              ),
+              const SizedBox(height: 24),
+              AuthGradientButton(
+                label: 'Create Account',
+                loading: isLoading,
+                onPressed: handleRegister,
+                icon: Icons.rocket_launch_rounded,
+              ),
+              const SizedBox(height: 22),
+              const OrDivider(),
+              const SizedBox(height: 16),
+              GoogleSignInButton(
+                onPressed: _handleGoogleSignIn,
+                isLoading: isLoading,
+              ),
+              const SizedBox(height: 22),
+              AuthSwitchPrompt(
+                question: 'Already have an account?',
+                actionLabel: 'Sign In',
+                onTap: () => context.go('/login'),
+              ),
+            ],
+          ),
+          if (showIndustryModal)
+            Stack(
+              children: [
+                ModalBarrier(
+                  color: Colors.black.withValues(alpha: 0.5),
+                ),
+                DraggableScrollableSheet(
+                  initialChildSize: 0.7,
+                  minChildSize: 0.5,
+                  maxChildSize: 0.9,
+                  builder: (context, scrollController) => Container(
+                    decoration: BoxDecoration(
+                      color: colors.background,
+                      borderRadius:
+                          const BorderRadius.vertical(top: Radius.circular(24)),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Select Industry',
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w800,
+                                  color: colors.text,
+                                ),
+                              ),
+                              IconButton(
+                                icon: Icon(Icons.close, color: colors.text),
+                                onPressed: () {
+                                  setState(() {
+                                    industrySearchQuery = '';
+                                    industrySearchController.text = '';
+                                    showIndustryModal = false;
+                                  });
+                                },
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 20),
+                          Container(
+                            decoration: BoxDecoration(
+                              color: colors.surface,
+                              border:
+                                  Border.all(color: colors.border, width: 1.5),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Row(
                               children: [
-                                Text(
-                                  'Select Industry',
-                                  style: TextStyle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.bold,
-                                    color: colors.text,
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 16),
+                                  child: Icon(Icons.search_outlined,
+                                      color: colors.textSecondary),
+                                ),
+                                Expanded(
+                                  child: TextField(
+                                    controller: industrySearchController,
+                                    onChanged: (value) => setState(
+                                        () => industrySearchQuery = value),
+                                    decoration: InputDecoration(
+                                      hintText: 'Search industries...',
+                                      hintStyle: TextStyle(
+                                          color: colors.textSecondary),
+                                      border: InputBorder.none,
+                                    ),
+                                    style:
+                                        TextStyle(color: colors.text, fontSize: 16),
                                   ),
                                 ),
-                                IconButton(
-                                  icon: Icon(Icons.close, color: colors.text),
-                                  onPressed: () {
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          Expanded(
+                            child: ListView.builder(
+                              controller: scrollController,
+                              itemCount: filteredIndustries.length,
+                              itemBuilder: (context, index) {
+                                final industry = filteredIndustries[index];
+                                final selected = industry == selectedIndustry;
+                                return ListTile(
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  leading: Icon(
+                                    selected
+                                        ? Icons.check_circle_rounded
+                                        : Icons.category_outlined,
+                                    color: selected
+                                        ? colors.primary
+                                        : colors.textSecondary,
+                                  ),
+                                  title: Text(
+                                    industry,
+                                    style: TextStyle(
+                                      color: colors.text,
+                                      fontWeight: selected
+                                          ? FontWeight.w700
+                                          : FontWeight.w500,
+                                    ),
+                                  ),
+                                  onTap: () {
                                     setState(() {
+                                      selectedIndustry = industry;
                                       industrySearchQuery = '';
                                       industrySearchController.text = '';
                                       showIndustryModal = false;
                                     });
                                   },
-                                ),
-                              ],
+                                );
+                              },
                             ),
-                            const SizedBox(height: 20),
-                            Container(
-                              decoration: BoxDecoration(
-                                color: colors.surface,
-                                border: Border.all(color: colors.border, width: 1.5),
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              child: Row(
-                                children: [
-                                  Padding(
-                                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                                    child: Icon(Icons.search_outlined, color: colors.textSecondary),
-                                  ),
-                                  Expanded(
-                                    child: TextField(
-                                      controller: industrySearchController,
-                                      onChanged: (value) => setState(() => industrySearchQuery = value),
-                                      decoration: InputDecoration(
-                                        hintText: 'Search industries...',
-                                        hintStyle: TextStyle(color: colors.textSecondary),
-                                        border: InputBorder.none,
-                                      ),
-                                      style: TextStyle(color: colors.text, fontSize: 16),
-                                      autofocus: true,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            Expanded(
-                              child: ListView.builder(
-                                controller: scrollController,
-                                itemCount: filteredIndustries.length,
-                                itemBuilder: (context, index) {
-                                  final industry = filteredIndustries[index];
-                                  return GestureDetector(
-                                    onTap: () {
-                                      setState(() {
-                                        selectedIndustry = industry;
-                                        industrySearchQuery = '';
-                                        industrySearchController.text = '';
-                                        showIndustryModal = false;
-                                      });
-                                    },
-                                    child: Container(
-                                      margin: const EdgeInsets.only(bottom: 8),
-                                      padding: const EdgeInsets.all(16),
-                                      decoration: BoxDecoration(
-                                        color: colors.surface,
-                                        border: Border.all(color: colors.border),
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      child: Text(
-                                        industry,
-                                        style: TextStyle(fontSize: 16, color: colors.text),
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
-                            ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
-                ],
-              ),
-          ],
-        ),
+                ),
+              ],
+            ),
+        ],
       ),
     );
   }
+}
+
+/// Small uppercase section label between form groups.
+class _SectionLabel extends StatelessWidget {
+  final String label;
+  final ThemeColors colors;
+
+  const _SectionLabel({required this.label, required this.colors});
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      label.toUpperCase(),
+      style: TextStyle(
+        fontSize: 11.5,
+        fontWeight: FontWeight.w800,
+        letterSpacing: 1.2,
+        color: colors.textSecondary,
+      ),
+    );
+  }
+}
+
+/// Tappable field that opens the industry picker sheet.
+class _IndustryField extends StatelessWidget {
+  final String? selectedIndustry;
+  final VoidCallback onOpen;
+  final VoidCallback onClear;
+
+  const _IndustryField({
+    required this.selectedIndustry,
+    required this.onOpen,
+    required this.onClear,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppTheme.colors;
+    final hasValue = (selectedIndustry ?? '').isNotEmpty;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        border: Border.all(color: colors.border, width: 1.4),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Icon(Icons.work_outline, color: colors.textSecondary, size: 21),
+          ),
+          Expanded(
+            child: GestureDetector(
+              onTap: onOpen,
+              behavior: HitTestBehavior.opaque,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 18),
+                child: Text(
+                  selectedIndustry ?? 'Business Industry',
+                  style: TextStyle(
+                    fontSize: 15,
+                    color:
+                        hasValue ? colors.text : colors.textSecondary,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          if (hasValue)
+            IconButton(
+              tooltip: 'Clear industry',
+              onPressed: onClear,
+              icon: Icon(Icons.close_rounded,
+                  color: colors.textSecondary, size: 19),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.only(right: 14),
+              child: Icon(Icons.keyboard_arrow_down_rounded,
+                  color: colors.textSecondary, size: 22),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Soft curved bottom edge for the gradient header band.
+class _AuthHeaderCurve extends CustomClipper<Path> {
+  @override
+  Path getClip(Size size) {
+    final path = Path()
+      ..moveTo(0, 0)
+      ..lineTo(0, size.height - 40)
+      ..quadraticBezierTo(
+          size.width / 2, size.height + 30, size.width, size.height - 40)
+      ..lineTo(size.width, 0)
+      ..close();
+    return path;
+  }
+
+  @override
+  bool shouldReclip(covariant CustomClipper<Path> oldDelegate) => false;
 }
