@@ -1060,11 +1060,11 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
               child: TextField(
                 decoration: const InputDecoration(
                   hintText: 'Enter 10-digit account number',
+                  counterText: '',
                 ),
                 style: const TextStyle(fontSize: 16),
                 keyboardType: TextInputType.number,
                 maxLength: 10,
-                counterText: '',
                 onChanged: (value) =>
                     _updateRecipient(recipient.id, 'recipientAccount', value),
               ),

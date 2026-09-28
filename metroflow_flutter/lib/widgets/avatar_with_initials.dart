@@ -27,7 +27,6 @@ class AvatarWithInitials extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = AppTheme.colors;
     final url = ApiService.resolveMediaUrl(imageUrl);
     final size = radius * 2;
 

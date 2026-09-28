@@ -122,7 +122,6 @@ class PushNotificationService {
   /// every public method then no-ops.
   bool _enabled = false;
   bool _initialized = false;
-  bool _tappedPayloadHandled = false;
 
   final FlutterLocalNotificationsPlugin _localNotifications = FlutterLocalNotificationsPlugin();
 

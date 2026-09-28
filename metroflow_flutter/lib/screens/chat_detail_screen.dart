@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:audioplayers/audioplayers.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
@@ -15,7 +17,9 @@ import '../models/conversation.dart';
 import '../models/call.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_feedback.dart';
-import '../widgets/modern_ui.dart';
+import '../utils/chat_media_utils.dart';
+import '../widgets/chat_attachment_views.dart';
+import '../widgets/emoji_sticker_gif_panel.dart';
 import 'video_call_screen.dart';
 import '../utils/logger.dart';
 import '../widgets/avatar_with_initials.dart';
@@ -53,6 +57,12 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   int _recordSeconds = 0;
   Timer? _recordTimer;
   String? _recordPath;
+  // Attachment picking/uploading (paperclip flow)
+  final ImagePicker _imagePicker = ImagePicker();
+  bool _isUploadingAttachment = false;
+  // Whether the backend GIF proxy is configured (GET /chat/gifs) — hides the
+  // GIF tab in the emoji/sticker/GIF panel when Tenor is not set up.
+  bool _gifsConfigured = false;
   late final void Function(dynamic) _messageCreatedHandler;
   late final void Function(dynamic) _typingHandler;
   late final void Function(dynamic) _stopTypingHandler;
@@ -63,12 +73,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     ChatDetailScreen.activeConversationId = widget.conversation.id;
     _loadCurrentUser();
     _loadMessages();
+    _checkGifsConfigured();
     _socket.joinConversation(widget.conversation.id);
     // Mark as read on open so the unread badge clears everywhere (web included)
-    _api.markConversationAsRead(widget.conversation.id).catchError((e) {
-      Logger.error('markConversationAsRead failed: $e');
-      return null;
-    });
+    _markConversationRead();
 
     _messageCreatedHandler = (data) {
       final payload = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
@@ -178,6 +186,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
         'waitingRoomEnabled': otherIds.length > 1,
         'recordingEnabled': false,
         'participantIds': otherIds,
+        // Links the call to this conversation so the backend posts a
+        // call-log message when the call ends (renders via CallLogRow).
+        'conversationId': widget.conversation.id,
       });
       if (response.data['success'] != true || !mounted) return;
       final data = response.data['data'];
@@ -235,6 +246,16 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       return Message.fromJson(Map<String, dynamic>.from(responseData));
     }
     throw const FormatException('Invalid message response');
+  }
+
+  /// Fire-and-forget read receipt so the unread badge clears on every device
+  /// (web included) as soon as the conversation is opened.
+  Future<void> _markConversationRead() async {
+    try {
+      await _api.markConversationAsRead(widget.conversation.id);
+    } catch (e) {
+      Logger.error('markConversationAsRead failed: $e');
+    }
   }
 
   Future<void> _loadCurrentUser() async {
@@ -312,9 +333,29 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     });
   }
 
-  Future<void> _sendMessage({Map<String, dynamic>? overrides}) async {
+  /// Text path: reads the composer (or an explicit override) and forwards to
+  /// [_sendPayload]. Text messages only — attachments use _sendPayload
+  /// directly after their upload resolves. [force] bypasses the sending lock
+  /// for flows that already hold it (voice notes).
+  Future<void> _sendMessage({Map<String, dynamic>? overrides, bool force = false}) async {
     final content = (overrides?['content'] as String?) ?? _messageController.text.trim();
-    if (content.isEmpty || _isSending) return;
+    if (content.isEmpty) return;
+    if (_isSending && !force) return;
+    await _sendPayload({
+      'content': content,
+      ...?overrides,
+    }, force: force);
+    if (overrides == null) _messageController.clear();
+  }
+
+  /// Core send: posts the payload to POST /chat/conversations/:id/messages,
+  /// upserts the returned message and surfaces errors. Shared by text,
+  /// stickers, GIFs, attachments and voice notes. [force] bypasses the
+  /// _isSending guard for flows that already hold the lock (voice notes set
+  /// it themselves while recording/uploading — without this the guard
+  /// silently swallowed every voice-note send).
+  Future<void> _sendPayload(Map<String, dynamic> payload, {bool force = false}) async {
+    if (_isSending && !force) return;
 
     _typingStopTimer?.cancel();
     _socket.emitChatStopTyping({
@@ -324,11 +365,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
 
     setState(() => _isSending = true);
     try {
-      final response = await _api.sendMessage(widget.conversation.id, {
-        'content': content,
-        ...?overrides,
-      });
-      if (overrides == null) _messageController.clear();
+      final response = await _api.sendMessage(widget.conversation.id, payload);
       if (response.data['success'] == true && mounted) {
         final message = _extractMessage(response.data);
         setState(() {
@@ -347,6 +384,223 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       if (mounted) {
         setState(() => _isSending = false);
       }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Attachments (paperclip) — pick → optimistic pending bubble → POST
+  // /chat/media → send message with attachmentUrl/name/size/messageType.
+  // -------------------------------------------------------------------------
+
+  /// Best-effort check whether the Tenor GIF proxy is configured server-side;
+  /// drives GIF-tab visibility in the picker panel. Never surfaces errors.
+  Future<void> _checkGifsConfigured() async {
+    try {
+      final result = await _api.getChatGifs(limit: 4);
+      if (mounted) setState(() => _gifsConfigured = result.configured);
+    } catch (_) {
+      if (mounted) setState(() => _gifsConfigured = false);
+    }
+  }
+
+  void _openAttachmentSheet() {
+    final colors = AppTheme.colors;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: colors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 10),
+            _AttachmentOption(
+              icon: Icons.photo_library_outlined,
+              color: colors.primary,
+              title: 'Photo or Video',
+              subtitle: 'Share images and videos from your gallery',
+              colors: colors,
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _pickMediaAndUpload();
+              },
+            ),
+            _AttachmentOption(
+              icon: Icons.description_outlined,
+              color: colors.success,
+              title: 'Document',
+              subtitle: 'PDF, Word, Excel, ZIP and more (up to 100 MB)',
+              colors: colors,
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _pickDocumentAndUpload();
+              },
+            ),
+            _AttachmentOption(
+              icon: Icons.emoji_emotions_outlined,
+              color: colors.warning,
+              title: 'Stickers, Emoji & GIF',
+              subtitle: 'Send stickers, emoji and animated GIFs',
+              colors: colors,
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _openEmojiPanel();
+              },
+            ),
+            const SizedBox(height: 10),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _openEmojiPanel() {
+    EmojiStickerGifPanel.show(
+      context,
+      colors: AppTheme.colors,
+      gifsConfigured: _gifsConfigured,
+      onEmojiSelected: (emoji) {
+        if (_isSending) return;
+        _sendMessage(overrides: {'content': emoji});
+      },
+      onStickerSelected: (emoji) {
+        if (_isSending) return;
+        _sendPayload({'content': emoji, 'messageType': 'sticker'});
+      },
+      onGifSelected: (gif) {
+        if (_isSending) return;
+        _sendPayload(<String, dynamic>{
+          'attachmentUrl': gif.url,
+          'attachmentType': 'gif',
+          'attachmentName': gif.description,
+          'messageType': 'gif',
+        });
+      },
+    );
+  }
+
+  /// Gallery pick of an image OR video (image_picker pickMedia), then upload.
+  Future<void> _pickMediaAndUpload() async {
+    try {
+      final media = await _imagePicker.pickMedia(
+        maxWidth: 1920,
+        imageQuality: 85,
+      );
+      if (media == null || !mounted) return;
+      final lowerPath = media.path.toLowerCase();
+      final isVideo = (media.mimeType?.startsWith('video/') ?? false) ||
+          const ['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp']
+              .any(lowerPath.endsWith);
+      await _uploadAndSendAttachment(
+        File(media.path),
+        name: media.name,
+        attachmentType: isVideo ? 'video' : 'image',
+      );
+    } catch (e) {
+      Logger.error('Media pick failed: $e');
+    }
+  }
+
+  /// Native document picker (any type — the backend filters/limits).
+  Future<void> _pickDocumentAndUpload() async {
+    try {
+      final result = await FilePicker.platform.pickFiles();
+      final picked = result?.files.single;
+      if (picked == null || picked.path == null || !mounted) return;
+      await _uploadAndSendAttachment(
+        File(picked.path!),
+        name: picked.name,
+        size: picked.size,
+        attachmentType: 'document',
+      );
+    } catch (e) {
+      Logger.error('Document pick failed: $e');
+    }
+  }
+
+  /// Shared upload flow: 100MB guard → optimistic pending bubble → POST
+  /// /chat/media → send the real message → remove pending. On failure the
+  /// pending bubble is removed and a SnackBar explains why.
+  Future<void> _uploadAndSendAttachment(
+    File file, {
+    String? name,
+    int? size,
+    String? attachmentType,
+  }) async {
+    if (_isUploadingAttachment) return;
+    final resolvedName = (name != null && name.isNotEmpty)
+        ? name
+        : file.path.split(Platform.pathSeparator).last;
+    final kind = guessMediaKind(attachmentType, resolvedName);
+    int bytes = size ?? 0;
+    if (bytes <= 0) {
+      try {
+        bytes = await file.length();
+      } catch (_) {}
+    }
+    if (bytes > 100 * 1024 * 1024) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Attachments are limited to 100 MB')),
+        );
+      }
+      return;
+    }
+    final caption = _messageController.text.trim();
+
+    final pendingId = 'upload-${DateTime.now().millisecondsSinceEpoch}';
+    final pending = Message(
+      id: pendingId,
+      conversationId: widget.conversation.id,
+      senderId: _currentUserId ?? '',
+      content: caption,
+      attachmentType: kind,
+      attachmentName: resolvedName,
+      attachmentSize: bytes > 0 ? bytes : null,
+      createdAt: DateTime.now(),
+      isPendingUpload: true,
+    );
+    setState(() {
+      _isUploadingAttachment = true;
+      _upsertMessage(pending);
+    });
+    _scrollToBottom();
+    try {
+      final upload = await _api.uploadChatMediaDetailed(file);
+      if (upload == null || upload.url.isEmpty) {
+        throw const FormatException('Upload failed. Please try again.');
+      }
+      // Tolerate relative URLs from the local-disk upload fallback.
+      final url = ApiService.resolveMediaUrl(upload.url) ?? upload.url;
+      if (mounted) {
+        setState(() => _messages.removeWhere((m) => m.id == pendingId));
+      }
+      await _sendPayload(<String, dynamic>{
+        if (caption.isNotEmpty) 'content': caption,
+        'attachmentUrl': url,
+        'attachmentType': kind,
+        'attachmentName': upload.filename ?? resolvedName,
+        if ((upload.size ?? bytes) > 0) 'attachmentSize': upload.size ?? bytes,
+        'messageType': kind,
+      });
+      if (caption.isNotEmpty && mounted) _messageController.clear();
+    } catch (e) {
+      Logger.error('Attachment upload failed: $e');
+      if (mounted) {
+        setState(() => _messages.removeWhere((m) => m.id == pendingId));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e is FormatException
+                ? e.message
+                : ApiService.extractErrorMessage(e)),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isUploadingAttachment = false);
     }
   }
 
@@ -439,15 +693,27 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       if (filePath == null || filePath.isEmpty) {
         throw const FormatException('Recording was not captured');
       }
-      final url = await _api.uploadChatMedia(File(filePath));
-      if (url == null || url.isEmpty) {
+      final file = File(filePath);
+      final upload = await _api.uploadChatMediaDetailed(file);
+      if (upload == null || upload.url.isEmpty) {
         throw const FormatException('Voice note upload failed');
+      }
+      // Tolerate relative URLs from the local-disk upload fallback.
+      final url = ApiService.resolveMediaUrl(upload.url) ?? upload.url;
+      int bytes = upload.size ?? 0;
+      if (bytes <= 0) {
+        try {
+          bytes = await file.length();
+        } catch (_) {}
       }
       await _sendMessage(overrides: <String, dynamic>{
         'content': '🎤 Voice note',
         'attachmentUrl': url,
         'attachmentType': 'audio',
-      });
+        'attachmentName': upload.filename ?? 'Voice note.m4a',
+        if (bytes > 0) 'attachmentSize': bytes,
+        'messageType': 'voice',
+      }, force: true);
       AppFeedback.playSentSound();
     } catch (e) {
       Logger.error('Error sending voice note: $e');
@@ -723,15 +989,45 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   // Composer (text + voice-note recording pill)
   // -------------------------------------------------------------------------
 
-  /// Normal text composer. A mic button sits to the LEFT of the text field
-  /// while it is empty; once the user types, the send button takes over as
-  /// before.
+  /// Normal text composer. A paperclip (attachments), emoji panel button and
+  /// — while the field is empty — a mic button sit to the LEFT of the text
+  /// field; once the user types, the send button takes over on the right.
   Widget _buildTextComposer(ThemeColors colors) {
     final hasText = _messageController.text.trim().isNotEmpty;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
+        SizedBox(
+          width: 44,
+          height: 44,
+          child: IconButton(
+            padding: EdgeInsets.zero,
+            tooltip: 'Attach',
+            style: IconButton.styleFrom(
+              backgroundColor: colors.primaryBg,
+              shape: const CircleBorder(),
+            ),
+            icon: Icon(Icons.attach_file_rounded, color: colors.primary, size: 21),
+            onPressed: _openAttachmentSheet,
+          ),
+        ),
+        const SizedBox(width: 8),
         if (!hasText) ...[
+          SizedBox(
+            width: 44,
+            height: 44,
+            child: IconButton(
+              padding: EdgeInsets.zero,
+              tooltip: 'Emoji, stickers & GIFs',
+              style: IconButton.styleFrom(
+                backgroundColor: colors.primaryBg,
+                shape: const CircleBorder(),
+              ),
+              icon: Icon(Icons.emoji_emotions_outlined, color: colors.primary, size: 21),
+              onPressed: _openEmojiPanel,
+            ),
+          ),
+          const SizedBox(width: 8),
           SizedBox(
             width: 44,
             height: 44,
@@ -888,8 +1184,92 @@ class _MessageBubble extends StatelessWidget {
     required this.colors,
   });
 
+  /// Resolved presentation kind. Prefers the explicit messageType from the
+  /// batch-3 backend, falls back to attachmentType (tolerating legacy raw
+  /// MIME types like `image/png`), then to plain text.
+  String get _kind {
+    final explicit = message.messageType?.trim().toLowerCase() ?? '';
+    if (explicit.isNotEmpty && explicit != 'text') return explicit;
+    if (message.attachmentUrl?.isNotEmpty ?? false) {
+      return guessMediaKind(message.attachmentType,
+          message.attachmentName ?? message.attachmentUrl);
+    }
+    return 'text';
+  }
+
   @override
   Widget build(BuildContext context) {
+    final kind = _kind;
+
+    // Call-log rows are slim centered entries without a bubble.
+    if (kind == 'call-log') {
+      return CallLogRow(message: message, isMe: isMe, colors: colors);
+    }
+
+    // Optimistic pending bubble while POST /chat/media is in flight.
+    if (message.isPendingUpload) {
+      return _UploadingBubble(message: message, isMe: isMe, colors: colors);
+    }
+
+    // Sticker: single emoji at ~96px, no bubble background.
+    if (kind == 'sticker') {
+      return _TransparentMessage(
+        message: message,
+        isMe: isMe,
+        showSenderName: showSenderName,
+        colors: colors,
+        child: Text(
+          message.content,
+          style: const TextStyle(fontSize: 96, height: 1.15),
+        ),
+      );
+    }
+
+    // GIF: large image, no bubble background (caption kept as small text).
+    if (kind == 'gif') {
+      final url = ApiService.resolveMediaUrl(message.attachmentUrl);
+      if (url == null) return _regularBubble(context, 'text');
+      return _TransparentMessage(
+        message: message,
+        isMe: isMe,
+        showSenderName: showSenderName,
+        colors: colors,
+        child: Column(
+          crossAxisAlignment:
+              isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          children: [
+            ChatGifView(url: url, colors: colors),
+            if (message.content.trim().isNotEmpty) ...[
+              const SizedBox(height: 3),
+              Text(
+                message.content,
+                style: TextStyle(fontSize: 12.5, color: colors.text),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
+    // Big emoji: content is ONLY 1-3 emoji (hardened regex — "123" or words
+    // never match) → giant glyph, no bubble.
+    if (kind == 'text' && isSoloEmojiMessage(message.content)) {
+      return _TransparentMessage(
+        message: message,
+        isMe: isMe,
+        showSenderName: showSenderName,
+        colors: colors,
+        child: Text(
+          message.content,
+          style: const TextStyle(fontSize: 64, height: 1.2),
+        ),
+      );
+    }
+
+    return _regularBubble(context, kind);
+  }
+
+  Widget _regularBubble(BuildContext context, String kind) {
     final radius = BorderRadius.only(
       topLeft: Radius.circular(isMe ? 16 : 4),
       topRight: Radius.circular(isMe ? 4 : 16),
@@ -897,11 +1277,50 @@ class _MessageBubble extends StatelessWidget {
       bottomRight: const Radius.circular(16),
     );
 
-    final isVoiceNote = message.attachmentType == 'audio' &&
-        (message.attachmentUrl?.isNotEmpty ?? false);
-    final voiceUrl = isVoiceNote
-        ? ApiService.resolveMediaUrl(message.attachmentUrl)
-        : null;
+    final url = ApiService.resolveMediaUrl(message.attachmentUrl);
+    final caption = message.content.trim();
+
+    Widget? media;
+    switch (kind) {
+      case 'image':
+        media = url == null
+            ? null
+            : ChatImageView(url: url, isMe: isMe, colors: colors);
+        break;
+      case 'video':
+        media = url == null
+            ? null
+            : ChatVideoCard(
+                url: url,
+                name: message.attachmentName,
+                size: message.attachmentSize,
+                isMe: isMe,
+                colors: colors,
+              );
+        break;
+      case 'audio':
+      case 'voice':
+        media = url == null
+            ? null
+            : _VoiceNoteBubble(url: url, isMe: isMe, colors: colors);
+        break;
+      case 'document':
+        media = url == null
+            ? null
+            : ChatDocumentTile(
+                url: url,
+                name: message.attachmentName ?? caption,
+                size: message.attachmentSize,
+                isMe: isMe,
+                colors: colors,
+              );
+        break;
+    }
+
+    final bool hasMedia = media != null;
+    // Voice notes carry the '🎤 Voice note' label already — don't double it.
+    final showCaption =
+        hasMedia && caption.isNotEmpty && kind != 'audio' && kind != 'voice';
 
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
@@ -946,9 +1365,7 @@ class _MessageBubble extends StatelessWidget {
                   ),
                 ),
               ),
-            if (isVoiceNote && voiceUrl != null)
-              _VoiceNoteBubble(url: voiceUrl, isMe: isMe, colors: colors)
-            else
+            if (media == null)
               Text(
                 message.content,
                 style: TextStyle(
@@ -956,13 +1373,231 @@ class _MessageBubble extends StatelessWidget {
                   fontSize: 14.5,
                   height: 1.35,
                 ),
-              ),
+              )
+            else ...[
+              media,
+              if (showCaption) ...[
+                const SizedBox(height: 4),
+                Text(
+                  caption,
+                  style: TextStyle(
+                    color: isMe ? Colors.white : colors.text,
+                    fontSize: 13.5,
+                    height: 1.3,
+                  ),
+                ),
+              ],
+            ],
             const SizedBox(height: 3),
             Text(
               DateFormat.Hm().format(message.createdAt.toLocal()),
               style: TextStyle(
                 fontSize: 10,
                 color: isMe ? Colors.white70 : colors.textSecondary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Bubble-less message wrapper (stickers, GIFs, solo emoji): keeps the row
+/// alignment, group sender name and timestamp but no bubble chrome.
+class _TransparentMessage extends StatelessWidget {
+  final Message message;
+  final bool isMe;
+  final bool showSenderName;
+  final ThemeColors colors;
+  final Widget child;
+
+  const _TransparentMessage({
+    required this.message,
+    required this.isMe,
+    required this.showSenderName,
+    required this.colors,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        child: Column(
+          crossAxisAlignment:
+              isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          children: [
+            if (showSenderName)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 3),
+                child: Text(
+                  message.senderName ?? 'User',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    color: colors.primary,
+                  ),
+                ),
+              ),
+            child,
+            const SizedBox(height: 2),
+            Text(
+              DateFormat.Hm().format(message.createdAt.toLocal()),
+              style: TextStyle(fontSize: 10, color: colors.textSecondary),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Optimistic pending bubble shown while an attachment uploads via POST
+/// /chat/media (removed on failure with a SnackBar, replaced by the real
+/// message once the upload + send complete).
+class _UploadingBubble extends StatelessWidget {
+  final Message message;
+  final bool isMe;
+  final ThemeColors colors;
+
+  const _UploadingBubble({
+    required this.message,
+    required this.isMe,
+    required this.colors,
+  });
+
+  String get _label {
+    switch (message.attachmentType) {
+      case 'image':
+        return 'Sending photo…';
+      case 'video':
+        return 'Sending video…';
+      case 'audio':
+      case 'voice':
+        return 'Sending voice note…';
+      case 'gif':
+        return 'Sending GIF…';
+      case 'sticker':
+        return 'Sending sticker…';
+      default:
+        return 'Uploading ${message.attachmentName ?? 'document'}…';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.82,
+        ),
+        decoration: BoxDecoration(
+          gradient: isMe
+              ? LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [colors.primary, colors.primaryDark],
+                )
+              : null,
+          color: isMe ? null : colors.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: isMe ? null : Border.all(color: colors.border),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: isMe ? Colors.white : colors.primary,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Text(
+                _label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: isMe ? Colors.white : colors.textSecondary,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One row of the attachment bottom sheet (Photo or Video / Document /
+/// Stickers, Emoji & GIF).
+class _AttachmentOption extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String subtitle;
+  final ThemeColors colors;
+  final VoidCallback onTap;
+
+  const _AttachmentOption({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.subtitle,
+    required this.colors,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: color, size: 22),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: colors.text,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: colors.textSecondary,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],

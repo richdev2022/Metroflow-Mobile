@@ -78,7 +78,7 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
     if (match == null) return;
     setState(() {
       _highlightedPlanId = match!.id;
-      _selectedPlanId = match!.id;
+      _selectedPlanId = match.id;
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final ctx = _highlightedPlanKey.currentContext;

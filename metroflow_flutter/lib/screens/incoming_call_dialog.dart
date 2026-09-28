@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/call_provider.dart';
-import '../models/call.dart';
 import 'video_call_screen.dart';
 import '../services/api.dart';
 

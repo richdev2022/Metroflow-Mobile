@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../services/api.dart';
 import '../services/socket_service.dart';
 import '../models/conversation.dart';
@@ -10,7 +11,7 @@ import '../utils/logger.dart';
 import '../providers/auth_provider.dart';
 import '../providers/badge_provider.dart';
 import '../widgets/modern_ui.dart';
-import '../widgets/avatar_with_initials.dart';
+import '../widgets/metric_ai_logo.dart';
 import 'chat_detail_screen.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
@@ -242,7 +243,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     : _conversations.isEmpty
                         ? ListView(
                             physics: const AlwaysScrollableScrollPhysics(),
+                            padding: const EdgeInsets.fromLTRB(24, 8, 24, 96),
                             children: [
+                              // Pinned MetricAi entry — visible even with
+                              // zero conversations.
+                              _MetricAiEntry(colors: colors),
                               const SizedBox(height: 40),
                               EmptyState(
                                 icon: Icons.chat_bubble_outline_rounded,
@@ -270,10 +275,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                             : ListView.separated(
                                 physics: const AlwaysScrollableScrollPhysics(),
                                 padding: const EdgeInsets.fromLTRB(24, 8, 24, 96),
-                                itemCount: filtered.length,
+                                // +1 = the pinned MetricAi entry at the top.
+                                itemCount: filtered.length + 1,
                                 separatorBuilder: (context, index) => const SizedBox(height: 4),
                                 itemBuilder: (context, index) {
-                                  final conversation = filtered[index];
+                                  if (index == 0) {
+                                    return _MetricAiEntry(colors: colors);
+                                  }
+                                  final conversation = filtered[index - 1];
                                   final name = conversation.name ?? 'Direct Chat';
                                   final hasUnread = conversation.unreadCount > 0 ||
                                       _hasUnread(conversation, currentUserId);
@@ -307,6 +316,75 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         icon: Icons.add_comment_outlined,
         label: 'New Chat',
         onPressed: _showCreateConversationDialog,
+      ),
+    );
+  }
+}
+
+/// Pinned first entry of the chat list: the MetricAi assistant with its
+/// glowing animated logo (indigo -> blue pulse). Opens the MetricAi screen.
+class _MetricAiEntry extends StatelessWidget {
+  final ThemeColors colors;
+
+  const _MetricAiEntry({required this.colors});
+
+  @override
+  Widget build(BuildContext context) {
+    return ModernCard(
+      margin: EdgeInsets.zero,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      onTap: () => GoRouter.of(context).push('/main/metric-ai'),
+      child: Row(
+        children: [
+          const MetricAiGlowLogo(radius: 23),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      'MetricAi',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        color: colors.text,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF4F46E5), Color(0xFF2563EB)],
+                        ),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: const Text(
+                        'AI',
+                        style: TextStyle(
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Your AI assistant',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: colors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Icon(Icons.chevron_right_rounded, color: colors.textSecondary),
+        ],
       ),
     );
   }

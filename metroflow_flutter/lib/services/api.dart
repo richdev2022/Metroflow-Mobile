@@ -10,6 +10,8 @@ import '../utils/app_toast.dart';
 import 'package:flutter/material.dart';
 import '../providers/auth_provider.dart';
 import '../widgets/upgrade_dialog.dart';
+import '../models/chat_media.dart';
+import '../models/gif.dart';
 
 final String _apiBaseUrl = dotenv.env['EXPO_PUBLIC_API_BASE_URL'] ?? 'https://api.metricorex.com/api';
 
@@ -17,6 +19,19 @@ final String _apiBaseUrl = dotenv.env['EXPO_PUBLIC_API_BASE_URL'] ?? 'https://ap
 /// to resolve RELATIVE media URLs (`/uploads/xyz.m4a`) returned by the local
 /// upload fallback in POST /chat/media.
 final String _apiOrigin = _apiBaseUrl.replaceFirst(RegExp(r'/api/?$'), '');
+
+/// Origin of the WEB app, derived from the API origin by stripping the
+/// `api.` host prefix (api.metricorex.com -> metricorex.com). Local/dev
+/// origins without the prefix pass through unchanged. Used as the default
+/// `redirect_url` for wallet funding so provider callbacks land on the
+/// web app's /payment/callback route (mobile verifies via the reference API).
+String get webAppOrigin {
+  final uri = Uri.tryParse(_apiOrigin);
+  if (uri == null || !uri.hasScheme) return 'https://metricorex.com';
+  final host = uri.host;
+  final webHost = host.startsWith('api.') ? host.substring(4) : host;
+  return '${uri.scheme}://$webHost${uri.hasPort ? ':${uri.port}' : ''}';
+}
 
 // Global key to access navigator context
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -446,16 +461,16 @@ class ApiService {
     return await _dio.get('/wallet');
   }
 
-  Future<Response> fundWallet(double amount, String walletId, {String? redirectUrl, String? provider}) async {
+  /// POST /wallet/fund/card. The backend resolves the active payment provider
+  /// itself — the client MUST NOT send a `provider` field (it 400s for
+  /// unsupported names and fights the admin-configured active provider).
+  Future<Response> fundWallet(double amount, String walletId, {String? redirectUrl}) async {
     final data = <String, dynamic>{
       'amount': amount,
       'wallet_id': walletId,
     };
     if (redirectUrl != null) {
       data['redirect_url'] = redirectUrl;
-    }
-    if (provider != null && provider.isNotEmpty) {
-      data['provider'] = provider;
     }
     return await _dio.post('/wallet/fund/card', data: data);
   }
@@ -966,6 +981,17 @@ class ApiService {
   /// `attachmentUrl` to [sendMessage]. Throws on network/server errors so the
   /// caller can surface them.
   Future<String?> uploadChatMedia(File file) async {
+    final result = await uploadChatMediaDetailed(file);
+    return result?.url;
+  }
+
+  /// Upload chat media (images / videos / audio / documents / GIFs, 100MB
+  /// limit) via POST /chat/media as multipart form-data (field name `file`).
+  /// Returns the full upload payload — url, filename, mimeType, byte size and
+  /// the backend-detached attachmentType (`image|video|audio|document|gif`) —
+  /// so the follow-up [sendMessage] can include attachmentName/attachmentSize.
+  /// Throws on network/server errors so the caller can surface them.
+  Future<ChatMediaUpload?> uploadChatMediaDetailed(File file) async {
     final fileName = file.path.split(Platform.pathSeparator).last;
     final formData = FormData.fromMap(<String, dynamic>{
       'file': await MultipartFile.fromFile(file.path, filename: fileName),
@@ -973,10 +999,80 @@ class ApiService {
     final response = await _dio.post('/chat/media', data: formData);
     final data = response.data is Map ? response.data['data'] : null;
     if (data is Map && data['url'] != null) {
-      final url = data['url'].toString();
-      return url.isNotEmpty ? url : null;
+      return ChatMediaUpload.fromJson(Map<String, dynamic>.from(data));
     }
     return null;
+  }
+
+  /// Download a (chat attachment) URL to [savePath] with progress callback.
+  /// Absolute URLs bypass the Dio baseUrl automatically; the auth header is
+  /// attached by the interceptor. Used for the chat document/image download
+  /// buttons (the media URLs are public but the header is harmless).
+  Future<void> downloadFile(
+    String url,
+    String savePath, {
+    void Function(int received, int total)? onProgress,
+    bool suppressToast = true,
+  }) async {
+    await _dio.download(
+      url,
+      savePath,
+      onReceiveProgress: onProgress,
+      options: Options(extra: {'suppressToast': suppressToast}),
+    );
+  }
+
+  /// GIF picker proxy: GET /chat/gifs?search=&limit=.
+  /// Returns `{ configured, gifs: [{ id, description, url, previewUrl }] }`.
+  /// When `configured` is false (no TENOR_API_KEY server-side) the client
+  /// hides the GIF tab entirely.
+  Future<ChatGifsResult> getChatGifs({String? search, int limit = 16}) async {
+    final response = await _dio.get('/chat/gifs', queryParameters: {
+      'search': (search == null || search.trim().isEmpty) ? 'trending' : search.trim(),
+      'limit': limit,
+    }, options: Options(extra: {'suppressToast': true}));
+    final data = response.data is Map ? response.data['data'] : null;
+    if (data is Map) {
+      final gifs = (data['gifs'] as List? ?? const [])
+          .whereType<Map>()
+          .map((g) => GifObject.fromJson(Map<String, dynamic>.from(g)))
+          .toList();
+      return ChatGifsResult(configured: data['configured'] == true, gifs: gifs);
+    }
+    return const ChatGifsResult(configured: false, gifs: []);
+  }
+
+  // -------------------------------------------------------------------------
+  // MetricAi (plan-gated GLM assistant) — GET /ai/status, POST /ai/chat,
+  // GET /ai/history, DELETE /ai/history.
+  // -------------------------------------------------------------------------
+
+  /// MetricAi availability for the current business/plan.
+  Future<Response> getAiStatus() async {
+    return await _dio.get('/ai/status', options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// Chat with MetricAi. `imageUrl` (optional) is a /chat/media upload URL
+  /// passed as visual context — the backend stores it with the message and
+  /// describes the attachment to the model (text-only model).
+  Future<Response> sendAiChat(String message, {String? imageUrl}) async {
+    return await _dio.post('/ai/chat', data: {
+      'message': message,
+      if (imageUrl != null && imageUrl.isNotEmpty) 'imageUrl': imageUrl,
+    }, options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// MetricAi conversation history (oldest first).
+  Future<Response> getAiHistory({int page = 1, int limit = 50}) async {
+    return await _dio.get('/ai/history', queryParameters: {
+      'page': page,
+      'limit': limit,
+    }, options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// Clears the caller's MetricAi history.
+  Future<Response> deleteAiHistory() async {
+    return await _dio.delete('/ai/history', options: Options(extra: {'suppressToast': true}));
   }
 
   /// Upload the user's profile picture via POST /settings/profile/avatar as

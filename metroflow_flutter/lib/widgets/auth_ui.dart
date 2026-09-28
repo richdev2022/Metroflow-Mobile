@@ -81,7 +81,6 @@ class _AuthScreenShellState extends State<AuthScreenShell>
 
   @override
   Widget build(BuildContext context) {
-    final colors = AppTheme.colors;
     return SafeArea(
       child: Center(
         child: ConstrainedBox(
