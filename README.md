@@ -50,3 +50,13 @@ Metricorex_flutter/
 │   └── main.dart
 └── pubspec.yaml
 ```
+
+## Branching & Releases
+
+- `main` — release source of truth. GitHub Actions builds the release APK from `main` tags/pushes.
+- `develop` — integration branch. Feature work merges here first; once verified (CI green), a PR `develop → main` is merged to cut a release.
+- Hotfixes may branch from `main` and must be merged back into `develop`.
+
+## Backend Environment
+
+The app talks to `https://api.metricorex.com/` in release builds (see `lib/services/api.dart`). When the backend adds new endpoints, deploy the API first (backend repo: `bash scripts/deploy.sh` on the VPS) — the app surfaces a friendly "feature isn't available yet" message if the server is older than the client.
