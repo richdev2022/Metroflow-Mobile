@@ -1,5 +1,5 @@
-import 'attachment.dart';
 import 'comment.dart';
+import 'task_attachment.dart';
 
 class Task {
   final String id;
@@ -18,7 +18,7 @@ class Task {
   final String status;
   final bool isOverdue;
   final List<String>? assignedTo;
-  final List<Attachment>? attachments;
+  final List<TaskAttachment>? attachments;
   final List<Comment>? comments;
   final List<String>? images;
   final String createdAt;
@@ -68,16 +68,17 @@ class Task {
       assignedTo: json['assignedTo'] != null
           ? List<String>.from(json['assignedTo'] as List<dynamic>)
           : null,
-      attachments: json['attachments'] != null
+      attachments: json['attachments'] is List
           ? (json['attachments'] as List<dynamic>)
+              .whereType<Map>()
               .map((e) {
                 try {
-                  return Attachment.fromJson(e as Map<String, dynamic>);
-                } catch (e) {
+                  return TaskAttachment.fromJson(Map<String, dynamic>.from(e));
+                } catch (_) {
                   return null;
                 }
               })
-              .whereType<Attachment>()
+              .whereType<TaskAttachment>()
               .toList()
           : null,
       comments: json['comments'] != null

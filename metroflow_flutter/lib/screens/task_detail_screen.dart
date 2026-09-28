@@ -1,12 +1,22 @@
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:dio/dio.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:open_filex/open_filex.dart';
 
+import '../providers/auth_provider.dart';
+import '../providers/user_profile_provider.dart';
 import '../services/api.dart';
 import '../models/task.dart';
+import '../models/task_attachment.dart';
 import '../models/team_member.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_toast.dart';
+import '../utils/chat_media_utils.dart';
+import '../utils/logger.dart';
+import '../widgets/chat_attachment_views.dart';
 
 class TaskDetailScreen extends ConsumerStatefulWidget {
   const TaskDetailScreen({super.key});
@@ -19,9 +29,27 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
   Task? _task;
   List<dynamic> _comments = [];
   List<TeamMember> _teamMembers = [];
+  List<TaskAttachment> _attachments = [];
   bool _isLoading = true;
+  bool _isLoadingAttachments = false;
+  bool _isUploadingAttachments = false;
+  String? _downloadingAttachmentId;
   bool _isSubmittingComment = false;
   final _commentController = TextEditingController();
+
+  /// Matches the server's task-attachment write gate ('manage_tasks' feature
+  /// permission): admins/managers/owners get the Add-files affordance, as do
+  /// the task's creator. The server remains the source of truth — a 403 on
+  /// upload/delete is handled gracefully and hides the affordance.
+  bool get _canManageAttachments {
+    final role = (ref.read(userProfileProvider).role ?? '').toLowerCase();
+    if (role == 'admin' || role == 'manager' || role == 'owner') return true;
+    final userId = ref.read(authProvider).userId;
+    return userId != null &&
+        userId.isNotEmpty &&
+        _task != null &&
+        _task!.createdBy == userId;
+  }
 
   @override
   void didChangeDependencies() {
@@ -42,6 +70,12 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
 
   Future<void> _fetchTaskDetails() async {
     if (_task == null) return;
+    setState(() {
+      // Seed from the task payload (GET /tasks + board now embed the
+      // attachments array) so the section paints before the fetch returns.
+      _attachments = List<TaskAttachment>.from(_task!.attachments ?? const []);
+    });
+    _fetchAttachments();
     try {
       final api = ApiService();
       final response = await api.getComments(_task!.id);
@@ -56,6 +90,28 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
       debugPrint('Failed to fetch task details: $e');
     } finally {
       setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _fetchAttachments() async {
+    if (_task == null) return;
+    setState(() => _isLoadingAttachments = true);
+    try {
+      final response = await ApiService().getTaskAttachments(_task!.id);
+      final data = response.data is Map ? response.data['data'] : null;
+      final list = data is Map ? data['attachments'] : null;
+      if (mounted && list is List) {
+        setState(() {
+          _attachments = list
+              .whereType<Map>()
+              .map((a) => TaskAttachment.fromJson(Map<String, dynamic>.from(a)))
+              .toList();
+        });
+      }
+    } catch (e) {
+      debugPrint('Failed to fetch task attachments: $e');
+    } finally {
+      if (mounted) setState(() => _isLoadingAttachments = false);
     }
   }
 
@@ -145,7 +201,7 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
     }
   }
 
-  Task _copyTask(Task task, {String? status, List<String>? assignedTo}) {
+  Task _copyTask(Task task, {String? status, List<String>? assignedTo, List<TaskAttachment>? attachments}) {
     return Task(
       id: task.id,
       businessId: task.businessId,
@@ -163,12 +219,184 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
       status: status ?? task.status,
       isOverdue: task.isOverdue,
       assignedTo: assignedTo ?? task.assignedTo,
-      attachments: task.attachments,
+      attachments: attachments ?? task.attachments,
       comments: task.comments,
       images: task.images,
       createdAt: task.createdAt,
       updatedAt: task.updatedAt,
     );
+  }
+
+  // -- Task attachments -------------------------------------------------------
+
+  static const int _maxAttachmentFiles = 10;
+  static const int _maxAttachmentBytes = 50 * 1024 * 1024; // 50MB per file
+
+  Future<void> _handleAddFiles() async {
+    if (_isUploadingAttachments || _task == null) return;
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      // Bytes are kept so web/no-path picks still upload; native picks
+      // upload from the file path instead.
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+    if (!mounted) return;
+
+    final files = result.files.take(_maxAttachmentFiles).toList();
+    final oversized = result.files.where((f) => f.size > _maxAttachmentBytes).length;
+    if (oversized > 0) {
+      AppToast.show(
+          '$oversized file(s) exceed the 50 MB limit and will be skipped',
+          type: AppToastType.warning);
+    }
+    files.removeWhere((f) => f.size > _maxAttachmentBytes);
+    if (files.isEmpty) return;
+
+    await _uploadAttachments(files);
+  }
+
+  Future<void> _uploadAttachments(List<PlatformFile> files) async {
+    final taskId = _task?.id;
+    if (taskId == null) return;
+    setState(() => _isUploadingAttachments = true);
+    final messenger = ScaffoldMessenger.of(context);
+    var uploadedCount = 0;
+    var forbidden = false;
+
+    for (var i = 0; i < files.length; i++) {
+      final file = files[i];
+      messenger.showSnackBar(SnackBar(
+        duration: const Duration(seconds: 2),
+        content: Text('Uploading ${i + 1} of ${files.length}: ${file.name}'),
+      ));
+      try {
+        MultipartFile part;
+        final path = file.path;
+        if (path != null && path.isNotEmpty) {
+          part = await MultipartFile.fromFile(path, filename: file.name);
+        } else if (file.bytes != null) {
+          part = MultipartFile.fromBytes(file.bytes!, filename: file.name);
+        } else {
+          continue;
+        }
+        final formData = FormData.fromMap({'files': [part]});
+        final response = await ApiService().uploadTaskAttachmentPart(taskId, formData);
+        if (response.statusCode != null && response.statusCode! < 400) {
+          uploadedCount++;
+        }
+      } on DioException catch (e) {
+        Logger.error('Task attachment upload failed: $e');
+        if (e.response?.statusCode == 403) {
+          forbidden = true;
+          break;
+        }
+      } catch (e) {
+        Logger.error('Task attachment upload failed: $e');
+      }
+    }
+
+    if (!mounted) return;
+    setState(() => _isUploadingAttachments = false);
+    if (forbidden) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text(
+            'You don\'t have permission to attach files to tasks. Ask an admin for manage-tasks access.'),
+      ));
+      return;
+    }
+    if (uploadedCount > 0) {
+      AppToast.show(
+          uploadedCount == files.length
+              ? '$uploadedCount file(s) attached'
+              : '$uploadedCount of ${files.length} file(s) attached',
+          type: AppToastType.success);
+      await _fetchAttachments();
+    } else if (files.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Upload failed. Please try again.')));
+    }
+  }
+
+  Future<void> _openAttachment(TaskAttachment attachment) async {
+    final url = ApiService.resolveMediaUrl(attachment.fileUrl) ?? attachment.fileUrl;
+    if (url.isEmpty) return;
+
+    // Images open in the shared full-screen viewer (with download button).
+    if (attachment.isImage || guessMediaKind(attachment.fileType, attachment.displayName) == 'image') {
+      if (!mounted) return;
+      Navigator.of(context).push(MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (_) => FullScreenImageViewer(url: url),
+      ));
+      return;
+    }
+
+    // Other files: download with progress, then hand off to the OS viewer.
+    if (_downloadingAttachmentId == attachment.id) return;
+    setState(() => _downloadingAttachmentId = attachment.id);
+    try {
+      final path = await downloadAttachment(
+        context,
+        url: url,
+        fileName: attachment.displayName,
+        onProgress: (p) => debugPrint('Attachment download ${(p * 100).toStringAsFixed(0)}%'),
+      );
+      if (!mounted) return;
+      AppToast.show('Downloaded ${attachment.displayName}', type: AppToastType.success);
+      await OpenFilex.open(path);
+    } catch (e) {
+      Logger.error('Task attachment download failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Download failed. Please try again.')));
+      }
+    } finally {
+      if (mounted) setState(() => _downloadingAttachmentId = null);
+    }
+  }
+
+  bool _canDeleteAttachment(TaskAttachment attachment) {
+    final userId = ref.read(authProvider).userId;
+    if (userId != null && userId.isNotEmpty && attachment.uploadedBy == userId) return true;
+    return _canManageAttachments;
+  }
+
+  Future<void> _confirmDeleteAttachment(TaskAttachment attachment) async {
+    if (!_canDeleteAttachment(attachment)) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Remove attachment'),
+        content: Text('Delete "${attachment.displayName}" from this task?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Delete', style: TextStyle(color: AppColors.error)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await ApiService().deleteTaskAttachment(attachment.id);
+      if (!mounted) return;
+      AppToast.show('Attachment removed', type: AppToastType.success);
+      await _fetchAttachments();
+    } on DioException catch (e) {
+      Logger.error('Task attachment delete failed: $e');
+      if (mounted && e.response?.statusCode == 403) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('You don\'t have permission to remove this attachment.'),
+        ));
+      }
+    } catch (e) {
+      Logger.error('Task attachment delete failed: $e');
+    }
   }
 
   Color _getStatusColor(String status) {
@@ -227,6 +455,8 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
                           ],
                           const SizedBox(height: 24),
                           _buildMetaRow(task),
+                          const SizedBox(height: 24),
+                          _buildAttachmentsSection(),
                           const SizedBox(height: 24),
                           _buildAssigneesSection(),
                           const SizedBox(height: 24),
@@ -406,6 +636,158 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildAttachmentsSection() {
+    final colors = AppTheme.colors;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('Attachments (${_attachments.length})',
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            if (_canManageAttachments && !_isUploadingAttachments)
+              IconButton(
+                tooltip: 'Attach files',
+                onPressed: _handleAddFiles,
+                icon: const Icon(Icons.attach_file_rounded, color: AppColors.primary),
+              ),
+            if (_isUploadingAttachments)
+              const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (_isLoadingAttachments && _attachments.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: Center(child: SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )),
+          )
+        else if (_attachments.isEmpty)
+          Text(
+            _canManageAttachments
+                ? 'No files attached yet — tap 📎 to add some'
+                : 'No files attached yet',
+            style: const TextStyle(fontSize: 14, color: Colors.grey, fontStyle: FontStyle.italic),
+          )
+        else
+          ..._attachments.map((attachment) => _attachmentTile(attachment, colors)),
+      ],
+    );
+  }
+
+  Widget _attachmentTile(TaskAttachment attachment, ThemeColors colors) {
+    final isDownloading = _downloadingAttachmentId == attachment.id;
+    final canDelete = _canDeleteAttachment(attachment);
+    final meta = documentIconMeta(attachment.displayName);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colors.border),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: isDownloading ? null : () => _openAttachment(attachment),
+        onLongPress: canDelete ? () => _confirmDeleteAttachment(attachment) : null,
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Row(
+            children: [
+              // Thumbnail for images, colored document tile otherwise.
+              if (attachment.isImage && attachment.fileUrl.isNotEmpty)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: CachedNetworkImage(
+                    imageUrl: ApiService.resolveMediaUrl(attachment.fileUrl) ?? attachment.fileUrl,
+                    width: 44,
+                    height: 44,
+                    fit: BoxFit.cover,
+                    placeholder: (_, __) => Container(
+                      width: 44,
+                      height: 44,
+                      color: colors.surfaceVariant,
+                    ),
+                    errorWidget: (_, __, ___) => Container(
+                      width: 44,
+                      height: 44,
+                      color: colors.surfaceVariant,
+                      child: Icon(Icons.broken_image_rounded,
+                          size: 20, color: colors.textSecondary),
+                    ),
+                  ),
+                )
+              else
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: meta.color.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: isDownloading
+                      ? Padding(
+                          padding: const EdgeInsets.all(10),
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: meta.color),
+                        )
+                      : Icon(meta.icon, size: 22, color: meta.color),
+                ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      attachment.displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: colors.text,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      [
+                        formatFileSize(attachment.fileSize),
+                        if (attachment.uploadedByName != null &&
+                            attachment.uploadedByName!.isNotEmpty)
+                          'by ${attachment.uploadedByName}',
+                      ].join(' · '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                    ),
+                  ],
+                ),
+              ),
+              if (canDelete)
+                IconButton(
+                  tooltip: 'Remove attachment',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => _confirmDeleteAttachment(attachment),
+                  icon: Icon(Icons.delete_outline_rounded,
+                      size: 20, color: colors.error),
+                )
+              else
+                Icon(Icons.chevron_right_rounded, size: 22, color: colors.textSecondary),
+            ],
+          ),
+        ),
       ),
     );
   }
