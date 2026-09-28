@@ -9,7 +9,7 @@ class BiometricResult {
   final bool success;
   final String? error;
 
-  BiometricResult({required this.success, this.error});
+  const BiometricResult({required this.success, this.error});
 }
 
 class BiometricService {
@@ -144,9 +144,7 @@ class BiometricService {
 
       final result = await _auth.authenticate(
         localizedReason: promptMessage,
-        stickyAuth: true,
         biometricOnly: false,
-        useErrorDialogs: true,
         persistAcrossBackgrounding: true,
         sensitiveTransaction: false,
       );

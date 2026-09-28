@@ -1873,13 +1873,12 @@ class _DayActivity {
   final DateTime dayKey;
   final String label;
   final bool isToday;
-  int count;
+  int count = 0;
 
   _DayActivity({
     required this.dayKey,
     required this.label,
     required this.isToday,
-    this.count = 0,
   });
 }
 

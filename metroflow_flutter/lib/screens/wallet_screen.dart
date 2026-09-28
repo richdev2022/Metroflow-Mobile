@@ -695,11 +695,11 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                                     decoration: InputDecoration(
                                       hintText: 'Enter 10-digit account number',
                                       hintStyle: TextStyle(color: colors.textSecondary),
+                                      counterText: '',
                                     ),
                                     style: TextStyle(color: colors.text, fontSize: 16),
                                     keyboardType: TextInputType.number,
                                     maxLength: 10,
-                                    counterText: '',
                                     onChanged: (value) {
                                       setState(() => accountNumber = value);
                                       // Auto-verify once a full 10-digit

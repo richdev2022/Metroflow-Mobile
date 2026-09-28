@@ -62,6 +62,7 @@ import 'screens/chat_screen.dart';
 import 'screens/calls_screen.dart';
 import 'screens/incoming_call_dialog.dart';
 import 'screens/notifications_screen.dart';
+import 'screens/metric_ai_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -452,6 +453,10 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
             GoRoute(
               path: 'chat',
               builder: (context, state) => const ChatScreen(),
+            ),
+            GoRoute(
+              path: 'metric-ai',
+              builder: (context, state) => const MetricAiScreen(),
             ),
             GoRoute(
               path: 'calls',

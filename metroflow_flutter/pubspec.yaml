@@ -19,7 +19,13 @@ dependencies:
   go_router: ^17.2.3
   local_auth: ^3.0.1
   google_fonts: ^6.2.1
-  image_picker: ^1.0.7
+  # ^1.1.0 = first release with ImagePicker.pickMedia (single photo OR video
+  # pick for chat attachments). Pub resolves the newest 1.x the CI SDK allows.
+  image_picker: ^1.1.0
+  # Chat attachment playback (full-screen video player page).
+  video_player: ^2.9.2
+  # Opens downloaded chat documents with a native app (PDFs, Office, ...).
+  open_filex: ^4.5.0
   fluttertoast: ^9.1.0
   share_plus: ^12.0.2
   webview_flutter: ^4.7.0

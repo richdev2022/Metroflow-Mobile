@@ -334,10 +334,6 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
     }
   }
 
-  IconData _getCallIcon(String type) {
-    return type == 'video' ? Icons.videocam : Icons.call;
-  }
-
   Color _getCallTint(ThemeColors colors, String type) {
     return type == 'video' ? colors.primary : colors.success;
   }

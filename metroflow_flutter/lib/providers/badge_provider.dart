@@ -54,11 +54,8 @@ class LauncherBadge {
   static Future<void> update(int count) async {
     try {
       final total = count < 0 ? 0 : count;
-      if (total == 0) {
-        await AppBadgePlus.removeBadge();
-      } else {
-        await AppBadgePlus.updateBadge(total);
-      }
+      // app_badge_plus 1.x: there is no removeBadge — clearing = 0.
+      await AppBadgePlus.updateBadge(total);
     } catch (e) {
       debugPrint('LauncherBadge.update failed (unsupported launcher?): $e');
     }
