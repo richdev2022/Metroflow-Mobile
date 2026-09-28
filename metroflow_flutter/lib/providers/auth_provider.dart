@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api.dart';
 import '../services/biometrics.dart';
 import '../services/google_auth_service.dart';
+import '../services/push_notification_service.dart';
 import '../services/socket_service.dart';
 
 class AuthState {
@@ -74,6 +75,22 @@ class AuthState {
 
 // Global variable to hold the auth notifier instance (set in main.dart)
 AuthNotifier? authNotifierInstance;
+
+/// Result of the SERVER-BACKED biometric login flow.
+/// [revoked] is true when the backend no longer recognises this device's
+/// biometric credential (401/403) — the caller should fall back to password
+/// login; the local enrollment has been wiped in that case.
+class BiometricLoginResult {
+  final bool success;
+  final bool revoked;
+  final String? error;
+
+  const BiometricLoginResult({
+    required this.success,
+    this.revoked = false,
+    this.error,
+  });
+}
 
 final authProvider = NotifierProvider<AuthNotifier, AuthState>(AuthNotifier.new);
 
@@ -195,6 +212,10 @@ class AuthNotifier extends Notifier<AuthState> {
         isAuthenticated: true,
       );
       resetIdleTimer();
+
+      // Keep the server-backed biometric enrollment fresh for this device
+      // (enroll revokes+reissues the per-device token). Best-effort.
+      unawaited(_reenrollBiometricsIfNeeded());
     } on DioException catch (e) {
       final backendMessage = e.response?.data?['message'] ?? e.response?.data?['error'] ?? e.message ?? 'An error occurred';
       throw Exception(backendMessage);
@@ -281,6 +302,9 @@ class AuthNotifier extends Notifier<AuthState> {
         isAuthenticated: true,
       );
       resetIdleTimer();
+
+      // Keep the server-backed biometric enrollment fresh for this device.
+      unawaited(_reenrollBiometricsIfNeeded());
 
       // Non-blocking, one-time hint to create a password from Settings.
       await maybeSuggestPasswordSetup();
@@ -550,6 +574,14 @@ class AuthNotifier extends Notifier<AuthState> {
       _idleTimer?.cancel();
       clearMeCache();
 
+      // Best-effort: remove this device's FCM token from the backend so push
+      // (call rings, chat alerts) stops for the signed-out user.
+      try {
+        await PushNotificationService.instance.unregisterCurrentDevice();
+      } catch (e) {
+        debugPrint('FCM unregister skipped: $e');
+      }
+
       // Sign out of the Google account picker too so the next Google
       // sign-in re-opens the account chooser (best effort, never blocks).
       await _googleAuthService.signOut();
@@ -567,9 +599,7 @@ class AuthNotifier extends Notifier<AuthState> {
       // If we should disable biometrics, also clear biometric credentials and disable it
       if (disableBiometrics) {
         newBiometricsEnabled = false;
-        await BiometricService.disableBiometrics();
-        await BiometricService.resetPromptStatus();
-        await storage.clearBiometricsCredentials();
+        await _revokeBiometricEnrollment();
       }
       
       state = AuthState(
@@ -588,38 +618,91 @@ class AuthNotifier extends Notifier<AuthState> {
     return result.success;
   }
 
+  /// Enables biometric unlock SERVER-SIDE:
+  /// 1. local_auth prompt (device-credential fallback enabled);
+  /// 2. POST /auth/biometric/enroll with a stable per-device UUID;
+  /// 3. the returned one-time biometric_token goes into secure storage,
+  ///    keyed per device.
   Future<BiometricResult> enableBiometricsWithResult() async {
     try {
-      final result = await BiometricService.enableBiometricsWithResult();
-      if (result.success) {
-        // Save current credentials for biometrics login
-        final token = state.token;
-        final userId = state.userId;
-        final businessId = state.businessId;
-        final userName = state.userName;
-        if (token != null && userId != null && businessId != null && userName != null) {
-          await _storageService.setBiometricsCredentials(
-            token: token,
-            userId: userId,
-            businessId: businessId,
-            userName: userName,
-          );
-        }
-        state = state.copyWith(biometricsEnabled: true);
+      final sessionToken = state.token ?? await _storageService.getToken();
+      if (sessionToken == null || sessionToken.isEmpty) {
+        return BiometricResult(
+          success: false,
+          error: 'Sign in with your password first to enable biometric unlock.',
+        );
       }
+
+      // Device capability: biometrics OR device PIN/pattern fallback.
+      final canAuth = await BiometricService.canAuthenticate();
+      if (!canAuth) {
+        await _storageService.setBiometricsEnabled(false);
+        final hasHardware = await BiometricService.hasHardware();
+        return BiometricResult(
+          success: false,
+          error: hasHardware
+              ? 'Please set up fingerprint or face recognition in your device settings first.'
+              : 'This device does not support biometric or device-credential unlock.',
+        );
+      }
+
+      final authResult = await BiometricService.authenticate('Enable biometric unlock');
+      if (!authResult.success) {
+        debugPrint('Biometric authentication failed during enable: ${authResult.error}');
+        return authResult;
+      }
+
+      final deviceId = await _storageService.getOrCreateBiometricDeviceId();
+      final response = await _apiService.biometricEnroll(
+        deviceId: deviceId,
+        deviceName: BiometricService.deviceName(),
+        platform: BiometricService.platformName(),
+      );
+      final data = response.data;
+      String? biometricToken;
+      if (data is Map && data['success'] == true && data['data'] is Map) {
+        biometricToken = data['data']['biometric_token']?.toString();
+      }
+      if (biometricToken == null || biometricToken.isEmpty) {
+        return BiometricResult(
+          success: false,
+          error: ApiService.extractResponseMessage(data) ?? 'Failed to enable biometric unlock',
+        );
+      }
+
+      await _storageService.setBiometricToken(deviceId, biometricToken);
+
+      // Keep the legacy credential copy so the display name survives logout
+      // (biometric login has no password prompt to derive it from).
+      final userId = state.userId ?? await _storageService.getUserId() ?? '';
+      final businessId = state.businessId ?? await _storageService.getBusinessId() ?? '';
+      final userName = state.userName ?? await _storageService.getUserName() ?? userId;
+      await _storageService.setBiometricsCredentials(
+        token: sessionToken,
+        userId: userId,
+        businessId: businessId,
+        userName: userName,
+      );
+
+      await _storageService.setBiometricsEnabled(true);
+      state = state.copyWith(biometricsEnabled: true);
+      debugPrint('Biometric unlock enabled successfully');
       resetIdleTimer();
-      return result;
+      return const BiometricResult(success: true);
+    } on DioException catch (e) {
+      return BiometricResult(
+        success: false,
+        error: ApiService.extractErrorMessage(e),
+      );
     } catch (e) {
-      debugPrint('Enable biometrics failed: $e');
+      debugPrint('Failed to enable biometrics: $e');
       return BiometricResult(success: false, error: 'Failed to enable biometric login');
     }
   }
 
   Future<void> disableBiometrics() async {
     try {
-      await BiometricService.disableBiometrics();
-      await BiometricService.resetPromptStatus();
-      await _storageService.clearBiometricsCredentials();
+      await _revokeBiometricEnrollment();
       state = state.copyWith(biometricsEnabled: false);
       resetIdleTimer();
     } catch (e) {
@@ -627,18 +710,121 @@ class AuthNotifier extends Notifier<AuthState> {
     }
   }
 
-  Future<bool> loginWithBiometrics() async {
+  /// Full wipe of the biometric unlock: backend revoke (best-effort, needs a
+  /// live session) + secure-storage token + legacy credentials + flag.
+  Future<void> _revokeBiometricEnrollment() async {
+    try {
+      final deviceId = await _storageService.getBiometricDeviceId();
+      try {
+        await _apiService.biometricRevoke(deviceId: deviceId);
+      } catch (e) {
+        // Revocation is best-effort: offline / session already gone.
+        debugPrint('Biometric revoke skipped: $e');
+      }
+      if (deviceId != null && deviceId.isNotEmpty) {
+        await _storageService.clearBiometricToken(deviceId);
+      }
+      await BiometricService.disableBiometrics();
+      await BiometricService.resetPromptStatus();
+      await _storageService.clearBiometricsCredentials();
+    } catch (e) {
+      debugPrint('Failed to revoke biometric enrollment: $e');
+    }
+  }
+
+  /// Local wipe only (no network) — used when the backend answers 401/403,
+  /// i.e. the stored credential was revoked server-side.
+  Future<void> _clearBiometricEnrollment() async {
+    try {
+      final deviceId = await _storageService.getBiometricDeviceId();
+      if (deviceId != null && deviceId.isNotEmpty) {
+        await _storageService.clearBiometricToken(deviceId);
+      }
+      await _storageService.setBiometricsEnabled(false);
+      await _storageService.clearBiometricsCredentials();
+      state = state.copyWith(biometricsEnabled: false);
+    } catch (e) {
+      debugPrint('Failed to clear biometric enrollment: $e');
+    }
+  }
+
+  /// Silent re-enroll after a successful password/Google login so the
+  /// per-device biometric token always matches a live enrollment. Never
+  /// throws; failures simply leave the previous (possibly revoked) token in
+  /// place — the next biometric login falls back to password sign-in.
+  Future<void> _reenrollBiometricsIfNeeded() async {
+    try {
+      if (!state.biometricsEnabled) return;
+      final token = state.token ?? await _storageService.getToken();
+      if (token == null || token.isEmpty) return;
+      if (!await BiometricService.canAuthenticate()) return;
+
+      final deviceId = await _storageService.getOrCreateBiometricDeviceId();
+      final response = await _apiService.biometricEnroll(
+        deviceId: deviceId,
+        deviceName: BiometricService.deviceName(),
+        platform: BiometricService.platformName(),
+      );
+      final data = response.data;
+      String? biometricToken;
+      if (data is Map && data['success'] == true && data['data'] is Map) {
+        biometricToken = data['data']['biometric_token']?.toString();
+      }
+      if (biometricToken != null && biometricToken.isNotEmpty) {
+        await _storageService.setBiometricToken(deviceId, biometricToken);
+      }
+    } catch (e) {
+      debugPrint('Biometric re-enroll skipped: $e');
+    }
+  }
+
+  /// SERVER-BACKED biometric login:
+  /// 1. local_auth prompt (device PIN/pattern fallback allowed);
+  /// 2. POST /auth/biometric/login with the stored biometric_token + device_id;
+  /// 3. bootstrap the session exactly like password login (token storage,
+  ///    socket, idle timer) on success; wipe the local enrollment on 401.
+  Future<BiometricLoginResult> loginWithBiometrics() async {
     try {
       final authResult = await BiometricService.authenticate('Sign in to your account');
-      if (authResult.success) {
-        final credentials = await _storageService.getBiometricsCredentials();
-        if (credentials != null) {
-          final token = credentials['token']!;
-          final userId = credentials['userId']!;
-          final businessId = credentials['businessId']!;
-          final userName = credentials['userName']!;
+      if (!authResult.success) {
+        return BiometricLoginResult(success: false, error: authResult.error);
+      }
 
-          // Restore all credentials
+      final deviceId = await _storageService.getBiometricDeviceId();
+      final biometricToken = (deviceId == null || deviceId.isEmpty)
+          ? null
+          : await _storageService.getBiometricToken(deviceId);
+      if (deviceId == null || deviceId.isEmpty || biometricToken == null || biometricToken.isEmpty) {
+        await _clearBiometricEnrollment();
+        return const BiometricLoginResult(
+          success: false,
+          revoked: true,
+          error: 'Biometric unlock is not set up on this device. Please sign in with your password.',
+        );
+      }
+
+      try {
+        final response = await _apiService.biometricLogin(
+          biometricToken: biometricToken,
+          deviceId: deviceId,
+          deviceName: BiometricService.deviceName(),
+        );
+        final data = response.data;
+        if (data is Map && data['success'] == true) {
+          final token = data['token']?.toString() ?? '';
+          final userId = data['userId']?.toString() ?? '';
+          final businessId = data['businessId']?.toString() ?? '';
+          if (token.isEmpty || userId.isEmpty || businessId.isEmpty) {
+            return const BiometricLoginResult(
+              success: false,
+              error: 'Biometric sign-in returned an incomplete session. Please use your password.',
+            );
+          }
+          // Display name: restore from the legacy credential copy (cleared
+          // on logout) or the persisted user name; refreshed by /auth/me.
+          final creds = await _storageService.getBiometricsCredentials();
+          final userName = creds?['userName'] ?? await _storageService.getUserName() ?? userId;
+
           await Future.wait([
             _storageService.setToken(token),
             _storageService.setUserId(userId),
@@ -646,7 +832,6 @@ class AuthNotifier extends Notifier<AuthState> {
             _storageService.setUserName(userName),
           ]);
 
-          // Connect socket
           _socketService.connect(userId, businessId, token: token);
 
           state = state.copyWith(
@@ -657,13 +842,29 @@ class AuthNotifier extends Notifier<AuthState> {
             isAuthenticated: true,
           );
           resetIdleTimer();
-          return true;
+          unawaited(getMe());
+          return const BiometricLoginResult(success: true);
         }
+        return BiometricLoginResult(
+          success: false,
+          error: ApiService.extractResponseMessage(data) ?? 'Biometric sign-in failed',
+        );
+      } on DioException catch (e) {
+        final status = e.response?.statusCode;
+        if (status == 401 || status == 403) {
+          // Credential revoked server-side — wipe and ask for the password.
+          await _clearBiometricEnrollment();
+          return const BiometricLoginResult(
+            success: false,
+            revoked: true,
+            error: 'Biometric unlock was reset. Please sign in with your password once to re-enable it.',
+          );
+        }
+        return BiometricLoginResult(success: false, error: ApiService.extractErrorMessage(e));
       }
-      return false;
     } catch (e) {
       debugPrint('Biometric login failed: $e');
-      return false;
+      return BiometricLoginResult(success: false, error: 'An error occurred during biometric authentication');
     }
   }
 

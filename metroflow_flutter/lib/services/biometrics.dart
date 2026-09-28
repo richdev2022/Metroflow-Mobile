@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:local_auth/local_auth.dart';
@@ -20,7 +22,7 @@ class BiometricService {
     try {
       final supported = await _auth.isDeviceSupported();
       if (!supported) return false;
-      
+
       // Try canCheckBiometrics first
       bool canCheck = false;
       try {
@@ -28,7 +30,7 @@ class BiometricService {
       } catch (e) {
         debugPrint('Error checking canCheckBiometrics: $e');
       }
-      
+
       if (canCheck) {
         // Check for available biometrics
         try {
@@ -39,13 +41,35 @@ class BiometricService {
           return true; // If we can check, assume available
         }
       }
-      
+
       // Fallback: if canCheck fails, just return supported status
       return supported;
     } catch (e) {
       debugPrint('Failed to check biometric hardware: $e');
       return false;
     }
+  }
+
+  /// True when the device can present ANY local-auth prompt: biometrics OR
+  /// the device PIN/pattern/password fallback (stickyAuth +
+  /// biometricOnly:false). Low-end devices without fingerprint hardware but
+  /// with a screen lock can therefore still use biometric unlock.
+  static Future<bool> isDeviceSupported() async {
+    if (kIsWeb) {
+      return false;
+    }
+    try {
+      return await _auth.isDeviceSupported();
+    } catch (e) {
+      debugPrint('Failed to check device support: $e');
+      return false;
+    }
+  }
+
+  /// [isAvailable] OR the device-credential (PIN/pattern) fallback.
+  static Future<bool> canAuthenticate() async {
+    if (await isAvailable()) return true;
+    return isDeviceSupported();
   }
 
   static Future<bool> isEnrolled() async {
@@ -103,9 +127,13 @@ class BiometricService {
       } catch (e) {
         // Ignore stop errors
       }
-      
-      final isAvailable = await BiometricService.isAvailable();
-      if (!isAvailable) {
+
+      // Device-credential fallback: allow the device PIN/pattern when
+      // biometrics are unavailable/failed (stickyAuth survives backgrounding,
+      // useErrorDialogs guides the user). THIS is the compatibility fix for
+      // low-end devices — biometricOnly stays false.
+      final canAuth = await BiometricService.canAuthenticate();
+      if (!canAuth) {
         return BiometricResult(
           success: false,
           error: 'Biometric authentication is not available on this device',
@@ -113,10 +141,12 @@ class BiometricService {
       }
 
       debugPrint('Starting biometric authentication...');
-      
+
       final result = await _auth.authenticate(
         localizedReason: promptMessage,
+        stickyAuth: true,
         biometricOnly: false,
+        useErrorDialogs: true,
         persistAcrossBackgrounding: true,
         sensitiveTransaction: false,
       );
@@ -189,6 +219,24 @@ class BiometricService {
       debugPrint('Failed to check biometrics enabled status: $e');
       return false;
     }
+  }
+
+  /// Human-readable device name for the backend enroll payload.
+  static String deviceName() {
+    try {
+      final host = Platform.localHostname;
+      if (host.trim().isNotEmpty) return host;
+    } catch (_) {}
+    return platformName();
+  }
+
+  /// 'android' | 'ios' | other — matches the backend enroll schema.
+  static String platformName() {
+    try {
+      if (Platform.isAndroid) return 'android';
+      if (Platform.isIOS) return 'ios';
+    } catch (_) {}
+    return 'android';
   }
 
   static Future<bool> enableBiometrics() async {
