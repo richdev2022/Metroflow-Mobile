@@ -245,31 +245,152 @@ class _EmojiStickerGifPanelState extends State<EmojiStickerGifPanel>
   }
 
   // -- Stickers tab --------------------------------------------------------------
+  //
+  // Curated sticker catalog (~200 emojis) organized in 10 categories. The
+  // chip row filters the grid; sending behavior is unchanged (each tap fires
+  // onStickerSelected -> messageType 'sticker').
 
-  static const List<String> _stickers = [
-    '😀','😂','🥰','😍','🤩','😜','🤪','🤗','🤔','😎','🥳','😴','🤯','🥺','😭','😡',
-    '🤖','👻','🎃','🦄','🐸','🐼','🐨','🦁','🐧','🐢','🦋','🐝','🌸','🌻','🌹','🍀',
-    '❤️','💔','💖','💯','🔥','✨','🎉','🎊','🎁','🏆','⚡','🌈','☀️','🌙','⭐','🍕',
-    '🍔','🍟','🍩','🍰','☕','🎸','🎮','⚽','🏀','🚀','✈️','🏝️','💎','👑','🤝','👍',
+  String _activeStickerCategory = 'All';
+
+  static const List<String> _stickerCategories = [
+    'Happy',
+    'Love',
+    'Reactions',
+    'Sad',
+    'Angry',
+    'Celebrate',
+    'Animals',
+    'Food',
+    'Weather',
+    'Work',
   ];
 
+  static const Map<String, List<String>> _stickerCatalog = {
+    'Happy': [
+      '😀','😃','😄','😁','😆','😅','🤣','😂','🙂','🙃','😉','😊','😇','🥰','😍','🤩',
+      '😘','😗','😚','😙','🥲','😋','😛','😜','🤪','😝','🤗','🤭','🥳','😎','🤓',
+    ],
+    'Love': [
+      '❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖',
+      '💘','💝','💟','♥️','😍','🥰','😘','💋','👩‍❤️‍👨','💐','🌹','💍','💌','🫶',
+    ],
+    'Reactions': [
+      '👍','👎','👌','🤌','🤏','✌️','🤞','🫡','🤙','👏','🙌','👐','🤲','🤝','🙏','💪',
+      '👀','💯','🔥','🤔','🤨','😬','🙄','😮','😲','😳','🫢','🤯','😴','🤒',
+    ],
+    'Sad': [
+      '😢','😭','😓','😔','😞','😟','🙁','☹️','😣','😖','😫','😩','🥺','😔','😭','😰',
+      '😥','😨','🥶','🥴','😪','💔','😷','🤕','😿','😾','🫥','😵','🥱','😪',
+    ],
+    'Angry': [
+      '😠','😡','🤬','😤','💢','☠️','👿','😈','🤯','😒','🥵','🫤','😾','👊','🤜','🚫',
+      '⛔','🔪','💣','🤛',
+    ],
+    'Celebrate': [
+      '🎉','🎊','🎈','🎁','🏆','🥇','🥈','🥉','🍾','🥂','🎂','🕯️','✨','🌟','💫','⚡',
+      '🎆','🎇','🪅','🪩','🎯','👑','🎓','🙌','🍰','🎤',
+    ],
+    'Animals': [
+      '🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🐔',
+      '🐧','🐦','🐤','🦆','🦅','🦉','🐺','🐴','🦄','🐝','🦋','🐌','🐞','🐢',
+    ],
+    'Food': [
+      '🍏','🍎','🍐','🍊','🍋','🍌','🍉','🍇','🍓','🫐','🍒','🍑','🥭','🍍','🥥','🥝',
+      '🍅','🥑','🍔','🍟','🍕','🌮','🌯','🍜','🍣','🍩','🍪','🎂','🍭','🍫',
+    ],
+    'Weather': [
+      '☀️','🌤️','⛅','☁️','🌦️','🌧️','⛈️','🌩️','🌨️','❄️','🌈','🌪️','🌫️','🌊','💧','🌙',
+      '⭐','🌠','🍂','🍃',
+    ],
+    'Work': [
+      '💼','📊','📈','📉','🗓️','📌','📎','🗂️','📁','📝','✏️','🖊️','🖱️','💻','⌨️',
+      '🖥️','🖨️','📇','⚙️','🔒','🔑','⏰','✅','🚀',
+    ],
+  };
+
+  /// Stickers of the active category ('All' = whole catalog, deduped).
+  List<String> get _visibleStickers {
+    if (_activeStickerCategory == 'All') {
+      final seen = <String>{};
+      final all = <String>[];
+      for (final category in _stickerCatalog.values) {
+        for (final sticker in category) {
+          if (seen.add(sticker)) all.add(sticker);
+        }
+      }
+      return all;
+    }
+    return _stickerCatalog[_activeStickerCategory] ?? const [];
+  }
+
   Widget _buildStickerGrid(ThemeColors colors) {
-    return GridView.builder(
-      padding: const EdgeInsets.all(12),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 5,
-        childAspectRatio: 1,
-      ),
-      itemCount: _stickers.length,
-      itemBuilder: (context, i) {
-        return InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: () => widget.onStickerSelected(_stickers[i]),
-          child: Center(
-            child: Text(_stickers[i], style: const TextStyle(fontSize: 48)),
+    final stickers = _visibleStickers;
+    return Column(
+      children: [
+        // Horizontally scrollable category chips.
+        SizedBox(
+          height: 44,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            children: [
+              _stickerChip('All', colors),
+              for (final category in _stickerCategories)
+                _stickerChip(category, colors),
+            ],
           ),
-        );
-      },
+        ),
+        Expanded(
+          child: GridView.builder(
+            padding: const EdgeInsets.all(12),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 5,
+              childAspectRatio: 1,
+            ),
+            itemCount: stickers.length,
+            itemBuilder: (context, i) {
+              return InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: () => widget.onStickerSelected(stickers[i]),
+                child: Center(
+                  child: Text(stickers[i], style: const TextStyle(fontSize: 44)),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _stickerChip(String label, ThemeColors colors) {
+    final active = _activeStickerCategory == label;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: () => setState(() => _activeStickerCategory = label),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          decoration: BoxDecoration(
+            color: active ? colors.primary : colors.surfaceVariant,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: active ? colors.primary : colors.border,
+            ),
+          ),
+          child: Center(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+                color: active ? Colors.white : colors.textSecondary,
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:fluttertoast/fluttertoast.dart';
+import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import '../services/api.dart';
 import '../models/epic.dart';
@@ -36,6 +37,10 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
   final _endDateController = TextEditingController();
   final List<String> _taskAssignedToIds = [];
   final List<String> _taskImages = [];
+  // Files picked at creation time — uploaded to POST /tasks/:id/attachments
+  // right after the task (or, in edit mode, the existing task) is saved.
+  final List<PlatformFile> _pendingTaskFiles = [];
+  bool _isUploadingFiles = false;
   
   bool _isLoading = false;
   bool _isFetching = true;
@@ -194,9 +199,17 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
         };
 
         if (_editingTask == null) {
-          await api.createTask(payload);
+          final response = await api.createTask(payload);
+          // Best-effort: upload the picked files to the freshly created task.
+          final createdId = _extractCreatedTaskId(response);
+          if (_pendingTaskFiles.isNotEmpty && createdId != null) {
+            await _uploadPendingFiles(createdId);
+          }
         } else {
           await api.updateTask(_editingTask!.id, payload);
+          if (_pendingTaskFiles.isNotEmpty) {
+            await _uploadPendingFiles(_editingTask!.id);
+          }
         }
         Fluttertoast.showToast(msg: _editingTask == null ? 'Task created successfully' : 'Task updated successfully');
         if (mounted) context.go('/main/backlog');
@@ -209,6 +222,139 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
         setState(() => _isLoading = false);
       }
     }
+  }
+
+  // -- Attach-at-creation helpers ---------------------------------------------
+
+  static const int _maxUploadFiles = 10;
+  static const int _maxUploadBytes = 50 * 1024 * 1024; // 50MB per file
+
+  /// Pull the new task's id out of POST /tasks' response. Tolerates both
+  /// `{ data: { task: { id } } }` and `{ data: { id } }` shapes.
+  String? _extractCreatedTaskId(dynamic response) {
+    try {
+      final data = response?.data;
+      if (data is! Map) return null;
+      final payload = data['data'];
+      if (payload is Map) {
+        final task = payload['task'];
+        if (task is Map && task['id'] != null) return task['id'].toString();
+        if (payload['id'] != null) return payload['id'].toString();
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<void> _pickTaskFiles() async {
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      withData: true, // covers web/no-path picks; native uses the path
+    );
+    if (result == null || result.files.isEmpty) return;
+    final oversized = result.files.where((f) => f.size > _maxUploadBytes).length;
+    if (oversized > 0) {
+      Fluttertoast.showToast(
+          msg: '$oversized file(s) exceed the 50 MB limit and will be skipped');
+    }
+    final valid = result.files
+        .where((f) => f.size <= _maxUploadBytes && f.size >= 0)
+        .take(_maxUploadFiles)
+        .toList();
+    if (!mounted) return;
+    setState(() {
+      _pendingTaskFiles.addAll(valid);
+      if (_pendingTaskFiles.length > _maxUploadFiles) {
+        _pendingTaskFiles.removeRange(
+            _maxUploadFiles, _pendingTaskFiles.length);
+      }
+    });
+  }
+
+  /// Upload the picked files (≤10, ≤50MB each) to the saved task. Individual
+  /// failures are skipped — the task itself is already saved, so the flow
+  /// continues; a 403 stops the loop with a friendly message.
+  Future<void> _uploadPendingFiles(String taskId) async {
+    if (_pendingTaskFiles.isEmpty) return;
+    setState(() => _isUploadingFiles = true);
+    var uploaded = 0;
+    var forbidden = false;
+    for (final picked in _pendingTaskFiles) {
+      try {
+        MultipartFile part;
+        final path = picked.path;
+        if (path != null && path.isNotEmpty) {
+          part = await MultipartFile.fromFile(path, filename: picked.name);
+        } else if (picked.bytes != null) {
+          part = MultipartFile.fromBytes(picked.bytes!, filename: picked.name);
+        } else {
+          continue;
+        }
+        final formData = FormData.fromMap({'files': [part]});
+        final response = await ApiService().uploadTaskAttachmentPart(taskId, formData);
+        if (response.statusCode != null && response.statusCode! < 400) uploaded++;
+      } on DioException catch (e) {
+        debugPrint('Task attachment upload failed: $e');
+        if (e.response?.statusCode == 403) {
+          forbidden = true;
+          break;
+        }
+      } catch (e) {
+        debugPrint('Task attachment upload failed: $e');
+      }
+    }
+    _pendingTaskFiles.clear();
+    if (mounted) setState(() => _isUploadingFiles = false);
+    if (forbidden) {
+      Fluttertoast.showToast(
+          msg: 'Files could not be attached (missing manage-tasks permission)');
+    } else if (uploaded > 0) {
+      Fluttertoast.showToast(msg: '$uploaded file(s) attached to the task');
+    }
+  }
+
+  Widget _buildTaskFilesPicker(ThemeColors colors) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Files (Optional)', style: TextStyle(color: colors.text, fontSize: 12, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 4),
+        InkWell(
+          onTap: _isUploadingFiles ? null : _pickTaskFiles,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: colors.surfaceVariant,
+              border: Border.all(color: colors.border),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.attach_file_rounded, color: colors.textSecondary, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _pendingTaskFiles.isEmpty
+                        ? 'Attach documents (added after the task is saved)'
+                        : _pendingTaskFiles.map((f) => f.name).join(', '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: _pendingTaskFiles.isEmpty ? colors.textSecondary : colors.text,
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+                if (_pendingTaskFiles.isNotEmpty)
+                  GestureDetector(
+                    onTap: () => setState(() => _pendingTaskFiles.clear()),
+                    child: Icon(Icons.close_rounded, size: 18, color: colors.textSecondary),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   String _getSelectedEpicAssigneesText() {
@@ -281,6 +427,8 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
             _buildField('Description', _descriptionController, hint: 'Task description', maxLines: 4, colors: colors),
             const SizedBox(height: 12),
             _buildImagePicker(colors),
+            const SizedBox(height: 12),
+            _buildTaskFilesPicker(colors),
           ],
         ),
         const SizedBox(height: 16),

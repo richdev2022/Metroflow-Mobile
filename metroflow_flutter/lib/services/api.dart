@@ -12,6 +12,7 @@ import '../providers/auth_provider.dart';
 import '../widgets/upgrade_dialog.dart';
 import '../models/chat_media.dart';
 import '../models/gif.dart';
+import '../models/task_attachment.dart';
 
 final String _apiBaseUrl = dotenv.env['EXPO_PUBLIC_API_BASE_URL'] ?? 'https://api.metricorex.com/api';
 
@@ -334,6 +335,64 @@ class ApiService {
 
   Future<Response> bulkDeleteTasks(List<String> taskIds) async {
     return await _dio.delete('/tasks', data: {'taskIds': taskIds});
+  }
+
+  // Task attachments API (server: requires the 'manage_tasks' feature
+  // permission for uploads/deletes; up to 10 files, 50MB each per request).
+
+  /// GET /tasks/:id/attachments ->
+  /// `{ success, data: { attachments: [TaskAttachment] } }`.
+  Future<Response> getTaskAttachments(String taskId) async {
+    return await _dio.get('/tasks/$taskId/attachments',
+        options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// POST /tasks/:id/attachments — multipart with an array field named
+  /// `files`. Returns the created TaskAttachment objects. Toasts are
+  /// suppressed so callers can drive their own progress feedback and handle
+  /// 403 (missing 'manage_tasks') with a friendly message.
+  Future<List<TaskAttachment>> uploadTaskAttachments(
+    String taskId,
+    List<File> files, {
+    void Function(int completed, int total)? onFileProgress,
+  }) async {
+    final List<TaskAttachment> uploaded = [];
+    for (var i = 0; i < files.length; i++) {
+      final file = files[i];
+      final fileName = file.path.split(Platform.pathSeparator).last;
+      final formData = FormData.fromMap(<String, dynamic>{
+        'files': [await MultipartFile.fromFile(file.path, filename: fileName)],
+      });
+      final response = await _dio.post('/tasks/$taskId/attachments',
+          data: formData,
+          options: Options(extra: {'suppressToast': true}));
+      final data = response.data is Map ? response.data['data'] : null;
+      final list = data is Map ? data['attachments'] : null;
+      if (list is List) {
+        uploaded.addAll(list
+            .whereType<Map>()
+            .map((a) =>
+                TaskAttachment.fromJson(Map<String, dynamic>.from(a)))
+            .toList());
+      }
+      onFileProgress?.call(i + 1, files.length);
+    }
+    return uploaded;
+  }
+
+  /// DELETE /tasks/attachments/:attachmentId -> `{ success }`.
+  Future<Response> deleteTaskAttachment(String attachmentId) async {
+    return await _dio.delete('/tasks/attachments/$attachmentId',
+        options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// POST /tasks/:id/attachments with a caller-prepared FormData (the
+  /// multipart array field must be named `files`). Throws on failure so
+  /// callers can distinguish 403 (missing 'manage_tasks') from network
+  /// errors. Toasts suppressed — callers own the progress feedback.
+  Future<Response> uploadTaskAttachmentPart(String taskId, FormData formData) async {
+    return await _dio.post('/tasks/$taskId/attachments',
+        data: formData, options: Options(extra: {'suppressToast': true}));
   }
 
   Future<Response> getDashboardMetrics({Map<String, dynamic>? params}) async {
@@ -1073,6 +1132,59 @@ class ApiService {
   /// Clears the caller's MetricAi history.
   Future<Response> deleteAiHistory() async {
     return await _dio.delete('/ai/history', options: Options(extra: {'suppressToast': true}));
+  }
+
+  // -------------------------------------------------------------------------
+  // MetricAi human handoff — support desk (customer side, JWT auth).
+  // POST /support/escalate, GET /support/my/:id/messages?after=ISO,
+  // POST /support/my/:id/messages, POST /support/my/:id/close.
+  // -------------------------------------------------------------------------
+
+  /// Escalate a MetricAi conversation to a human support agent. [transcript]
+  /// is the current AI screen's messages (`{role: 'user'|'assistant',
+  /// content}`) so the agent sees the full context. Returns
+  /// `{ success, data: { conversationId, status } }`.
+  Future<Response> escalateToSupport({
+    required String name,
+    required String email,
+    String? subject,
+    String? message,
+    String channel = 'mobile',
+    List<Map<String, dynamic>> transcript = const [],
+  }) async {
+    return await _dio.post('/support/escalate', data: {
+      'name': name,
+      'email': email,
+      if (subject != null && subject.trim().isNotEmpty) 'subject': subject.trim(),
+      if (message != null && message.trim().isNotEmpty) 'message': message.trim(),
+      'channel': channel,
+      'transcript': transcript,
+    }, options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// Messages of the caller's own support conversation. `after` (ISO date)
+  /// returns only newer messages (incremental polling). Response:
+  /// `{ success, data: { messages: [...], status } }`.
+  Future<Response> getMySupportMessages(String conversationId, {String? after}) async {
+    return await _dio.get('/support/my/$conversationId/messages',
+        queryParameters: {
+          if (after != null && after.isNotEmpty) 'after': after,
+        },
+        options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// Send a customer reply in the caller's support conversation.
+  Future<Response> sendMySupportMessage(String conversationId, String body) async {
+    return await _dio.post('/support/my/$conversationId/messages',
+        data: {'body': body}, options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// Conclude (close) the caller's own support conversation. Afterwards the
+  /// server rejects new messages (400) and the status becomes
+  /// 'resolved'|'closed'.
+  Future<Response> closeMySupportConversation(String conversationId) async {
+    return await _dio.post('/support/my/$conversationId/close',
+        options: Options(extra: {'suppressToast': true}));
   }
 
   /// Upload the user's profile picture via POST /settings/profile/avatar as
