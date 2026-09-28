@@ -1,15 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 import '../services/api.dart';
 import '../services/socket_service.dart';
 import '../models/conversation.dart';
 import '../models/user.dart';
 import '../theme/app_theme.dart';
+import '../utils/app_timezone.dart';
 import '../utils/logger.dart';
 import '../providers/auth_provider.dart';
 import '../providers/badge_provider.dart';
 import '../widgets/modern_ui.dart';
+import '../widgets/avatar_with_initials.dart';
 import 'chat_detail_screen.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
@@ -124,8 +125,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   List<Conversation> get _filteredConversations {
     if (_searchQuery.trim().isEmpty) return _conversations;
     final query = _searchQuery.trim().toLowerCase();
+    final currentUserId = ref.read(authProvider).userId;
     return _conversations.where((conversation) {
-      final name = (conversation.name ?? 'Direct Chat').toLowerCase();
+      final name = conversation.displayTitle(currentUserId).toLowerCase();
       final preview = (conversation.lastMessage ?? '').toLowerCase();
       return name.contains(query) || preview.contains(query);
     }).toList();
@@ -148,17 +150,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   String _timeLabel(DateTime time) {
-    final now = DateTime.now();
-    final local = time.toLocal();
-    final today = DateTime(now.year, now.month, now.day);
-    final messageDay = DateTime(local.year, local.month, local.day);
-    if (messageDay == today) {
-      return DateFormat.Hm().format(local);
+    final tz = AppTimezone.instance;
+    final now = tz.todayKey();
+    final messageDay = tz.dateKeyIn(time);
+    if (messageDay == now) {
+      return tz.formatTime(time);
     }
-    if (local.year == now.year) {
-      return DateFormat.MMMd().format(local);
+    if (messageDay.year == now.year) {
+      return tz.formatDateShort(time);
     }
-    return DateFormat.yMMMd().format(local);
+    return tz.formatDate(time);
   }
 
   @override

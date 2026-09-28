@@ -7,8 +7,10 @@ import '../services/api.dart';
 import '../models/team_member.dart';
 import '../models/task.dart';
 import '../providers/auth_provider.dart';
+import '../providers/user_profile_provider.dart';
 import '../utils/app_timezone.dart';
 import '../widgets/modern_ui.dart';
+import '../widgets/avatar_with_initials.dart';
 import 'package:fl_chart/fl_chart.dart';
 
 class DashboardScreen extends ConsumerStatefulWidget {
@@ -86,6 +88,13 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   void initState() {
     super.initState();
     _fetchData();
+    // Warm the shared user profile (name/avatar) from the local cache and,
+    // best-effort, from the server — used by the greeting + avatar chip.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref.read(userProfileProvider.notifier).hydrate();
+      ref.read(userProfileProvider.notifier).refreshFromServer();
+    });
   }
 
   Future<void> _fetchData([bool showLoader = true]) async {
@@ -224,6 +233,25 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     if (hour < 12) return 'Good morning';
     if (hour < 17) return 'Good afternoon';
     return 'Good evening';
+  }
+
+  /// Friendly display name for the greeting — the user's NAME, never the
+  /// email. authProvider sometimes stores the email as a fallback, so a
+  /// name-like string is derived from the email prefix in that case.
+  String _displayName(AuthState authState, UserProfile profile) {
+    final fromAuth = (authState.userName ?? '').trim();
+    final candidate = fromAuth.isNotEmpty ? fromAuth : profile.name.trim();
+    if (candidate.isEmpty) return 'there';
+    if (candidate.contains('@')) {
+      final prefix = candidate.split('@').first;
+      final cleaned = prefix.replaceAll(RegExp(r'[._\-+0-9]+'), ' ').trim();
+      if (cleaned.isEmpty) return 'there';
+      return cleaned
+          .split(RegExp(r'\s+'))
+          .map((word) => word.isEmpty ? word : '${word[0].toUpperCase()}${word.substring(1)}')
+          .join(' ');
+    }
+    return candidate;
   }
 
   bool _isTaskOverdue(dynamic task) {
@@ -369,7 +397,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       });
 
     final authState = ref.watch(authProvider);
-    final displayName = (authState.userName ?? '').trim();
+    final profile = ref.watch(userProfileProvider);
+    final displayName = _displayName(authState, profile);
     final firstName = displayName.split(' ').first;
 
     return SafeArea(
@@ -391,6 +420,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   openTasksCount,
                   completionPercentage,
                   overdueTasks.length,
+                  profile,
                 ),
               ),
               const SizedBox(height: 24),
@@ -550,6 +580,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     int openTasksCount,
     int completionPercentage,
     int overdueCount,
+    UserProfile profile,
   ) {
     return Container(
       padding: const EdgeInsets.all(24),
@@ -624,14 +655,41 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  '${_greeting()}, $firstName!',
-                  style: const TextStyle(
-                    fontSize: 23,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white,
-                    height: 1.2,
-                  ),
+                // Greeting + avatar chip (uses the user's picture, initials
+                // as fallback — never the email).
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '${_greeting()}, $firstName!',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 23,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.white,
+                          height: 1.2,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.55),
+                          width: 1.6,
+                        ),
+                      ),
+                      child: AvatarWithInitials(
+                        name: firstName == 'there' ? 'Me' : firstName,
+                        imageUrl: profile.avatarUrl,
+                        radius: 19,
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 5),
                 Text(
@@ -807,13 +865,13 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         icon: Icons.video_call_outlined,
         label: 'Start Meeting',
         tint: colors.success,
-        onTap: () => context.go('/main?tab=2'),
+        onTap: () => context.go('/main?tab=3'),
       ),
       _QuickActionData(
         icon: Icons.chat_bubble_outline_rounded,
         label: 'New Chat',
         tint: const Color(0xFF7C3AED),
-        onTap: () => context.go('/main?tab=3'),
+        onTap: () => context.go('/main?tab=2'),
       ),
       _QuickActionData(
         icon: Icons.archive_outlined,

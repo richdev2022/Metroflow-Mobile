@@ -6,6 +6,7 @@ import '../theme/app_theme.dart';
 import '../providers/auth_provider.dart';
 import '../services/biometrics.dart';
 import '../services/api.dart';
+import '../widgets/auth_ui.dart';
 import 'permission_primer.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -18,7 +19,6 @@ class LoginScreen extends ConsumerStatefulWidget {
 class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  bool _obscurePassword = true;
   bool _isLoading = false;
   bool _isGoogleLoading = false;
   bool _biometricLoading = false;
@@ -37,10 +37,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     // Wait for the next frame to ensure the UI is built
     await Future.delayed(Duration.zero);
     if (!mounted) return;
-    
+
     final biometricsEnabled = ref.read(authProvider).biometricsEnabled;
     final canAuth = await BiometricService.canAuthenticate();
-    
+
     if (biometricsEnabled && canAuth && mounted) {
       await _handleBiometricLogin();
     }
@@ -289,259 +289,106 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     return Scaffold(
       body: Stack(
         children: [
-          SafeArea(
-            child: KeyboardAvoidingWidget(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
-                child: Column(
-                  children: [
-                    Container(
-                      width: 100,
-                      height: 100,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(28),
-                        boxShadow: [
-                          BoxShadow(
-                            color: colors.primary.withValues(alpha:0.3),
-                            offset: const Offset(0, 8),
-                            blurRadius: 20,
-                            spreadRadius: 0,
-                          ),
-                        ],
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(28),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [colors.primary, colors.primaryLight],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            ),
-                          ),
-                          child: const Icon(Icons.login_outlined, size: 48, color: Colors.white),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    Text(
-                      'Metricorex',
-                      style: TextStyle(
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
-                        color: colors.primary,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Welcome back! Please sign in to continue',
-                      style: TextStyle(fontSize: 16, color: colors.textSecondary),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 32),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: colors.surface,
-                        border: Border.all(color: colors.border, width: 1.5),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Row(
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            child: Icon(Icons.mail_outline, color: colors.textSecondary),
-                          ),
-                          Expanded(
-                            child: TextField(
-                              controller: _emailController,
-                              decoration: InputDecoration(
-                                hintText: 'Email',
-                                hintStyle: TextStyle(color: colors.textSecondary),
-                                border: InputBorder.none,
-                              ),
-                              keyboardType: TextInputType.emailAddress,
-                              style: TextStyle(color: colors.text),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: colors.surface,
-                        border: Border.all(color: colors.border, width: 1.5),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Row(
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            child: Icon(Icons.lock_outline, color: colors.textSecondary),
-                          ),
-                          Expanded(
-                            child: TextField(
-                              controller: _passwordController,
-                              obscureText: _obscurePassword,
-                              decoration: InputDecoration(
-                                hintText: 'Password',
-                                hintStyle: TextStyle(color: colors.textSecondary),
-                                border: InputBorder.none,
-                              ),
-                              style: TextStyle(color: colors.text),
-                            ),
-                          ),
-                          IconButton(
-                            icon: Icon(
-                              _obscurePassword ? Icons.visibility_outlined : Icons.visibility_off_outlined,
-                              color: colors.textSecondary,
-                            ),
-                            onPressed: () {
-                              setState(() {
-                                _obscurePassword = !_obscurePassword;
-                              });
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: TextButton(
-                        onPressed: () {
-                          context.go('/forgot-password');
-                        },
-                        child: Text(
-                          'Forgot Password?',
-                          style: TextStyle(color: colors.primary),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    Container(
-                      width: double.infinity,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: colors.primary.withValues(alpha: 0.25),
-                            offset: const Offset(0, 8),
-                            blurRadius: 16,
-                            spreadRadius: 0,
-                          ),
-                        ],
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(16),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [colors.primary, colors.primaryLight],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            ),
-                          ),
-                          child: ElevatedButton(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.transparent,
-                              shadowColor: Colors.transparent,
-                              padding: const EdgeInsets.symmetric(vertical: 18),
-                            ),
-                            onPressed: _isLoading ? null : _handleLogin,
-                            child: _isLoading
-                                ? const SizedBox(
-                                    height: 24,
-                                    width: 24,
-                                    child: CircularProgressIndicator(color: Colors.white),
-                                  )
-                                : const Text(
-                                    'Sign In',
-                                    style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold),
-                                  ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (_biometricsAvailable) ...[
-                      const SizedBox(height: 24),
-                      Container(
-                        width: double.infinity,
-                        decoration: BoxDecoration(
-                          color: colors.surface,
-                          border: Border.all(color: biometricsEnabled ? colors.primary : colors.border, width: 2),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: TextButton.icon(
-                          onPressed: _biometricLoading
-                              ? null
-                                  : (biometricsEnabled
-                                      ? _handleBiometricLogin
-                                      : () async {
-                                          await _showAlert(
-                                            'Enable Biometrics',
-                                            'Please sign in with your password first, then enable biometric login in Settings.',
-                                          );
-                                        }),
-                          icon: _biometricLoading
-                              ? SizedBox(
-                                  height: 24,
-                                  width: 24,
-                                  child: CircularProgressIndicator(color: colors.primary),
-                                )
-                              : Icon(Icons.fingerprint_outlined, size: 24, color: biometricsEnabled ? colors.primary : colors.textSecondary),
-                          label: Text(
-                            biometricsEnabled ? 'Sign in with Biometrics' : 'Biometrics not enabled',
-                            style: TextStyle(
-                              color: biometricsEnabled ? colors.primary : colors.textSecondary,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 24),
-                    const OrDivider(),
-                    const SizedBox(height: 16),
-                    GoogleSignInButton(
-                      onPressed: _handleGoogleSignIn,
-                      isLoading: _isGoogleLoading,
-                    ),
-                    const SizedBox(height: 24),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          "Don't have an account? ",
-                          style: TextStyle(color: colors.textSecondary, fontSize: 15),
-                        ),
-                        TextButton(
-                          onPressed: () {
-                            context.go('/register');
-                          },
-                          child: Text(
-                            'Sign Up',
-                            style: TextStyle(color: colors.primary, fontSize: 15, fontWeight: FontWeight.w600),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+          // Gradient accent band behind the header (clipped with a curve).
+          ClipPath(
+            clipper: _AuthHeaderCurve(),
+            child: Container(
+              height: 190,
+              decoration: const BoxDecoration(
+                gradient: BrandSplashGradient.buttonGradient,
               ),
             ),
           ),
+          AuthScreenShell(
+            onBack: null,
+            children: [
+              const SizedBox(height: 6),
+              AuthBrandHeader(
+                title: 'Welcome back',
+                subtitle: 'Sign in to keep your business moving.',
+              ),
+              const SizedBox(height: 32),
+              AuthTextField(
+                controller: _emailController,
+                hint: 'Email',
+                icon: Icons.alternate_email_rounded,
+                keyboardType: TextInputType.emailAddress,
+                textInputAction: TextInputAction.next,
+              ),
+              const SizedBox(height: 14),
+              AuthPasswordField(
+                controller: _passwordController,
+                hint: 'Password',
+              ),
+              const SizedBox(height: 6),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: () {
+                    context.go('/forgot-password');
+                  },
+                  style: TextButton.styleFrom(
+                    foregroundColor: colors.primary,
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                  ),
+                  child: const Text(
+                    'Forgot Password?',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              AuthGradientButton(
+                label: 'Sign In',
+                loading: _isLoading,
+                onPressed: _handleLogin,
+                icon: Icons.login_rounded,
+              ),
+              if (_biometricsAvailable) ...[
+                const SizedBox(height: 16),
+                _BiometricButton(
+                  loading: _biometricLoading,
+                  enabled: biometricsEnabled,
+                  onPressed: () async {
+                    if (biometricsEnabled) {
+                      await _handleBiometricLogin();
+                    } else {
+                      await _showAlert(
+                        'Enable Biometrics',
+                        'Please sign in with your password first, then enable biometric login in Settings.',
+                      );
+                    }
+                  },
+                ),
+              ],
+              const SizedBox(height: 22),
+              const OrDivider(),
+              const SizedBox(height: 16),
+              GoogleSignInButton(
+                onPressed: _handleGoogleSignIn,
+                isLoading: _isGoogleLoading,
+              ),
+              const SizedBox(height: 22),
+              AuthSwitchPrompt(
+                question: "Don't have an account?",
+                actionLabel: 'Sign Up',
+                onTap: () {
+                  context.go('/register');
+                },
+              ),
+            ],
+          ),
           if (_showBiometricsSetupModal)
             ModalBarrier(
-              color: Colors.black.withValues(alpha:0.6),
+              color: Colors.black.withValues(alpha: 0.6),
             ),
           if (_showBiometricsSetupModal)
             Center(
               child: Container(
                 width: double.infinity,
                 margin: const EdgeInsets.symmetric(horizontal: 24),
-                padding: const EdgeInsets.all(32),
+                padding: const EdgeInsets.all(28),
+                constraints: const BoxConstraints(maxWidth: 480),
                 decoration: BoxDecoration(
                   color: colors.surface,
                   borderRadius: BorderRadius.circular(24),
@@ -556,68 +403,43 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.fingerprint, size: 56, color: colors.primary),
-                    const SizedBox(height: 20),
+                    Container(
+                      width: 72,
+                      height: 72,
+                      decoration: BoxDecoration(
+                        color: colors.primaryBg,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.fingerprint, size: 42, color: colors.primary),
+                    ),
+                    const SizedBox(height: 18),
                     const Text(
                       'Enable Biometric Login',
-                      style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
                     ),
                     const SizedBox(height: 8),
                     Text(
                       'Would you like to enable biometric login for faster access to your account?',
-                      style: TextStyle(fontSize: 15, color: colors.textSecondary),
+                      style: TextStyle(fontSize: 14, color: colors.textSecondary),
                       textAlign: TextAlign.center,
                     ),
-                    const SizedBox(height: 32),
-                    Container(
-                      width: double.infinity,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: colors.primary.withValues(alpha:0.3),
-                            offset: const Offset(0, 4),
-                            blurRadius: 12,
-                          ),
-                        ],
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(16),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [colors.primary, colors.primaryLight],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            ),
-                          ),
-                          child: ElevatedButton(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.transparent,
-                              shadowColor: Colors.transparent,
-                              padding: const EdgeInsets.symmetric(vertical: 16),
-                            ),
-                            onPressed: _biometricLoading ? null : _handleSetupBiometrics,
-                            child: _biometricLoading
-                                ? const SizedBox(
-                                    height: 24,
-                                    width: 24,
-                                    child: CircularProgressIndicator(color: Colors.white),
-                                  )
-                                : const Text(
-                                    'Enable Biometrics',
-                                    style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
-                                  ),
-                          ),
-                        ),
-                      ),
+                    const SizedBox(height: 26),
+                    AuthGradientButton(
+                      label: 'Enable Biometrics',
+                      loading: _biometricLoading,
+                      onPressed: _handleSetupBiometrics,
+                      icon: Icons.fingerprint_rounded,
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 10),
                     TextButton(
                       onPressed: _handleSkipBiometrics,
                       child: Text(
                         'Skip for Now',
-                        style: TextStyle(color: colors.textSecondary, fontSize: 16, fontWeight: FontWeight.w500),
+                        style: TextStyle(
+                          color: colors.textSecondary,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ],
@@ -625,6 +447,80 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// Soft curved bottom edge for the gradient header band.
+class _AuthHeaderCurve extends CustomClipper<Path> {
+  @override
+  Path getClip(Size size) {
+    final path = Path()
+      ..moveTo(0, 0)
+      ..lineTo(0, size.height - 40)
+      ..quadraticBezierTo(size.width / 2, size.height + 30, size.width, size.height - 40)
+      ..lineTo(size.width, 0)
+      ..close();
+    return path;
+  }
+
+  @override
+  bool shouldReclip(covariant CustomClipper<Path> oldDelegate) => false;
+}
+
+/// Outlined biometric sign-in button (kept visually quiet vs the main CTA).
+class _BiometricButton extends StatelessWidget {
+  final bool loading;
+  final bool enabled;
+  final Future<void> Function() onPressed;
+
+  const _BiometricButton({
+    required this.loading,
+    required this.enabled,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppTheme.colors;
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: loading
+            ? null
+            : () async {
+                await onPressed();
+              },
+        style: OutlinedButton.styleFrom(
+          foregroundColor: enabled ? colors.primary : colors.textSecondary,
+          backgroundColor: enabled ? colors.primaryBg : colors.surface,
+          side: BorderSide(
+            color: enabled
+                ? colors.primary.withValues(alpha: 0.5)
+                : colors.border,
+            width: 1.4,
+          ),
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+        ),
+        icon: loading
+            ? SizedBox(
+                height: 20,
+                width: 20,
+                child: CircularProgressIndicator(color: colors.primary, strokeWidth: 2),
+              )
+            : Icon(Icons.fingerprint_outlined, size: 22),
+        label: Text(
+          enabled ? 'Sign in with Biometrics' : 'Biometrics not enabled',
+          style: TextStyle(
+            color: enabled ? colors.primary : colors.textSecondary,
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
       ),
     );
   }

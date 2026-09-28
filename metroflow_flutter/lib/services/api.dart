@@ -979,6 +979,24 @@ class ApiService {
     return null;
   }
 
+  /// Upload the user's profile picture via POST /settings/profile/avatar as
+  /// multipart form-data (field name `file`). Returns the absolute avatar URL
+  /// from `{ success, data: { avatarUrl } }`. Throws on network/server errors
+  /// so the caller can surface them.
+  Future<String?> uploadProfileAvatar(File file) async {
+    final fileName = file.path.split(Platform.pathSeparator).last;
+    final formData = FormData.fromMap(<String, dynamic>{
+      'file': await MultipartFile.fromFile(file.path, filename: fileName),
+    });
+    final response = await _dio.post('/settings/profile/avatar', data: formData);
+    final data = response.data is Map ? response.data['data'] : null;
+    if (data is Map) {
+      final url = (data['avatarUrl'] ?? data['avatar_url'] ?? data['url'])?.toString() ?? '';
+      return url.isNotEmpty ? resolveMediaUrl(url) : null;
+    }
+    return null;
+  }
+
   /// Make a media URL absolute. The backend returns absolute URLs for
   /// R2-hosted files but RELATIVE paths (`/uploads/...`) for the local upload
   /// fallback — players (audioplayers / network images) need absolute URLs.

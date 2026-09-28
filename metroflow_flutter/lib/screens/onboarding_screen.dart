@@ -1,163 +1,490 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+
 import '../providers/auth_provider.dart';
 import '../theme/app_theme.dart';
 
+/// Revamped onboarding: a single, coherent 4-slide flow.
+///
+/// 1. All your work in one place — tasks, projects, team
+/// 2. Meet, call & chat — video meetings, calls, team chat
+/// 3. Payroll & money moves — salaries, transfers, wallet & virtual accounts
+/// 4. Built for growing businesses — KYC, security, insights
+///
+/// "Seen" is persisted exactly like before: `completeOnboarding()` on the
+/// auth provider, then route to /login (Skip) or /register (Sign Up).
 class OnboardingScreen extends ConsumerStatefulWidget {
-  const OnboardingScreen({super.key});
+  const OnboardingScreen({super.key, this.initialPage = 0});
+
+  /// Optional starting slide (used by the legacy OnboardingScreen1/2/3
+  /// shims so they land on their original slide).
+  final int initialPage;
 
   @override
   ConsumerState<OnboardingScreen> createState() => _OnboardingScreenState();
 }
 
 class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
-  final PageController _pageController = PageController();
+  PageController? _pageController;
   int _currentPage = 0;
+  static const int _pageCount = 4;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentPage = widget.initialPage.clamp(0, _pageCount - 1);
+    _pageController = PageController(initialPage: _currentPage);
+  }
+
+  @override
+  void dispose() {
+    _pageController?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _completeOnboarding() async {
+    await ref.read(authProvider.notifier).completeOnboarding();
+    if (context.mounted) context.go('/login');
+  }
+
+  Future<void> _completeAndRegister() async {
+    await ref.read(authProvider.notifier).completeOnboarding();
+    if (context.mounted) context.go('/register');
+  }
+
+  void _next() {
+    if (_currentPage < _pageCount - 1) {
+      _pageController?.nextPage(
+        duration: const Duration(milliseconds: 360),
+        curve: Curves.easeInOutCubic,
+      );
+    } else {
+      _completeOnboarding();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final colors = AppTheme.colors;
+    final isLast = _currentPage == _pageCount - 1;
+
     return Scaffold(
+      backgroundColor: colors.background,
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            children: [
-              Expanded(
-                child: PageView(
-                  controller: _pageController,
-                  onPageChanged: (index) {
-                    setState(() {
-                      _currentPage = index;
-                    });
-                  },
-                  children: [
-                    _OnboardingPage1(),
-                    _OnboardingPage2(),
-                    _OnboardingPage3(),
-                  ],
-                ),
-              ),
-              Column(
+        child: Column(
+          children: [
+            // Top bar: small brand mark + Skip.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 12, 0),
+              child: Row(
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      _Dot(isActive: _currentPage == 0),
-                      const SizedBox(width: 8),
-                      _Dot(isActive: _currentPage == 1),
-                      const SizedBox(width: 8),
-                      _Dot(isActive: _currentPage == 2),
-                    ],
-                  ),
-                  const SizedBox(height: 32),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: () async {
-                        if (_currentPage < 2) {
-                          _pageController.nextPage(
-                            duration: const Duration(milliseconds: 300),
-                            curve: Curves.easeInOut,
-                          );
-                        } else {
-                          await ref.read(authProvider.notifier).completeOnboarding();
-                          if (context.mounted) context.go('/login');
-                        }
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor:
-                            _currentPage < 2 ? AppColors.primaryDark : AppColors.primary,
-                        padding: const EdgeInsets.symmetric(vertical: 18),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                      child: Text(
-                        _currentPage < 2 ? 'Next' : 'Get Started',
-                        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-                      ),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.asset(
+                      'assets/images/logo.png',
+                      width: 28,
+                      height: 28,
+                      fit: BoxFit.cover,
                     ),
                   ),
-                  if (_currentPage == 2) const SizedBox(height: 16),
-                  if (_currentPage == 2)
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Text("Don't have an account? ",
-                            style: TextStyle(fontSize: 14, color: Colors.grey)),
-                        GestureDetector(
-                          onTap: () async {
-                            await ref.read(authProvider.notifier).completeOnboarding();
-                            if (context.mounted) context.go('/register');
-                          },
-                          child: const Text('Sign Up',
-                              style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                  color: AppColors.primary)),
-                        ),
-                      ],
+                  const SizedBox(width: 8),
+                  Text(
+                    'Metricorex',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: colors.textSecondary,
                     ),
-                  const SizedBox(height: 24),
+                  ),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: _completeOnboarding,
+                    style: TextButton.styleFrom(
+                      foregroundColor: colors.textSecondary,
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                    ),
+                    child: const Text(
+                      'Skip',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
                 ],
               ),
-            ],
-          ),
+            ),
+            // Slides.
+            Expanded(
+              child: PageView.builder(
+                controller: _pageController,
+                itemCount: _pageCount,
+                physics: const BouncingScrollPhysics(),
+                onPageChanged: (index) => setState(() => _currentPage = index),
+                itemBuilder: (context, index) {
+                  return _SlidePage(
+                    page: _slides[index],
+                    controller: _pageController!,
+                    index: index,
+                    active: index == _currentPage,
+                  );
+                },
+              ),
+            ),
+            // Dots + CTA.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+              child: Column(
+                children: [
+                  _DotsIndicator(count: _pageCount, current: _currentPage),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    width: double.infinity,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        gradient: LinearGradient(
+                          colors: isLast
+                              ? const [Color(0xFF2563EB), Color(0xFF7C3AED)]
+                              : const [Color(0xFF2563EB), Color(0xFF3B82F6)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: colors.primary.withValues(alpha: 0.30),
+                            offset: const Offset(0, 8),
+                            blurRadius: 18,
+                          ),
+                        ],
+                      ),
+                      child: Material(
+                        color: Colors.transparent,
+                        borderRadius: BorderRadius.circular(16),
+                        clipBehavior: Clip.antiAlias,
+                        child: InkWell(
+                          onTap: _next,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 17),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  isLast ? 'Get Started' : 'Next',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16.5,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Icon(
+                                  isLast
+                                      ? Icons.rocket_launch_rounded
+                                      : Icons.arrow_forward_rounded,
+                                  color: Colors.white,
+                                  size: 20,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 2,
+                    children: [
+                      Text(
+                        "Don't have an account? ",
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: colors.textSecondary,
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: _completeAndRegister,
+                        child: Text(
+                          'Sign Up',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: colors.primary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
-class _Dot extends StatelessWidget {
-  final bool isActive;
-  const _Dot({required this.isActive});
+// ---------------------------------------------------------------------------
+// Slide model + data
+// ---------------------------------------------------------------------------
+
+class _SlideData {
+  final IconData icon;
+  final List<Color> gradient;
+  final List<IconData> miniIcons;
+  final String title;
+  final String subtitle;
+  final List<(IconData, String)> bullets;
+
+  const _SlideData({
+    required this.icon,
+    required this.gradient,
+    required this.miniIcons,
+    required this.title,
+    required this.subtitle,
+    required this.bullets,
+  });
+}
+
+const List<_SlideData> _slides = [
+  _SlideData(
+    icon: Icons.grid_view_rounded,
+    gradient: [Color(0xFF2563EB), Color(0xFF7C3AED)],
+    miniIcons: [Icons.checklist_rounded, Icons.folder_shared_rounded, Icons.groups_rounded],
+    title: 'All your work in one place',
+    subtitle:
+        'Stop juggling five different tools. Organize tasks, projects and your whole team in a single workspace.',
+    bullets: [
+      (Icons.task_alt_rounded, 'Tasks & projects'),
+      (Icons.folder_open_rounded, 'Epics, ideas & backlog'),
+      (Icons.groups_rounded, 'One shared team workspace'),
+    ],
+  ),
+  _SlideData(
+    icon: Icons.video_chat_rounded,
+    gradient: [Color(0xFF0891B2), Color(0xFF2563EB)],
+    miniIcons: [Icons.videocam_rounded, Icons.call_rounded, Icons.chat_rounded],
+    title: 'Meet, call & chat',
+    subtitle:
+        'Video meetings, quick calls and team chat — with your work right there in the conversation.',
+    bullets: [
+      (Icons.videocam_rounded, 'Video meetings & calls'),
+      (Icons.chat_rounded, 'Direct & group team chat'),
+      (Icons.notifications_active_rounded, 'Never miss a ping'),
+    ],
+  ),
+  _SlideData(
+    icon: Icons.account_balance_wallet_rounded,
+    gradient: [Color(0xFF7C3AED), Color(0xFFDB2777)],
+    miniIcons: [Icons.payments_rounded, Icons.swap_horiz_rounded, Icons.account_balance_rounded],
+    title: 'Payroll & money moves',
+    subtitle:
+        'Run payroll in seconds, send local & international transfers and manage business wallets in one place.',
+    bullets: [
+      (Icons.payments_rounded, 'One-click salary payouts'),
+      (Icons.swap_horiz_rounded, 'Single & bulk transfers'),
+      (Icons.account_balance_rounded, 'Wallets & virtual accounts'),
+    ],
+  ),
+  _SlideData(
+    icon: Icons.shield_rounded,
+    gradient: [Color(0xFF2563EB), Color(0xFF059669)],
+    miniIcons: [Icons.verified_user_rounded, Icons.insights_rounded, Icons.lock_rounded],
+    title: 'Built for growing businesses',
+    subtitle:
+        'KYC-verified payments, bank-grade security and insight into how your team performs — ready as you scale.',
+    bullets: [
+      (Icons.verified_user_rounded, 'KYC & secure transactions'),
+      (Icons.insights_rounded, 'Performance insights'),
+      (Icons.lock_rounded, 'OTP & PIN protection'),
+    ],
+  ),
+];
+
+// ---------------------------------------------------------------------------
+// Slide page (parallax illustration + animated content)
+// ---------------------------------------------------------------------------
+
+class _SlidePage extends StatelessWidget {
+  final _SlideData page;
+  final PageController controller;
+  final int index;
+  final bool active;
+
+  const _SlidePage({
+    required this.page,
+    required this.controller,
+    required this.index,
+    required this.active,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppTheme.colors;
+
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOut,
+      opacity: active ? 1.0 : 0.55,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // Parallax illustration block.
+            AnimatedBuilder(
+              animation: controller,
+              builder: (context, child) {
+                double offset = 0;
+                if (controller.hasClients && controller.position.haveDimensions) {
+                  offset = (controller.page ?? 0) - index;
+                }
+                return Transform.translate(
+                  offset: Offset(offset * -36, 0),
+                  child: Transform.scale(
+                    scale: (1 - offset.abs().clamp(0.0, 0.35)).toDouble(),
+                    child: child,
+                  ),
+                );
+              },
+              child: _IllustrationBlock(page: page),
+            ),
+            const SizedBox(height: 34),
+            // Title + subtitle (slide up when page becomes active).
+            AnimatedSlide(
+              duration: const Duration(milliseconds: 340),
+              curve: Curves.easeOutCubic,
+              offset: active ? Offset.zero : const Offset(0, 0.05),
+              child: Column(
+                children: [
+                  Text(
+                    page.title,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 25,
+                      fontWeight: FontWeight.w800,
+                      color: colors.text,
+                      height: 1.2,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    page.subtitle,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      color: colors.textSecondary,
+                      height: 1.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            // Feature bullets.
+            ...page.bullets.map((bullet) {
+              final (icon, label) = bullet;
+              return Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                width: 300,
+                decoration: BoxDecoration(
+                  color: colors.surface,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: colors.border),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 30,
+                      height: 30,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(colors: page.gradient),
+                        borderRadius: BorderRadius.circular(9),
+                      ),
+                      child: Icon(icon, size: 16, color: Colors.white),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600,
+                          color: colors.text,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Big gradient tile with the slide icon + floating mini chips.
+class _IllustrationBlock extends StatelessWidget {
+  final _SlideData page;
+
+  const _IllustrationBlock({required this.page});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: isActive ? 24 : 8,
-      height: 8,
-      decoration: BoxDecoration(
-        color: isActive ? AppColors.primary : AppTheme.colors.border,
-        borderRadius: BorderRadius.circular(4),
-      ),
-    );
-  }
-}
-
-class _OnboardingPage1 extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+      width: 216,
+      height: 216,
+      child: Stack(
+        clipBehavior: Clip.none,
         children: [
-          const SizedBox(height: 40),
+          // Main gradient tile.
           Container(
-            width: 80,
-            height: 80,
+            width: 176,
+            height: 176,
+            margin: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: AppColors.primaryBg,
-              borderRadius: BorderRadius.circular(24),
+              borderRadius: BorderRadius.circular(44),
+              gradient: LinearGradient(
+                colors: page.gradient,
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: page.gradient.last.withValues(alpha: 0.35),
+                  blurRadius: 30,
+                  offset: const Offset(0, 14),
+                ),
+              ],
             ),
-            child: const Icon(Icons.business_center, size: 48, color: AppColors.primary),
+            child: Icon(page.icon, size: 76, color: Colors.white),
           ),
-          const SizedBox(height: 8),
-          const Text('Metricorex',
-              style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: AppColors.primary)),
-          const SizedBox(height: 32),
-          const Text(
-            'Run Your Entire Business on One Platform',
-            style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
-            textAlign: TextAlign.center,
+          // Floating mini chips.
+          _MiniChip(
+            icon: page.miniIcons[0],
+            colors: page.gradient,
+            right: 0,
+            top: 12,
           ),
-          const SizedBox(height: 16),
-          const Text(
-            'Stop juggling five different tools. Manage your projects, automate your payroll, and handle business banking in a single, unified workspace.',
-            style: TextStyle(fontSize: 16, color: Colors.grey, height: 1.5),
-            textAlign: TextAlign.center,
+          _MiniChip(
+            icon: page.miniIcons[1],
+            colors: page.gradient,
+            left: 0,
+            top: 84,
+          ),
+          _MiniChip(
+            icon: page.miniIcons[2],
+            colors: page.gradient,
+            right: 14,
+            bottom: 4,
           ),
         ],
       ),
@@ -165,189 +492,83 @@ class _OnboardingPage1 extends StatelessWidget {
   }
 }
 
-class _OnboardingPage2 extends StatelessWidget {
-  final features = [
-    {
-      'icon': Icons.trending_up_outlined,
-      'title': 'Goal-Oriented Tasks',
-      'desc': 'Link every task and sprint to high-level Company KPIs.'
-    },
-    {
-      'icon': Icons.calendar_today_outlined,
-      'title': 'Sprint Planning',
-      'desc': 'Organize work into focused sprints with clear deliverables.'
-    },
-    {
-      'icon': Icons.lightbulb_outlined,
-      'title': 'Ideas Portal',
-      'desc': 'Capture innovation from your frontline team.'
-    },
-    {
-      'icon': Icons.access_time_outlined,
-      'title': 'Activity Logs',
-      'desc': 'A transparent audit trail of every action.'
-    },
-  ];
+class _MiniChip extends StatelessWidget {
+  final IconData icon;
+  final List<Color> colors;
+  final double? left;
+  final double? right;
+  final double? top;
+  final double? bottom;
+
+  const _MiniChip({
+    required this.icon,
+    required this.colors,
+    this.left,
+    this.right,
+    this.top,
+    this.bottom,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const SizedBox(height: 40),
-          Container(
-            width: 80,
-            height: 80,
-            decoration: BoxDecoration(
-              color: AppColors.successBg,
-              borderRadius: BorderRadius.circular(24),
+    final theme = AppTheme.colors;
+    return Positioned(
+      left: left,
+      right: right,
+      top: top,
+      bottom: bottom,
+      child: Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          color: theme.surface,
+          shape: BoxShape.circle,
+          border: Border.all(color: theme.border),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.08),
+              blurRadius: 14,
+              offset: const Offset(0, 6),
             ),
-            child: const Icon(Icons.people, size: 48, color: AppColors.success),
-          ),
-          const SizedBox(height: 8),
-          const Text('Metricorex',
-              style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: AppColors.primary)),
-          const SizedBox(height: 16),
-          const Text(
-            'Intelligent Project Management',
-            style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 24),
-          ...features.map((f) {
-            return Container(
-              margin: const EdgeInsets.only(bottom: 12),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: AppTheme.colors.surface,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppTheme.colors.border),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: AppColors.primaryBg,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Icon(f['icon'] as IconData, size: 24, color: AppColors.primary),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(f['title'] as String,
-                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                        Text(f['desc'] as String,
-                            style: const TextStyle(fontSize: 14, color: Colors.grey)),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }),
-        ],
+          ],
+        ),
+        child: Icon(icon, size: 20, color: colors.first),
       ),
     );
   }
 }
 
-class _OnboardingPage3 extends StatelessWidget {
-  final features = [
-    {
-      'icon': Icons.payments_outlined,
-      'title': 'One-Click Payroll',
-      'desc': 'Run payroll for your entire team in seconds.'
-    },
-    {
-      'icon': Icons.credit_card_outlined,
-      'title': 'Multi-Currency Support',
-      'desc': 'Pay employees in NGN or USD.'
-    },
-    {
-      'icon': Icons.emoji_events_outlined,
-      'title': 'Performance Bonuses',
-      'desc': 'Reward high performers instantly.'
-    },
-    {
-      'icon': Icons.notifications_outlined,
-      'title': 'Automated Notifications',
-      'desc': 'Instant email alerts for payments.'
-    },
-    {
-      'icon': Icons.account_balance_wallet_outlined,
-      'title': 'Business Wallets',
-      'desc': 'Get a dedicated NUBAN account for your business.'
-    },
-    {
-      'icon': Icons.shield_outlined,
-      'title': 'Bank-Grade Security',
-      'desc': '2FA (OTP via Email/SMS) for all transactions.'
-    },
-  ];
+/// Animated dots indicator: active dot stretches into a pill.
+class _DotsIndicator extends StatelessWidget {
+  final int count;
+  final int current;
+
+  const _DotsIndicator({required this.count, required this.current});
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const SizedBox(height: 40),
-          Container(
-            width: 80,
-            height: 80,
-            decoration: BoxDecoration(
-              color: AppColors.warningBg,
-              borderRadius: BorderRadius.circular(24),
-            ),
-            child: const Icon(Icons.account_balance_wallet, size: 48, color: AppColors.warning),
+    final colors = AppTheme.colors;
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: List.generate(count, (index) {
+        final active = index == current;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 260),
+          curve: Curves.easeOutCubic,
+          width: active ? 26 : 8,
+          height: 8,
+          margin: const EdgeInsets.symmetric(horizontal: 4),
+          decoration: BoxDecoration(
+            gradient: active
+                ? const LinearGradient(
+                    colors: [Color(0xFF2563EB), Color(0xFF7C3AED)],
+                  )
+                : null,
+            color: active ? null : colors.borderVariant,
+            borderRadius: BorderRadius.circular(999),
           ),
-          const SizedBox(height: 8),
-          const Text('Metricorex',
-              style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: AppColors.primary)),
-          const SizedBox(height: 16),
-          const Text('Automated HR & Payroll',
-              style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
-          const SizedBox(height: 4),
-          const Text('Everything You Need to Run Your Business',
-              style: TextStyle(fontSize: 15, color: AppColors.primary, fontWeight: FontWeight.w600),
-              textAlign: TextAlign.center),
-          const SizedBox(height: 20),
-          ...features.map((f) {
-            return Container(
-              margin: const EdgeInsets.only(bottom: 10),
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: AppTheme.colors.surface,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: AppTheme.colors.border),
-              ),
-              child: Row(
-                children: [
-                  Icon(f['icon'] as IconData?, size: 20, color: AppColors.primary),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(f['title'] as String,
-                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                        Text(f['desc'] as String,
-                            style: const TextStyle(fontSize: 13, color: Colors.grey)),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }),
-        ],
-      ),
+        );
+      }),
     );
   }
 }

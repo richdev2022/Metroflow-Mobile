@@ -1,17 +1,22 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 import '../models/business_profile.dart';
 import '../models/kyc_status.dart';
 import '../models/subscription.dart';
 import '../providers/auth_provider.dart';
 import '../providers/theme_provider.dart';
+import '../providers/user_profile_provider.dart';
 import '../services/api.dart';
 import '../services/biometrics.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_timezone.dart';
 import '../utils/app_toast.dart';
 import '../utils/timezone_data.dart';
+import '../widgets/avatar_with_initials.dart';
 
 const _businessIndustries = [
   'Technology',
@@ -106,6 +111,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   // Business timezone (GET/PUT /settings.timezone, cached in AppTimezone)
   bool _isSavingTimezone = false;
+  bool _isSavingTimeFormat = false;
+  bool _isUploadingAvatar = false;
 
   @override
   void initState() {
@@ -164,6 +171,26 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         if (serverTz is String && serverTz.isNotEmpty && serverTz != AppTimezone.instance.current) {
           AppTimezone.instance.set(serverTz);
           if (mounted) setState(() {});
+        }
+        // Adopt the server's 12h/24h preference too (single source of truth
+        // shared with the webapp).
+        final serverTimeFormat = (settingsData['settings'] as Map<String, dynamic>)['time_format'];
+        if (serverTimeFormat is String && serverTimeFormat.isNotEmpty) {
+          final serverOption =
+              serverTimeFormat == '12h' ? TimeFormatOption.h12 : TimeFormatOption.h24;
+          if (serverOption != AppTimezone.instance.timeFormat) {
+            // Local-only adoption — no server echo needed while loading.
+            AppTimezone.instance.setTimeFormat(serverOption, syncToServer: false);
+            if (mounted) setState(() {});
+          }
+        }
+        // Adopt the caller's own profile (name/email/avatar/role) so the
+        // profile header + chat avatars show the user, not the business.
+        final profilePayload = settingsData['profile'];
+        if (profilePayload is Map) {
+          ref
+              .read(userProfileProvider.notifier)
+              .adoptServerProfile(Map<String, dynamic>.from(profilePayload));
         }
       }
 
@@ -304,6 +331,45 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       }
     } finally {
       if (mounted) setState(() => _isSavingTimezone = false);
+    }
+  }
+
+  /// Switch the business time format (12h/24h). Optimistic local switch via
+  /// AppTimezone (which also persists to SharedPreferences), then synced to
+  /// the server with the same PUT /settings used for the timezone. Rolls back
+  /// on failure.
+  Future<void> _handleTimeFormatChanged(bool want24h) async {
+    final previous = AppTimezone.instance.timeFormat;
+    final next = want24h ? TimeFormatOption.h24 : TimeFormatOption.h12;
+    if (next == previous) return;
+
+    setState(() => _isSavingTimeFormat = true);
+    AppTimezone.instance.setTimeFormat(next);
+    setState(() {});
+
+    try {
+      await ApiService().updateSettings({
+        'time_format': want24h ? '24h' : '12h',
+      });
+      if (mounted) {
+        AppToast.show(
+          want24h ? 'Switched to 24-hour clock' : 'Switched to 12-hour clock',
+          type: AppToastType.success,
+        );
+      }
+    } catch (e) {
+      debugPrint('Failed to persist time format: $e');
+      // Roll back so the UI matches the server state.
+      AppTimezone.instance.setTimeFormat(previous);
+      if (mounted) {
+        setState(() {});
+        AppToast.show(
+          ApiService.extractErrorMessage(e),
+          type: AppToastType.error,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSavingTimeFormat = false);
     }
   }
 
@@ -1030,6 +1096,35 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                             ),
                       onTap: _isSavingTimezone ? null : _showTimezonePicker,
                     ),
+                    _settingItem(
+                      icon: Icons.schedule_outlined,
+                      title: 'Time Format',
+                      subtitle: AppTimezone.instance.is24h ? '24-hour clock' : '12-hour clock (AM/PM)',
+                      trailing: _isSavingTimeFormat
+                          ? const SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : SegmentedButton<bool>(
+                              segments: const [
+                                ButtonSegment(value: true, label: Text('24h')),
+                                ButtonSegment(value: false, label: Text('12h')),
+                              ],
+                              selected: {AppTimezone.instance.is24h},
+                              showSelectedIcon: false,
+                              style: ButtonStyle(
+                                visualDensity: VisualDensity.compact,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              onSelectionChanged: (selection) {
+                                final want24 = selection.first;
+                                if (want24 != AppTimezone.instance.is24h) {
+                                  _handleTimeFormatChanged(want24);
+                                }
+                              },
+                            ),
+                    ),
                     _sectionTitle('Security'),
                     _settingItem(
                       icon: Icons.fingerprint,
@@ -1093,17 +1188,49 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Widget _profileSection() {
     final colors = AppTheme.colors;
-    final name = _settings?.name ?? 'Business';
+    final profile = ref.watch(userProfileProvider);
+    final name = (profile.name.isNotEmpty ? profile.name : (_settings?.name ?? 'Business'));
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Row(
         children: [
-          CircleAvatar(
-            radius: 30,
-            backgroundColor: colors.primary,
-            child: Text(
-              name.isEmpty ? 'B' : name[0].toUpperCase(),
-              style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
+          GestureDetector(
+            onTap: _isUploadingAvatar ? null : _pickAndUploadAvatar,
+            child: Stack(
+              children: [
+                AvatarWithInitials(
+                  name: name,
+                  imageUrl: profile.avatarUrl,
+                  radius: 30,
+                ),
+                if (_isUploadingAvatar)
+                  const Positioned.fill(
+                    child: Center(
+                      child: SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white),
+                      ),
+                    ),
+                  ),
+                Positioned(
+                  right: -2,
+                  bottom: -2,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: colors.primary,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: colors.surface, width: 2),
+                    ),
+                    child: const Icon(
+                      Icons.camera_alt_rounded,
+                      size: 13,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           const SizedBox(width: 16),
@@ -1114,11 +1241,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 Text(
                   name,
                   style: TextStyle(color: colors.text, fontSize: 18, fontWeight: FontWeight.w600),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  _settings?.email ?? '',
+                  profile.email.isNotEmpty ? profile.email : (_settings?.email ?? ''),
                   style: TextStyle(color: colors.textSecondary, fontSize: 14),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Tap the photo to change your profile picture',
+                  style: TextStyle(color: colors.textSecondary, fontSize: 11),
                 ),
               ],
             ),
@@ -1130,6 +1266,66 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ],
       ),
     );
+  }
+
+  /// Pick an image from the gallery/camera and upload it as the user's
+  /// profile picture (POST /settings/profile/avatar). Updates the shared
+  /// user_profileProvider so chat/dashboard reflect the new picture.
+  Future<void> _pickAndUploadAvatar() async {
+    try {
+      final picker = ImagePicker();
+      final picked = await showModalBottomSheet<ImageSource>(
+        context: context,
+        builder: (sheetContext) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 8),
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Choose from gallery'),
+                onTap: () => Navigator.of(sheetContext).pop(ImageSource.gallery),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_camera_outlined),
+                title: const Text('Take a photo'),
+                onTap: () => Navigator.of(sheetContext).pop(ImageSource.camera),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      );
+      if (picked == null || !mounted) return;
+
+      final pickedFile = await picker.pickImage(
+        source: picked,
+        maxWidth: 1024,
+        maxHeight: 1024,
+        imageQuality: 85,
+      );
+      if (pickedFile == null) return;
+
+      setState(() => _isUploadingAvatar = true);
+      final url = await ApiService().uploadProfileAvatar(File(pickedFile.path));
+      if (url != null && url.isNotEmpty) {
+        ref.read(userProfileProvider.notifier).setAvatar(url);
+        if (mounted) {
+          AppToast.show('Profile picture updated', type: AppToastType.success);
+        }
+      } else {
+        if (mounted) {
+          AppToast.show('Could not upload picture. Try again.', type: AppToastType.error);
+        }
+      }
+    } catch (e) {
+      debugPrint('Avatar upload failed: $e');
+      if (mounted) {
+        AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
+      }
+    } finally {
+      if (mounted) setState(() => _isUploadingAvatar = false);
+    }
   }
 
   Widget _kycCard() {

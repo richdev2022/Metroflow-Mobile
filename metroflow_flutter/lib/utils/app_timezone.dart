@@ -4,7 +4,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest_10y.dart';
 import 'package:timezone/timezone.dart' as tz;
 
-/// App-wide business timezone + timezone-aware date formatting.
+import '../services/api.dart';
+
+/// Supported wall-clock display formats (mirrors the backend
+/// `businesses.time_format` and the webapp's TimeFormat setting).
+enum TimeFormatOption { h12, h24 }
+
+/// App-wide business timezone + timezone-aware date/time formatting.
 ///
 /// Mirrors the webapp's `client/lib/datetime.ts`: the timezone is set on the
 /// Settings page (persisted on the business record via `PUT /settings` and
@@ -25,8 +31,12 @@ class AppTimezone {
   /// SharedPreferences key for the locally cached business timezone.
   static const String storageKey = 'business_timezone';
 
+  /// SharedPreferences key for the locally cached 12/24h preference.
+  static const String timeFormatKey = 'business_time_format';
+
   String? _tz;
   bool _tzDbReady = false;
+  TimeFormatOption _timeFormat = TimeFormatOption.h24;
 
   /// Current display timezone (IANA name). Falls back to 'UTC'.
   String get current => _tz ?? 'UTC';
@@ -36,6 +46,37 @@ class AppTimezone {
   /// Note: [load] seeds an offset-based device guess when nothing is stored,
   /// so this only reports true before the first [load]/[set] call.
   bool get hasExplicitTimezone => _tz != null;
+
+  /// Current 12/24-hour preference (default 24h until set).
+  TimeFormatOption get timeFormat => _timeFormat;
+
+  /// True when the 24-hour clock is active (the default).
+  bool get is24h => _timeFormat == TimeFormatOption.h24;
+
+  /// Switch the 12/24h preference, persist it locally and (best-effort)
+  /// push it to the server via PUT /settings { time_format }.
+  ///
+  /// The local switch always applies immediately — a network failure only
+  /// logs, exactly like [set] for timezones.
+  Future<void> setTimeFormat(TimeFormatOption option, {bool syncToServer = true}) async {
+    if (_timeFormat == option) return;
+    _timeFormat = option;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(timeFormatKey, option == TimeFormatOption.h12 ? '12h' : '24h');
+    } catch (e) {
+      debugPrint('AppTimezone: failed to persist time format: $e');
+    }
+    if (syncToServer) {
+      try {
+        await ApiService().updateSettings({
+          'time_format': option == TimeFormatOption.h12 ? '12h' : '24h',
+        });
+      } catch (e) {
+        debugPrint('AppTimezone: failed to sync time format to server: $e');
+      }
+    }
+  }
 
   /// Ensure the timezone database is loaded exactly once.
   void _ensureTzDatabase() {
@@ -69,6 +110,8 @@ class AppTimezone {
       final prefs = await SharedPreferences.getInstance();
       final stored = prefs.getString(storageKey);
       _tz = (stored == null || stored.isEmpty) ? null : stored;
+      final storedFormat = prefs.getString(timeFormatKey);
+      _timeFormat = storedFormat == '12h' ? TimeFormatOption.h12 : TimeFormatOption.h24;
     } catch (e) {
       debugPrint('AppTimezone: failed to load stored timezone: $e');
     }
@@ -177,11 +220,17 @@ class AppTimezone {
   /// e.g. "Sep 28, 2026"
   String formatDate(DateTime? dt) => _fmt(dt, 'MMM d, yyyy');
 
-  /// e.g. "3:45 PM"
-  String formatTime(DateTime? dt) => _fmt(dt, 'h:mm a');
+  /// e.g. "3:45 PM" (12h) or "15:45" (24h — default)
+  String formatTime(DateTime? dt) => _fmt(
+        dt,
+        _timeFormat == TimeFormatOption.h12 ? 'h:mm a' : 'HH:mm',
+      );
 
-  /// e.g. "Sep 28, 2026, 3:45 PM"
-  String formatDateTime(DateTime? dt) => _fmt(dt, 'MMM d, yyyy, h:mm a');
+  /// e.g. "Sep 28, 2026, 3:45 PM" / "Sep 28, 2026, 15:45"
+  String formatDateTime(DateTime? dt) => _fmt(
+        dt,
+        _timeFormat == TimeFormatOption.h12 ? 'MMM d, yyyy, h:mm a' : 'MMM d, yyyy, HH:mm',
+      );
 
   /// e.g. "Mon, Sep 28, 2026"
   String formatDateLong(DateTime? dt) => _fmt(dt, 'EEE, MMM d, yyyy');

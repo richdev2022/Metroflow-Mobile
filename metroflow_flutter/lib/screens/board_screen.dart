@@ -473,110 +473,152 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
                                                   onTap: () => context.go('/main/task-detail', extra: task),
                                                   child: Container(
                                                     margin: const EdgeInsets.only(bottom: 8),
-                                                    padding: const EdgeInsets.all(12),
                                                     decoration: BoxDecoration(
                                                       color: colors.surface,
+                                                      borderRadius: BorderRadius.circular(14),
                                                       border: Border.all(
-                                                        color: task.isOverdue ? colors.error : colors.border,
+                                                        color: task.isOverdue
+                                                            ? colors.error.withValues(alpha: 0.5)
+                                                            : colors.border,
                                                       ),
-                                                      borderRadius: BorderRadius.circular(12),
+                                                      boxShadow: [
+                                                        BoxShadow(
+                                                          color: Colors.black.withValues(alpha: 0.04),
+                                                          blurRadius: 6,
+                                                          offset: const Offset(0, 2),
+                                                        ),
+                                                      ],
                                                     ),
-                                                    child: Column(
-                                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                                      children: [
-                                                        Text(
-                                                          task.title,
-                                                          style: TextStyle(
-                                                            fontSize: 14,
-                                                            fontWeight: FontWeight.w600,
-                                                            color: colors.text,
+                                                    child: ClipRRect(
+                                                      borderRadius: BorderRadius.circular(13),
+                                                      child: Row(
+                                                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                                                        children: [
+                                                          Container(
+                                                            width: 4,
+                                                            color: task.isOverdue
+                                                                ? colors.error
+                                                                : getStatusColor(status.name),
                                                           ),
-                                                          maxLines: 2,
-                                                          overflow: TextOverflow.ellipsis,
-                                                        ),
-                                                        if (task.description != null)
-                                                          Padding(
-                                                            padding: const EdgeInsets.only(top: 4),
-                                                            child: Text(
-                                                              task.description!,
-                                                              style: TextStyle(
-                                                                fontSize: 12,
-                                                                color: colors.textSecondary,
-                                                              ),
-                                                              maxLines: 2,
-                                                              overflow: TextOverflow.ellipsis,
-                                                            ),
-                                                          ),
-                                                        const SizedBox(height: 8),
-                                                        Row(
-                                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                                          children: [
-                                                            if (task.epic != null)
-                                                              Text(
-                                                                '📁 ${task.epic}',
-                                                                style: TextStyle(
-                                                                  fontSize: 10,
-                                                                  color: colors.textSecondary,
-                                                                ),
-                                                              ),
-                                                            Text(
-                                                              formatDate(task.endDate),
-                                                              style: TextStyle(
-                                                                fontSize: 10,
-                                                                color: colors.textSecondary,
-                                                              ),
-                                                            ),
-                                                          ],
-                                                        ),
-                                                        if (task.assignedTo != null && task.assignedTo!.isNotEmpty)
-                                                          Padding(
-                                                            padding: const EdgeInsets.only(top: 8),
-                                                            child: Row(
-                                                              children: [
-                                                                for (int i = 0; i < task.assignedTo!.length && i < 3; i++)
-                                                                  Padding(
-                                                                    padding: EdgeInsets.only(left: i > 0 ? -6 : 0),
-                                                                    child: Container(
-                                                                      width: 24,
-                                                                      height: 24,
-                                                                      decoration: BoxDecoration(
-                                                                        color: colors.primary,
-                                                                        shape: BoxShape.circle,
-                                                                        border: Border.all(color: colors.surface, width: 2),
+                                                          Expanded(
+                                                            child: Padding(
+                                                              padding: const EdgeInsets.all(12),
+                                                              child: Column(
+                                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                                mainAxisSize: MainAxisSize.min,
+                                                                children: [
+                                                                  Text(
+                                                                    task.title,
+                                                                    style: TextStyle(
+                                                                      fontSize: 14,
+                                                                      fontWeight: FontWeight.w600,
+                                                                      color: colors.text,
+                                                                    ),
+                                                                    maxLines: 2,
+                                                                    overflow: TextOverflow.ellipsis,
+                                                                  ),
+                                                                  if (task.description != null)
+                                                                    Padding(
+                                                                      padding: const EdgeInsets.only(top: 4),
+                                                                      child: Text(
+                                                                        task.description!,
+                                                                        style: TextStyle(
+                                                                          fontSize: 12,
+                                                                          color: colors.textSecondary,
+                                                                        ),
+                                                                        maxLines: 2,
+                                                                        overflow: TextOverflow.ellipsis,
                                                                       ),
-                                                                      child: Center(
+                                                                    ),
+                                                                  const SizedBox(height: 8),
+                                                                  Row(
+                                                                    children: [
+                                                                      if (task.epic != null)
+                                                                        Flexible(
+                                                                          child: Text(
+                                                                            '📁 ${task.epic}',
+                                                                            style: TextStyle(
+                                                                              fontSize: 10,
+                                                                              color: colors.textSecondary,
+                                                                            ),
+                                                                            maxLines: 1,
+                                                                            overflow: TextOverflow.ellipsis,
+                                                                          ),
+                                                                        ),
+                                                                      const Spacer(),
+                                                                      Container(
+                                                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                                        decoration: BoxDecoration(
+                                                                          color: task.isOverdue
+                                                                              ? colors.error.withValues(alpha: 0.12)
+                                                                              : colors.primary.withValues(alpha: 0.08),
+                                                                          borderRadius: BorderRadius.circular(999),
+                                                                        ),
                                                                         child: Text(
-                                                                          task.assignedTo![i][0].toUpperCase(),
-                                                                          style: const TextStyle(
-                                                                            color: Colors.white,
+                                                                          formatDate(task.endDate),
+                                                                          style: TextStyle(
                                                                             fontSize: 10,
                                                                             fontWeight: FontWeight.w600,
+                                                                            color: task.isOverdue ? colors.error : colors.textSecondary,
                                                                           ),
                                                                         ),
                                                                       ),
-                                                                    ),
+                                                                    ],
                                                                   ),
-                                                                if (task.assignedTo!.length > 3)
-                                                                  Padding(
-                                                                    padding: const EdgeInsets.only(left: 8),
-                                                                    child: Text(
-                                                                      '+${task.assignedTo!.length - 3}',
-                                                                      style: TextStyle(
-                                                                        fontSize: 10,
-                                                                        color: colors.textSecondary,
+                                                                  if (task.assignedTo != null && task.assignedTo!.isNotEmpty)
+                                                                    Padding(
+                                                                      padding: const EdgeInsets.only(top: 8),
+                                                                      child: Row(
+                                                                        children: [
+                                                                          for (int i = 0; i < task.assignedTo!.length && i < 3; i++)
+                                                                            Padding(
+                                                                              padding: EdgeInsets.only(left: i > 0 ? -6 : 0),
+                                                                              child: Container(
+                                                                                width: 24,
+                                                                                height: 24,
+                                                                                decoration: BoxDecoration(
+                                                                                  color: colors.primary,
+                                                                                  shape: BoxShape.circle,
+                                                                                  border: Border.all(color: colors.surface, width: 2),
+                                                                                ),
+                                                                                child: Center(
+                                                                                  child: Text(
+                                                                                    task.assignedTo![i][0].toUpperCase(),
+                                                                                    style: const TextStyle(
+                                                                                      color: Colors.white,
+                                                                                      fontSize: 10,
+                                                                                      fontWeight: FontWeight.w600,
+                                                                                    ),
+                                                                                  ),
+                                                                                ),
+                                                                              ),
+                                                                            ),
+                                                                          if (task.assignedTo!.length > 3)
+                                                                            Padding(
+                                                                              padding: const EdgeInsets.only(left: 8),
+                                                                              child: Text(
+                                                                                '+${task.assignedTo!.length - 3}',
+                                                                                style: TextStyle(
+                                                                                  fontSize: 10,
+                                                                                  color: colors.textSecondary,
+                                                                                ),
+                                                                              ),
+                                                                            ),
+                                                                        ],
                                                                       ),
                                                                     ),
-                                                                  ),
-                                                              ],
+                                                                ],
+                                                              ),
                                                             ),
                                                           ),
-                                                      ],
+                                                        ],
+                                                      ),
                                                     ),
                                                   ),
                                                 ),
                                               );
-                                            },
-                                          ),
+                                          },
+                                        ),
                                   );
                                 },
                               ),

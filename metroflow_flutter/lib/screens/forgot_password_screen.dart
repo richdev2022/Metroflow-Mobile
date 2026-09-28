@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../services/api.dart';
 import '../theme/app_theme.dart';
+import '../widgets/auth_ui.dart';
 
 class ForgotPasswordScreen extends ConsumerStatefulWidget {
   const ForgotPasswordScreen({super.key});
@@ -96,162 +97,66 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = AppTheme.colors;
     return Scaffold(
-      body: SafeArea(
-        child: Stack(
-          children: [
-            SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  TextButton.icon(
-                    onPressed: () => context.pop(),
-                    icon: Icon(Icons.arrow_back, color: colors.text, size: 24),
-                    label: const Text(''),
-                    style: TextButton.styleFrom(
-                      padding: EdgeInsets.zero,
-                      minimumSize: const Size(0, 40),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Center(
-                    child: Container(
-                      width: 100,
-                      height: 100,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(28),
-                        boxShadow: [
-                          BoxShadow(
-                            color: colors.primary.withValues(alpha: 0.3),
-                            offset: const Offset(0, 8),
-                            blurRadius: 20,
-                            spreadRadius: 0,
-                          ),
-                        ],
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(28),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [colors.primary, colors.primaryLight],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            ),
-                          ),
-                          child: const Icon(Icons.key_outlined,
-                              size: 48, color: Colors.white),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'Forgot Password',
-                    style: TextStyle(
-                      fontSize: 32,
-                      fontWeight: FontWeight.bold,
-                      color: colors.primary,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Enter your email address and we\'ll send you a verification code to reset your password.',
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: colors.textSecondary,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 32),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: colors.surface,
-                      border: Border.all(color: colors.border, width: 1.5),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Row(
-                      children: [
-                        Padding(
-                          padding:
-                              const EdgeInsets.symmetric(horizontal: 16),
-                          child: Icon(Icons.mail_outlined,
-                              color: colors.textSecondary),
-                        ),
-                        Expanded(
-                          child: TextField(
-                            controller: _emailController,
-                            decoration: InputDecoration(
-                              hintText: 'Email address',
-                              hintStyle:
-                                  TextStyle(color: colors.textSecondary),
-                              border: InputBorder.none,
-                            ),
-                            keyboardType: TextInputType.emailAddress,
-                            autocorrect: false,
-                            style: TextStyle(color: colors.text, fontSize: 16),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Container(
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: colors.primary.withValues(alpha: 0.4),
-                          offset: const Offset(0, 8),
-                          blurRadius: 16,
-                          spreadRadius: 0,
-                        ),
-                      ],
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [colors.primary, colors.primaryLight],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                        ),
-                        child: TextButton(
-                          onPressed: _isLoading ? null : _handleSubmit,
-                          style: TextButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 18),
-                          ),
-                          child: _isLoading
-                              ? const SizedBox(
-                                  height: 24,
-                                  width: 24,
-                                  child: CircularProgressIndicator(
-                                      color: Colors.white),
-                                )
-                              : const Text(
-                                  'Send Reset Code',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 17,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+      body: Stack(
+        children: [
+          // Gradient accent band behind the header (clipped with a curve).
+          ClipPath(
+            clipper: _AuthHeaderCurve(),
+            child: Container(
+              height: 170,
+              decoration: const BoxDecoration(
+                gradient: BrandSplashGradient.buttonGradient,
               ),
             ),
-          ],
-        ),
+          ),
+          AuthScreenShell(
+            onBack: () => context.pop(),
+            children: [
+              const SizedBox(height: 6),
+              AuthBrandHeader(
+                title: 'Forgot password',
+                subtitle:
+                    'Enter your email address and we\u2019ll send you a verification code to reset your password.',
+              ),
+              const SizedBox(height: 32),
+              AuthTextField(
+                controller: _emailController,
+                hint: 'Email address',
+                icon: Icons.alternate_email_rounded,
+                keyboardType: TextInputType.emailAddress,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => _handleSubmit(),
+              ),
+              const SizedBox(height: 24),
+              AuthGradientButton(
+                label: 'Send Reset Code',
+                loading: _isLoading,
+                onPressed: _handleSubmit,
+                icon: Icons.mark_email_read_outlined,
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
+}
+
+/// Soft curved bottom edge for the gradient header band.
+class _AuthHeaderCurve extends CustomClipper<Path> {
+  @override
+  Path getClip(Size size) {
+    final path = Path()
+      ..moveTo(0, 0)
+      ..lineTo(0, size.height - 40)
+      ..quadraticBezierTo(
+          size.width / 2, size.height + 30, size.width, size.height - 40)
+      ..lineTo(size.width, 0)
+      ..close();
+    return path;
+  }
+
+  @override
+  bool shouldReclip(covariant CustomClipper<Path> oldDelegate) => false;
 }
