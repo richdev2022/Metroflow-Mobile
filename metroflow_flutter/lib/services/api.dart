@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -9,6 +11,11 @@ import '../providers/auth_provider.dart';
 import '../widgets/upgrade_dialog.dart';
 
 final String _apiBaseUrl = dotenv.env['EXPO_PUBLIC_API_BASE_URL'] ?? 'https://api.metricorex.com/api';
+
+/// Absolute origin of the API (scheme + host, without the /api suffix) — used
+/// to resolve RELATIVE media URLs (`/uploads/xyz.m4a`) returned by the local
+/// upload fallback in POST /chat/media.
+final String _apiOrigin = _apiBaseUrl.replaceFirst(RegExp(r'/api/?$'), '');
 
 // Global key to access navigator context
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -805,6 +812,40 @@ class ApiService {
 
   Future<Response> sendMessage(String conversationId, Map<String, dynamic> data) async {
     return await _dio.post('/chat/conversations/$conversationId/messages', data: data);
+  }
+
+  /// Upload chat media (voice notes) via POST /chat/media as multipart
+  /// form-data (field name `file`). Returns the hosted URL from
+  /// `{ success, data: { url, mimeType, size, attachmentType } }` — pass it as
+  /// `attachmentUrl` to [sendMessage]. Throws on network/server errors so the
+  /// caller can surface them.
+  Future<String?> uploadChatMedia(File file) async {
+    final fileName = file.path.split(Platform.pathSeparator).last;
+    final formData = FormData.fromMap(<String, dynamic>{
+      'file': await MultipartFile.fromFile(file.path, filename: fileName),
+    });
+    final response = await _dio.post('/chat/media', data: formData);
+    final data = response.data is Map ? response.data['data'] : null;
+    if (data is Map && data['url'] != null) {
+      final url = data['url'].toString();
+      return url.isNotEmpty ? url : null;
+    }
+    return null;
+  }
+
+  /// Make a media URL absolute. The backend returns absolute URLs for
+  /// R2-hosted files but RELATIVE paths (`/uploads/...`) for the local upload
+  /// fallback — players (audioplayers / network images) need absolute URLs.
+  static String? resolveMediaUrl(String? url) {
+    if (url == null || url.isEmpty) return null;
+    if (url.startsWith('http://') ||
+        url.startsWith('https://') ||
+        url.startsWith('file://') ||
+        url.startsWith('data:')) {
+      return url;
+    }
+    if (url.startsWith('/')) return '$_apiOrigin$url';
+    return url;
   }
 
   /// Mark a conversation as read (clears unread badge for the current user).

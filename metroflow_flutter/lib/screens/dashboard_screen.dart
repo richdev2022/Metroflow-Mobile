@@ -7,6 +7,7 @@ import '../services/api.dart';
 import '../models/team_member.dart';
 import '../models/task.dart';
 import '../providers/auth_provider.dart';
+import '../utils/app_timezone.dart';
 import '../widgets/modern_ui.dart';
 import 'package:fl_chart/fl_chart.dart';
 
@@ -247,24 +248,23 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     final dueDateStr = task['dueDate'] as String? ?? task['endDate'] as String? ?? '';
     if (dueDateStr.isEmpty) return 'No due date';
     try {
-      return DateFormat('d MMM').format(DateTime.parse(dueDateStr));
+      return AppTimezone.instance.formatDateShort(DateTime.parse(dueDateStr));
     } catch (e) {
       return dueDateStr;
     }
   }
 
   int _dueTodayCount() {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
+    final todayKey = AppTimezone.instance.todayKey();
     return _filteredTasks.where((task) {
       if (task['status'] == 'completed') return false;
       final dateStr = task['dueDate'] as String? ?? task['endDate'] as String? ?? '';
       if (dateStr.isEmpty) return false;
       try {
-        final date = DateTime.parse(dateStr);
-        return date.year == today.year &&
-            date.month == today.month &&
-            date.day == today.day;
+        final dateKey = AppTimezone.instance.dateKeyIn(DateTime.parse(dateStr));
+        return dateKey.year == todayKey.year &&
+            dateKey.month == todayKey.month &&
+            dateKey.day == todayKey.day;
       } catch (e) {
         return false;
       }
@@ -382,86 +382,41 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ---------- Greeting header ----------
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '${_greeting()}, $firstName!',
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w800,
-                        color: colors.text,
-                        height: 1.2,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      DateFormat('EEEE, d MMMM y').format(DateTime.now()),
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: colors.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
-
-              // ---------- Hero overview card ----------
+              // ---------- Hero card (greeting + workspace overview) ----------
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: _buildHeroCard(colors, openTasksCount, completionPercentage, overdueTasks.length),
+                child: _buildHeroCard(
+                  colors,
+                  firstName,
+                  openTasksCount,
+                  completionPercentage,
+                  overdueTasks.length,
+                ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 24),
 
               // ---------- Quick actions ----------
               _buildQuickActions(colors),
               const SizedBox(height: 24),
 
-              // ---------- Stat chips row ----------
-              SectionHeader(
-                title: 'Overview',
-                subtitle: 'Activity for the selected filters',
-              ),
-              SizedBox(
-                height: 132,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  physics: const BouncingScrollPhysics(),
+              // ---------- Stat grid ----------
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    StatCard(
-                      icon: Icons.today_outlined,
-                      label: 'Due today',
-                      value: '${_dueTodayCount()}',
-                      tint: colors.primary,
-                    ),
-                    const SizedBox(width: 12),
-                    StatCard(
-                      icon: Icons.task_alt_outlined,
-                      label: 'Done this week',
-                      value: '${_completedThisWeekCount()}',
-                      tint: colors.success,
-                    ),
-                    const SizedBox(width: 12),
-                    StatCard(
-                      icon: Icons.error_outline,
-                      label: 'Overdue',
-                      value: '${overdueTasks.length}',
-                      tint: colors.error,
-                    ),
-                    const SizedBox(width: 12),
-                    StatCard(
-                      icon: Icons.groups_outlined,
-                      label: 'Team members',
-                      value: '${_teamMembers.length}',
-                      tint: const Color(0xFF7C3AED),
-                    ),
+                    const _SectionKicker(label: 'Overview'),
+                    const SizedBox(height: 10),
+                    _buildStatGrid(colors),
                   ],
                 ),
+              ),
+              const SizedBox(height: 20),
+
+              // ---------- Weekly activity ----------
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: _WeeklyActivityCard(colors: colors, tasks: _filteredTasks),
               ),
               const SizedBox(height: 24),
 
@@ -478,13 +433,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    SectionHeader(
-                      title: 'My Tasks',
+                    _SectionKicker(
+                      label: 'My Tasks',
                       subtitle: '$openTasksCount open of $totalTasks total',
                       actionLabel: 'View all',
                       onAction: () => context.go('/main?tab=1'),
                       actionIcon: Icons.arrow_forward_rounded,
                     ),
+                    const SizedBox(height: 10),
                     if (openTasks.isEmpty)
                       ModernCard(
                         margin: EdgeInsets.zero,
@@ -543,13 +499,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    SectionHeader(
-                      title: 'Top Members',
+                    _SectionKicker(
+                      label: 'Top Members',
                       subtitle: 'Highest completion rate this period',
                       actionLabel: 'Full ranking',
                       onAction: () => context.go('/main/ranking'),
                       actionIcon: Icons.arrow_forward_rounded,
                     ),
+                    const SizedBox(height: 10),
                     if (sortedMembers.isEmpty)
                       ModernCard(
                         margin: EdgeInsets.zero,
@@ -589,6 +546,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
 
   Widget _buildHeroCard(
     ThemeColors colors,
+    String firstName,
     int openTasksCount,
     int completionPercentage,
     int overdueCount,
@@ -596,21 +554,49 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        gradient: BrandGradient.deep,
-        borderRadius: BorderRadius.circular(24),
+        // Brand-consistent deep indigo -> blue -> violet wash.
+        gradient: const LinearGradient(
+          colors: [
+            Color(0xFF1E3A8A),
+            Color(0xFF2563EB),
+            Color(0xFF7C3AED),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          stops: [0.0, 0.55, 1.0],
+        ),
+        borderRadius: BorderRadius.circular(26),
         boxShadow: [
           BoxShadow(
             color: colors.primary.withValues(alpha: 0.35),
-            blurRadius: 24,
-            offset: const Offset(0, 10),
+            blurRadius: 26,
+            offset: const Offset(0, 12),
           ),
         ],
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(26),
         child: Stack(
           children: [
-            // Decorative circles
+            // Soft inner highlight sweeping from the top-left.
+            Positioned.fill(
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: RadialGradient(
+                      center: Alignment(-0.7, -1.0),
+                      radius: 1.3,
+                      colors: [
+                        Colors.white.withValues(alpha: 0.16),
+                        Colors.white.withValues(alpha: 0.0),
+                      ],
+                      stops: const [0.0, 0.7],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            // Decorative circles.
             Positioned(
               right: -36,
               top: -36,
@@ -638,33 +624,56 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.16),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.bolt_rounded, size: 14, color: Colors.amber.shade200),
-                          const SizedBox(width: 4),
-                          Text(
-                            'Workspace overview',
-                            style: TextStyle(
-                              fontSize: 11.5,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.white.withValues(alpha: 0.95),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+                Text(
+                  '${_greeting()}, $firstName!',
+                  style: const TextStyle(
+                    fontSize: 23,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                    height: 1.2,
+                  ),
                 ),
-                const SizedBox(height: 18),
+                const SizedBox(height: 5),
+                Text(
+                  AppTimezone.instance.formatDateFull(DateTime.now()),
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.white.withValues(alpha: 0.82),
+                  ),
+                ),
+                Text(
+                  "Here's what's happening today",
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontStyle: FontStyle.italic,
+                    color: Colors.white.withValues(alpha: 0.60),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.bolt_rounded, size: 14, color: Colors.amber.shade200),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Workspace overview',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white.withValues(alpha: 0.95),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
                 Text(
                   '$openTasksCount',
                   style: const TextStyle(
@@ -732,6 +741,60 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     );
   }
 
+  Widget _buildStatGrid(ThemeColors colors) {
+    final stats = <_DashboardStatData>[
+      _DashboardStatData(
+        icon: Icons.today_outlined,
+        label: 'Due today',
+        value: '${_dueTodayCount()}',
+        tint: colors.primary,
+        onTap: () => context.go('/main?tab=1'),
+      ),
+      _DashboardStatData(
+        icon: Icons.task_alt_outlined,
+        label: 'Done this week',
+        value: '${_completedThisWeekCount()}',
+        tint: colors.success,
+        onTap: () => context.go('/main?tab=1'),
+      ),
+      _DashboardStatData(
+        icon: Icons.error_outline,
+        label: 'Overdue',
+        value: '${_filteredTasks.where(_isTaskOverdue).length}',
+        tint: colors.error,
+        onTap: () => context.go('/main?tab=1'),
+      ),
+      _DashboardStatData(
+        icon: Icons.groups_outlined,
+        label: 'Team members',
+        value: '${_teamMembers.length}',
+        tint: const Color(0xFF7C3AED),
+        onTap: () => context.go('/main/team'),
+      ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final crossAxisCount = constraints.maxWidth >= 560 ? 4 : 2;
+        final cardWidth =
+            (constraints.maxWidth - (crossAxisCount - 1) * 12) / crossAxisCount;
+        final aspectRatio = cardWidth / 112;
+        return GridView.count(
+          crossAxisCount: crossAxisCount,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          mainAxisSpacing: 12,
+          crossAxisSpacing: 12,
+          childAspectRatio: aspectRatio,
+          padding: EdgeInsets.zero,
+          children: [
+            for (final stat in stats) _DashboardStatCard(data: stat, colors: colors),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _buildQuickActions(ThemeColors colors) {
     final actions = <_QuickActionData>[
       _QuickActionData(
@@ -783,7 +846,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SectionHeader(title: 'Quick Actions'),
+          const _SectionKicker(label: 'Quick Actions'),
+          const SizedBox(height: 10),
           SizedBox(
             height: 96,
             child: ListView.separated(
@@ -935,9 +999,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           Text(
             'Task Status',
             style: TextStyle(
-              fontSize: 16,
+              fontSize: 11.5,
               fontWeight: FontWeight.w700,
-              color: colors.text,
+              letterSpacing: 1.2,
+              color: colors.textSecondary,
             ),
           ),
           const SizedBox(height: 18),
@@ -1328,21 +1393,24 @@ class _TopMemberCard extends StatelessWidget {
     required this.colors,
   });
 
-  Color _rankColor() {
+  /// Gold / silver / bronze medal gradients for the top 3, brand colors after.
+  List<Color> _rankGradient() {
     switch (rank) {
       case 1:
-        return const Color(0xFFF59E0B); // Gold
+        return const [Color(0xFFFDE68A), Color(0xFFF59E0B)]; // gold
       case 2:
-        return const Color(0xFF94A3B8); // Silver
+        return const [Color(0xFFE2E8F0), Color(0xFF94A3B8)]; // silver
       case 3:
-        return const Color(0xFFB45309); // Bronze
+        return const [Color(0xFFFDBA74), Color(0xFFC2410C)]; // bronze
       default:
-        return colors.textSecondary;
+        return [colors.primaryLight, colors.primaryDark];
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final rankColors = _rankGradient();
+
     return ModernCard(
       margin: const EdgeInsets.only(bottom: 12),
       onTap: () => context.go('/main/ranking'),
@@ -1356,20 +1424,31 @@ class _TopMemberCard extends StatelessWidget {
                 right: -4,
                 bottom: -4,
                 child: Container(
-                  width: 20,
-                  height: 20,
+                  width: 21,
+                  height: 21,
                   decoration: BoxDecoration(
-                    color: _rankColor(),
+                    gradient: LinearGradient(
+                      colors: rankColors,
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
                     shape: BoxShape.circle,
                     border: Border.all(color: colors.surface, width: 2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: rankColors.last.withValues(alpha: 0.35),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
                   ),
                   child: Center(
                     child: Text(
                       '$rank',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 10,
                         fontWeight: FontWeight.w800,
-                        color: Colors.white,
+                        color: rank == 1 ? const Color(0xFF78350F) : Colors.white,
                       ),
                     ),
                   ),
@@ -1392,51 +1471,51 @@ class _TopMemberCard extends StatelessWidget {
                     color: colors.text,
                   ),
                 ),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(999),
-                        child: LinearProgressIndicator(
-                          value: completionRate / 100,
-                          minHeight: 6,
-                          backgroundColor: colors.surfaceVariant,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            colors.primary,
+                const SizedBox(height: 7),
+                // Thin progress bar with a brand gradient fill.
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: Container(
+                    height: 6,
+                    color: colors.surfaceVariant,
+                    child: FractionallySizedBox(
+                      alignment: Alignment.centerLeft,
+                      widthFactor: (completionRate / 100).clamp(0.0, 1.0).toDouble(),
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [colors.primary, const Color(0xFF7C3AED)],
                           ),
                         ),
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    Text(
-                      '$completionRate%',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: colors.primary,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ],
             ),
           ),
           const SizedBox(width: 10),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: colors.surfaceVariant,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Text(
-              '$completed/$total',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: colors.text,
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '$completionRate%',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                  color: colors.primary,
+                ),
               ),
-            ),
+              const SizedBox(height: 2),
+              Text(
+                '$completed/$total done',
+                style: TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w600,
+                  color: colors.textSecondary,
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -1576,6 +1655,345 @@ class _DateButton extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard revamp widgets
+// ---------------------------------------------------------------------------
+
+/// Small uppercase, tracking-wide, muted section label — the section header
+/// style for the revamped dashboard.
+class _SectionKicker extends StatelessWidget {
+  final String label;
+  final String? subtitle;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+  final IconData? actionIcon;
+
+  const _SectionKicker({
+    required this.label,
+    this.subtitle,
+    this.actionLabel,
+    this.onAction,
+    this.actionIcon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppTheme.colors;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label.toUpperCase(),
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.2,
+                  color: colors.textSecondary,
+                ),
+              ),
+              if (subtitle != null) ...[
+                const SizedBox(height: 2),
+                Text(
+                  subtitle!,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: colors.textSecondary.withValues(alpha: 0.85),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        if (actionLabel != null && onAction != null)
+          TextButton(
+            onPressed: onAction,
+            style: TextButton.styleFrom(
+              foregroundColor: colors.primary,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: const Size(0, 36),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  actionLabel!,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                if (actionIcon != null) ...[
+                  const SizedBox(width: 2),
+                  Icon(actionIcon, size: 16),
+                ],
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _DashboardStatData {
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color tint;
+  final VoidCallback? onTap;
+
+  const _DashboardStatData({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.tint,
+    this.onTap,
+  });
+}
+
+/// Rounded-2xl surface stat card: colored icon chip, large value, small
+/// muted label, gentle shadow.
+class _DashboardStatCard extends StatelessWidget {
+  final _DashboardStatData data;
+  final ThemeColors colors;
+
+  const _DashboardStatCard({required this.data, required this.colors});
+
+  @override
+  Widget build(BuildContext context) {
+    return ModernCard(
+      onTap: data.onTap,
+      padding: const EdgeInsets.all(12),
+      margin: EdgeInsets.zero,
+      radius: 18,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          TintedCircleIcon(
+            icon: data.icon,
+            tint: data.tint,
+            size: 34,
+            iconSize: 17,
+          ),
+          const SizedBox(height: 9),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              data.value,
+              style: TextStyle(
+                fontSize: 21,
+                fontWeight: FontWeight.w800,
+                color: colors.text,
+                height: 1.1,
+              ),
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            data.label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11,
+              color: colors.textSecondary,
+              height: 1.2,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DayActivity {
+  final DateTime dayKey;
+  final String label;
+  final bool isToday;
+  int count;
+
+  _DayActivity({
+    required this.dayKey,
+    required this.label,
+    required this.isToday,
+    this.count = 0,
+  });
+}
+
+/// Small weekly activity card: tasks completed per day over the last 7 days,
+/// bucketed in the business timezone from each task's `updatedAt`.
+class _WeeklyActivityCard extends StatelessWidget {
+  final ThemeColors colors;
+  final List<dynamic> tasks;
+
+  const _WeeklyActivityCard({required this.colors, required this.tasks});
+
+  List<_DayActivity> _computeBuckets() {
+    final tz = AppTimezone.instance;
+    final todayKey = tz.todayKey();
+
+    final buckets = List<_DayActivity>.generate(7, (i) {
+      final day = todayKey.subtract(Duration(days: 6 - i));
+      String label;
+      try {
+        label = DateFormat('E').format(day);
+      } catch (_) {
+        label = '';
+      }
+      return _DayActivity(
+        dayKey: day,
+        label: label.isEmpty ? '·' : label[0],
+        isToday: i == 6,
+      );
+    });
+
+    for (final task in tasks) {
+      if (task is! Map || task['status'] != 'completed') continue;
+      final raw = task['updatedAt'] ?? task['endDate'] ?? task['dueDate'];
+      final updated = AppTimezone.tryParse(raw);
+      if (updated == null) continue;
+      final key = tz.dateKeyIn(updated);
+      for (final bucket in buckets) {
+        if (bucket.dayKey.year == key.year &&
+            bucket.dayKey.month == key.month &&
+            bucket.dayKey.day == key.day) {
+          bucket.count += 1;
+          break;
+        }
+      }
+    }
+    return buckets;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final buckets = _computeBuckets();
+    final total = buckets.fold<int>(0, (sum, b) => sum + b.count);
+    final maxCount = buckets.fold<int>(0, (m, b) => b.count > m ? b.count : m);
+    final maxY = (maxCount < 4 ? 4 : maxCount).toDouble();
+
+    return ModernCard(
+      margin: EdgeInsets.zero,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'THIS WEEK',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1.2,
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      total == 0
+                          ? 'No completions in the last 7 days'
+                          : '$total task${total == 1 ? '' : 's'} completed in the last 7 days',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colors.textSecondary.withValues(alpha: 0.85),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              TintedCircleIcon(
+                icon: Icons.insights_rounded,
+                tint: colors.success,
+                size: 34,
+                iconSize: 17,
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            height: 110,
+            child: BarChart(
+              BarChartData(
+                alignment: BarChartAlignment.spaceAround,
+                maxY: maxY,
+                barTouchData: const BarTouchData(enabled: false),
+                gridData: const FlGridData(show: false),
+                borderData: FlBorderData(show: false),
+                titlesData: FlTitlesData(
+                  leftTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  topTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  rightTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  bottomTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 22,
+                      getTitlesWidget: (value, meta) {
+                        final index = value.toInt();
+                        if (index < 0 || index >= buckets.length) {
+                          return const SizedBox.shrink();
+                        }
+                        final bucket = buckets[index];
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Text(
+                            bucket.label,
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: bucket.isToday
+                                  ? FontWeight.w800
+                                  : FontWeight.w600,
+                              color: bucket.isToday
+                                  ? colors.primary
+                                  : colors.textSecondary,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                barGroups: [
+                  for (var i = 0; i < buckets.length; i++)
+                    BarChartGroupData(
+                      x: i,
+                      barRods: [
+                        BarChartRodData(
+                          toY: buckets[i].count.toDouble(),
+                          width: 14,
+                          borderRadius: BorderRadius.circular(6),
+                          gradient: LinearGradient(
+                            begin: Alignment.bottomCenter,
+                            end: Alignment.topCenter,
+                            colors: buckets[i].isToday
+                                ? [colors.primaryLight, colors.primary]
+                                : [
+                                    colors.primary.withValues(alpha: 0.30),
+                                    colors.primary.withValues(alpha: 0.55),
+                                  ],
+                          ),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

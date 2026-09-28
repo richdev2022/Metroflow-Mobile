@@ -58,6 +58,12 @@ class SocketService {
   void Function(dynamic)? onCallDurationActive;
   void Function(dynamic)? onCallCountdownWarning;
 
+  /// Waiting-room results for THIS socket (server unicasts to the waiter):
+  /// - `waiting-room:admitted` payload { roomId, meetingId, participantId, userName }
+  /// - `waiting-room:denied`  payload { roomId, meetingId, participantId }
+  void Function(dynamic)? onWaitingRoomAdmitted;
+  void Function(dynamic)? onWaitingRoomDenied;
+
   /// Server-verified echo-risk alert: the same account joined this room on
   /// 2+ devices (backend counts sockets per room). Payload:
   /// { roomId, userId, userName, deviceCount, message }
@@ -175,6 +181,17 @@ class SocketService {
 
     _socket?.on('call:multi-device', (data) {
       if (onCallMultiDevice != null) onCallMultiDevice!(data);
+    });
+
+    // Waiting-room lifecycle (see server/lib/socket.ts). The server answers
+    // `call:join` with { waitingRoom: true } and parks the joiner; the host
+    // then admit/denies and ONLY the waiting socket receives these events.
+    _socket?.on('waiting-room:admitted', (data) {
+      if (onWaitingRoomAdmitted != null) onWaitingRoomAdmitted!(data);
+    });
+
+    _socket?.on('waiting-room:denied', (data) {
+      if (onWaitingRoomDenied != null) onWaitingRoomDenied!(data);
     });
 
     _socket?.on('call:created', (data) {
@@ -306,8 +323,35 @@ class SocketService {
   /// Join a call room on the server. REQUIRED for calls (meetings join via
   /// meeting:join): without it the socket is never added to `room:{id}`, so
   /// mediasoup events (newProducer etc.) are never delivered for calls.
+  ///
+  /// Always advertises `waitingRoomSupport: true` so the server can QUEUE us
+  /// (instead of silently letting us through / dropping us) when the room has
+  /// waiting_room_enabled and we are not the host. Use [emitCallJoinWithAck]
+  /// to read the server's decision.
   void emitCallJoin(Map<String, dynamic> data) {
-    _socket?.emit('call:join', data);
+    _socket?.emit('call:join', {
+      ...data,
+      'waitingRoomSupport': true,
+    });
+  }
+
+  /// Join a call room and wait for the server ack. Ack shapes:
+  /// - { success: true, waitingRoom: true, roomId, participantId } → parked in
+  ///   the waiting room; wait for `waiting-room:admitted` / `:denied`.
+  /// - { success: true, roomId } → joined straight away.
+  /// - { success: false, error } → refused (room not found, ended, ...).
+  /// Throws TimeoutException / StateError when no ack arrives in time.
+  Future<dynamic> emitCallJoinWithAck(Map<String, dynamic> data) {
+    return _emitAck('call:join', {
+      ...data,
+      'waitingRoomSupport': true,
+    });
+  }
+
+  /// Explicitly (re-)enqueue ourselves in a room's waiting queue. Safety net
+  /// for races (reconnect while waiting, lost join-time enqueue, ...).
+  void emitWaitingRoomRequest(Map<String, dynamic> data) {
+    _socket?.emit('waiting-room:request', data);
   }
 
   void emitMeetingLeave(Map<String, dynamic> data) {

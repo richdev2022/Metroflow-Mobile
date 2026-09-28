@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import '../theme/app_theme.dart';
 import '../services/api.dart';
 import '../models/transfer.dart';
+import '../utils/app_timezone.dart';
 import 'package:share_plus/share_plus.dart';
 
 class TransfersScreen extends ConsumerStatefulWidget {
@@ -353,12 +354,9 @@ class _TransferCard extends StatelessWidget {
   }
 
   static String formatDate(String date) {
-    try {
-      final dt = DateTime.parse(date);
-      return '${dt.day}/${dt.month}/${dt.year} ${dt.hour}:${dt.minute.toString().padLeft(2, '0')}';
-    } catch (e) {
-      return date;
-    }
+    final dt = AppTimezone.tryParse(date);
+    if (dt == null) return date;
+    return AppTimezone.instance.formatDateTime(dt);
   }
 
   @override

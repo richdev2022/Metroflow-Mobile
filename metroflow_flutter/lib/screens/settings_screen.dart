@@ -9,7 +9,9 @@ import '../providers/theme_provider.dart';
 import '../services/api.dart';
 import '../services/biometrics.dart';
 import '../theme/app_theme.dart';
+import '../utils/app_timezone.dart';
 import '../utils/app_toast.dart';
+import '../utils/timezone_data.dart';
 
 const _businessIndustries = [
   'Technology',
@@ -101,6 +103,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _isSecurityLoading = true;
   bool _isPasswordBusy = false;
 
+  // Business timezone (GET/PUT /settings.timezone, cached in AppTimezone)
+  bool _isSavingTimezone = false;
+
   @override
   void initState() {
     super.initState();
@@ -148,6 +153,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         _nameController.text = profile.name;
         _editIndustry = profile.industry;
         _editCurrency = profile.currency.isEmpty ? 'NGN' : profile.currency;
+        // The server copy of the business timezone is authoritative — adopt it
+        // whenever the settings screen loads, so mobile stays in sync with web.
+        final serverTz = (settingsData['settings'] as Map<String, dynamic>)['timezone'];
+        if (serverTz is String && serverTz.isNotEmpty && serverTz != AppTimezone.instance.current) {
+          AppTimezone.instance.set(serverTz);
+          if (mounted) setState(() {});
+        }
       }
 
       final subscriptionData = results[1].data;
@@ -245,6 +257,65 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     } catch (e) {
       debugPrint('Failed to update OTP preference: $e');
     }
+  }
+
+  String get _currentTimezone => AppTimezone.instance.current;
+
+  String get _currentTimezoneLabel {
+    final current = _currentTimezone;
+    for (final entry in timezoneData) {
+      if (entry['name'] == current) return entry['label'] ?? current;
+    }
+    return current;
+  }
+
+  Future<void> _handleTimezoneSelected(String name) async {
+    final previous = _currentTimezone;
+    if (name == previous) return;
+
+    // 1) Switch locally (AppTimezone.set also persists to SharedPreferences
+    //    under 'business_timezone') — every screen re-renders with the new
+    //    timezone immediately.
+    setState(() => _isSavingTimezone = true);
+    AppTimezone.instance.set(name);
+    setState(() {});
+
+    // 2) Persist to the business record via PUT /settings.
+    try {
+      await ApiService().updateSettings({'timezone': name});
+      if (mounted) {
+        AppToast.show('Timezone set to $name', type: AppToastType.success);
+      }
+    } catch (e) {
+      debugPrint('Failed to persist timezone: $e');
+      // Roll back the local switch so the UI matches the server state.
+      AppTimezone.instance.set(previous);
+      if (mounted) {
+        setState(() {});
+        AppToast.show(
+          ApiService.extractErrorMessage(e),
+          type: AppToastType.error,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSavingTimezone = false);
+    }
+  }
+
+  void _showTimezonePicker() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _TimezonePickerSheet(
+        selected: _currentTimezone,
+        saving: _isSavingTimezone,
+        onSelected: (name) {
+          Navigator.of(context).pop();
+          _handleTimezoneSelected(name);
+        },
+      ),
+    );
   }
 
   Future<void> _handleToggleOtp(bool enabled) async {
@@ -931,6 +1002,22 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                                     .toggleTheme(value ? ThemeMode.dark : ThemeMode.light);
                               },
                             ),
+                    ),
+                    _settingItem(
+                      icon: Icons.public_outlined,
+                      title: 'Timezone',
+                      subtitle: _currentTimezoneLabel,
+                      trailing: _isSavingTimezone
+                          ? const SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : Icon(
+                              Icons.keyboard_arrow_down,
+                              color: AppTheme.colors.textSecondary,
+                            ),
+                      onTap: _isSavingTimezone ? null : _showTimezonePicker,
                     ),
                     _sectionTitle('Security'),
                     _settingItem(
@@ -1673,6 +1760,161 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           color: AppTheme.colors.text,
           fontSize: 14,
           fontWeight: FontWeight.w500,
+        ),
+      ),
+    );
+  }
+}
+
+/// Searchable bottom-sheet picker for the business timezone.
+///
+/// Lists the shared IANA timezone catalogue ([timezoneData]) with the current
+/// selection pre-checked; picking one switches the app instantly via
+/// [AppTimezone] and persists to the business record.
+class _TimezonePickerSheet extends StatefulWidget {
+  final String selected;
+  final bool saving;
+  final ValueChanged<String> onSelected;
+
+  const _TimezonePickerSheet({
+    required this.selected,
+    required this.saving,
+    required this.onSelected,
+  });
+
+  @override
+  State<_TimezonePickerSheet> createState() => _TimezonePickerSheetState();
+}
+
+class _TimezonePickerSheetState extends State<_TimezonePickerSheet> {
+  final _searchController = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppTheme.colors;
+    final query = _query.trim().toLowerCase();
+    final filtered = query.isEmpty
+        ? timezoneData
+        : timezoneData.where((entry) {
+            final name = (entry['name'] ?? '').toLowerCase();
+            final label = (entry['label'] ?? '').toLowerCase();
+            return name.contains(query) || label.contains(query);
+          }).toList();
+
+    return FractionallySizedBox(
+      heightFactor: 0.78,
+      child: Container(
+        padding: EdgeInsets.fromLTRB(24, 16, 24, 24 + MediaQuery.of(context).viewInsets.bottom),
+        decoration: BoxDecoration(
+          color: colors.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 44,
+              height: 4,
+              decoration: BoxDecoration(
+                color: colors.borderVariant,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Select Timezone',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: colors.text,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: Icon(Icons.close, color: colors.text),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+            Text(
+              'Dates and times across the app will use this zone.',
+              style: TextStyle(fontSize: 12.5, color: colors.textSecondary),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                color: colors.surfaceVariant,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  border: InputBorder.none,
+                  hintText: 'Search timezone...',
+                  prefixIcon: Icon(Icons.search, color: colors.textSecondary),
+                ),
+                onChanged: (value) => setState(() => _query = value),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: filtered.isEmpty
+                  ? Center(
+                      child: Text(
+                        'No timezones found',
+                        style: TextStyle(color: colors.textSecondary),
+                      ),
+                    )
+                  : ListView.separated(
+                      itemCount: filtered.length,
+                      separatorBuilder: (_, __) => Divider(color: colors.border, height: 1),
+                      itemBuilder: (context, index) {
+                        final entry = filtered[index];
+                        final name = entry['name'] ?? '';
+                        final label = entry['label'] ?? name;
+                        final selected = name == widget.selected;
+                        return ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          title: Text(
+                            name,
+                            style: TextStyle(
+                              color: selected ? colors.primary : colors.text,
+                              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                            ),
+                          ),
+                          subtitle: name == label
+                              ? null
+                              : Text(
+                                  label,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: colors.textSecondary,
+                                  ),
+                                ),
+                          trailing: selected
+                              ? Icon(Icons.check_circle, color: colors.primary)
+                              : null,
+                          onTap: widget.saving ? null : () => widget.onSelected(name),
+                        );
+                      },
+                    ),
+            ),
+          ],
         ),
       ),
     );

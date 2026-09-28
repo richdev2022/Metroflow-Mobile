@@ -6,6 +6,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../services/mediasoup_room_service.dart';
 import '../services/socket_service.dart';
 import '../services/api.dart' show StorageService;
+import '../utils/app_feedback.dart';
 import '../utils/logger.dart';
 
 class VideoCallScreen extends StatefulWidget {
@@ -141,6 +142,14 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   int? _multiDeviceCount;
   String? _multiDeviceMessage;
 
+  // Waiting room (rooms with waiting_room_enabled): while parked, mediasoup
+  // is NOT started — only after the host admits us.
+  bool _isWaitingForAdmission = false;
+  bool _waitedLong = false;
+  Timer? _waitingHintTimer;
+  void Function(dynamic)? _previousWaitingAdmittedHandler;
+  void Function(dynamic)? _previousWaitingDeniedHandler;
+
   // Live duration tracking: elapsed since joining + plan cap remaining.
   Timer? _elapsedTicker;
   int _elapsedSeconds = 0;
@@ -181,37 +190,89 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     await _screenRenderer.initialize();
     _wireRoomEvents();
 
-    try {
-      if (widget.isMeeting) {
-        _socket.emitMeetingJoin({
-          'meetingId': widget.roomId,
-          'userId': _resolvedUserId,
-          'userName': _resolvedUserName,
-          'isHost': false,
-        });
-      } else {
-        // CRITICAL for calls: the socket must join the server-side room
-        // (`room:{id}`) — without `call:join` no mediasoup events (newProducer,
-        // participant-joined, ...) are ever delivered and remote media stays
-        // blank. Meetings join via `meeting:join` instead.
-        _socket.emitCallJoin({
-          'roomId': widget.roomId,
-          'userId': _resolvedUserId,
-          'userName': _resolvedUserName,
-          'isHost': _isCallHost,
-          'audioEnabled': _isAudioEnabled,
-          'videoEnabled': _isVideoEnabled,
-        });
-      }
+    if (widget.isMeeting) {
+      _socket.emitMeetingJoin({
+        'meetingId': widget.roomId,
+        'userId': _resolvedUserId,
+        'userName': _resolvedUserName,
+        'isHost': false,
+      });
+      await _startMediasoupSession();
+      return;
+    }
 
+    // Calls join with an ack so the server can park us in the waiting room
+    // (rooms with waiting_room_enabled) instead of letting us straight in.
+    await _joinCallRoom();
+  }
+
+  /// Call-side join with waiting-room support:
+  /// 1. emit `call:join` (with `waitingRoomSupport: true`) and read the ack;
+  /// 2. ack `waitingRoom: true` → show the waiting overlay, (re-)enqueue via
+  ///    `waiting-room:request`, and wait for `waiting-room:admitted` (→
+  ///    re-join) or `waiting-room:denied` (→ leave);
+  /// 3. otherwise → start the mediasoup session immediately.
+  Future<void> _joinCallRoom() async {
+    final payload = <String, dynamic>{
+      'roomId': widget.roomId,
+      'userId': _resolvedUserId,
+      'userName': _resolvedUserName,
+      'isHost': _isCallHost,
+      'audioEnabled': _isAudioEnabled,
+      'videoEnabled': _isVideoEnabled,
+    };
+
+    dynamic ack;
+    var ackFailed = false;
+    try {
+      ack = await _socket.emitCallJoinWithAck(payload);
+    } catch (e) {
+      // No ack (socket hiccup / very old backend). Fall back to the legacy
+      // fire-and-forget join so an ack outage can never trap users outside
+      // the room — the server join handler is idempotent.
+      ackFailed = true;
+      Logger.error('call:join ack unavailable, continuing without it: $e');
+    }
+
+    if (!ackFailed && ack is Map) {
+      if (ack['waitingRoom'] == true) {
+        _enterWaitingRoom();
+        return;
+      }
+      if (ack['success'] == false) {
+        // Server explicitly refused (room not found / ended / ...).
+        Logger.error('call:join refused: ${ack['error']}');
+        if (!mounted) return;
+        setState(() {
+          _isConnecting = false;
+          _connectionLabel = 'Unable to join';
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(ack['error']?.toString() ?? 'Unable to join the call')),
+        );
+        return;
+      }
+    }
+
+    if (ackFailed) {
+      _socket.emitCallJoin(payload);
+    }
+    await _startMediasoupSession();
+  }
+
+  /// The normal mediasoup start sequence (device load → transports →
+  /// produce → consume existing). Shared by both join paths: straight-in and
+  /// post-admission.
+  Future<void> _startMediasoupSession() async {
+    try {
       final room = MediasoupRoomService(
         roomId: widget.roomId,
         socket: _socket,
         produceAudio: true,
         produceVideo: widget.enableVideo,
-        onConnectionStateChanged: (state) {
+        onConnectionStateChanged: (connectionState) {
           if (!mounted) return;
-          setState(() => _connectionLabel = state);
+          setState(() => _connectionLabel = connectionState);
         },
         onRemoteStream: _addRemoteStream,
         onRemoteStreamRemoved: _removeRemoteStream,
@@ -248,6 +309,173 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         SnackBar(content: Text('Unable to connect media: $e')),
       );
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Waiting room (rooms with waiting_room_enabled, non-host joiners)
+  // -------------------------------------------------------------------------
+
+  void _enterWaitingRoom() {
+    if (!mounted) return;
+    _previousWaitingAdmittedHandler = _socket.onWaitingRoomAdmitted;
+    _previousWaitingDeniedHandler = _socket.onWaitingRoomDenied;
+    _socket.onWaitingRoomAdmitted = _handleWaitingAdmitted;
+    _socket.onWaitingRoomDenied = _handleWaitingDenied;
+    setState(() {
+      _isWaitingForAdmission = true;
+      _waitedLong = false;
+      _isConnecting = false;
+      _connectionLabel = 'Waiting for the host…';
+    });
+    // Belt & braces: explicitly (re-)enqueue ourselves in case the join-time
+    // queue entry was lost (reconnect, race with the host's queue sync).
+    _socket.emitWaitingRoomRequest({
+      'roomId': widget.roomId,
+      'userId': _resolvedUserId,
+      'userName': _resolvedUserName,
+    });
+    // Long-wait hint after 2 minutes — we keep waiting, never auto-leave.
+    _waitingHintTimer = Timer(const Duration(minutes: 2), () {
+      if (mounted && _isWaitingForAdmission) {
+        setState(() => _waitedLong = true);
+      }
+    });
+  }
+
+  void _clearWaitingRoom() {
+    _waitingHintTimer?.cancel();
+    _waitingHintTimer = null;
+    _socket.onWaitingRoomAdmitted = _previousWaitingAdmittedHandler;
+    _socket.onWaitingRoomDenied = _previousWaitingDeniedHandler;
+    _previousWaitingAdmittedHandler = null;
+    _previousWaitingDeniedHandler = null;
+    if (mounted && _isWaitingForAdmission) {
+      setState(() => _isWaitingForAdmission = false);
+    }
+  }
+
+  /// Host admitted us — dismiss the overlay and run the normal join again.
+  /// This time the server consumes the admission grant and lets us through
+  /// into the mediasoup room.
+  void _handleWaitingAdmitted(dynamic data) {
+    _previousWaitingAdmittedHandler?.call(data);
+    if (data is! Map) return;
+    final payload = Map<String, dynamic>.from(data);
+    final roomId = (payload['roomId'] ?? payload['meetingId'])?.toString();
+    if (roomId != null && roomId.isNotEmpty && roomId != widget.roomId) return;
+    _clearWaitingRoom();
+    _joinCallRoom();
+  }
+
+  /// Host declined — tell the user and leave.
+  void _handleWaitingDenied(dynamic data) {
+    _previousWaitingDeniedHandler?.call(data);
+    if (data is! Map) return;
+    final payload = Map<String, dynamic>.from(data);
+    final roomId = (payload['roomId'] ?? payload['meetingId'])?.toString();
+    if (roomId != null && roomId.isNotEmpty && roomId != widget.roomId) return;
+    _clearWaitingRoom();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Host declined your request')),
+    );
+    _leave();
+  }
+
+  /// Waiting-room overlay: elegant spinner + room name + cancel/leave.
+  Widget _buildWaitingRoomOverlay() {
+    return Positioned.fill(
+      child: Container(
+        color: const Color(0xFF05070D),
+        child: SafeArea(
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 76,
+                    height: 76,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        const SizedBox(
+                          width: 76,
+                          height: 76,
+                          child: CircularProgressIndicator(
+                            color: Color(0x33FFFFFF),
+                            strokeWidth: 3,
+                          ),
+                        ),
+                        const SizedBox(
+                          width: 46,
+                          height: 46,
+                          child: CircularProgressIndicator(
+                            color: Color(0xFF22C55E),
+                            strokeWidth: 3,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 26),
+                  const Text(
+                    'Waiting for the host to admit you',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    widget.title,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.6),
+                      fontSize: 13,
+                    ),
+                  ),
+                  if (_waitedLong) ...[
+                    const SizedBox(height: 14),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF451A03).withValues(alpha: 0.9),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(color: const Color(0xFFF59E0B).withValues(alpha: 0.5)),
+                      ),
+                      child: const Text(
+                        'Still waiting… the host has been notified.',
+                        style: TextStyle(color: Color(0xFFFBBF24), fontSize: 12.5),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 34),
+                  OutlinedButton.icon(
+                    onPressed: _leave,
+                    icon: const Icon(Icons.call_end, size: 18),
+                    label: const Text('Cancel & leave'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white70,
+                      side: BorderSide(color: Colors.white.withValues(alpha: 0.25)),
+                      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   void _wireRoomEvents() {
@@ -325,6 +553,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       if (endedCallId != null && endedCallId != widget.roomId) return;
       if (_hasLeft) return;
       if (!mounted) return;
+      AppFeedback.playCallEndedSound();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Call ended')),
       );
@@ -431,6 +660,10 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _socket.onCallDurationActive = _previousDurationActiveHandler;
     _socket.onCallMultiDevice = _previousMultiDeviceHandler;
     _socket.onCallCountdownWarning = _previousCountdownWarnHandler;
+    _socket.onWaitingRoomAdmitted = _previousWaitingAdmittedHandler;
+    _socket.onWaitingRoomDenied = _previousWaitingDeniedHandler;
+    _waitingHintTimer?.cancel();
+    _waitingHintTimer = null;
     _elapsedTicker?.cancel();
     _elapsedTicker = null;
 
@@ -545,6 +778,13 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     if (_hasLeft) return;
     _hasLeft = true;
 
+    // Leaving from the waiting room is NOT leaving the call: we were never
+    // added to the room, so we must not end it for everybody else.
+    final wasWaitingInRoom = _isWaitingForAdmission;
+    _clearWaitingRoom();
+    // Stop any ringback that may still be looping (outbound calls).
+    AppFeedback.stopRingback();
+
     // POP FIRST: previously we awaited onLeave (a REST call that could throw,
     // e.g. joining with an empty id) before popping, which trapped the user on
     // a dead call screen with canPop:false. Navigation must never depend on a
@@ -565,9 +805,10 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         });
         // End the call for everyone ONLY when it makes sense: 1:1 calls or the
         // host leaving. In group calls a single participant leaving must not
-        // kill the call for everybody else.
+        // kill the call for everybody else — and someone leaving from the
+        // waiting room was never in the call at all.
         final isOneToOne = !widget.isGroupCall;
-        if (_isCallHost || isOneToOne) {
+        if (!wasWaitingInRoom && (_isCallHost || isOneToOne)) {
           _socket.emitCallEnd({'callId': widget.roomId});
         }
       }
@@ -664,6 +905,9 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
               right: 0,
               child: _buildControls(),
             ),
+            // Waiting room (rooms with waiting_room_enabled): covers everything
+            // until the host admits us (or we cancel & leave).
+            if (_isWaitingForAdmission) _buildWaitingRoomOverlay(),
           ],
         ),
       ),

@@ -8,6 +8,7 @@ import '../services/api.dart';
 import '../services/socket_service.dart';
 import '../models/call.dart';
 import '../models/user.dart';
+import '../providers/call_provider.dart';
 import '../theme/app_theme.dart';
 import '../utils/logger.dart';
 import '../widgets/modern_ui.dart';
@@ -201,6 +202,10 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
           setState(() {
             _upsertCall(call);
           });
+          // We are now DIALING OUT: loop the ringback until someone accepts
+          // (call:accepted), declines (call:rejected), the call ends, or we
+          // leave the room (see CallNotifier.stopOutboundRing).
+          ref.read(callProvider.notifier).startOutboundRing(call.id);
           _openCallModal(call);
         },
       ),
@@ -242,6 +247,9 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
           isGroupCall: updatedCall.isGroupCall,
           onLeave: () => _leaveCall(updatedCall.id),
         );
+        // Modal closed → we left the room. Make sure the outbound ringback
+        // is silenced even if no call:accepted/rejected/ended arrived.
+        if (mounted) ref.read(callProvider.notifier).stopOutboundRing();
       }
     } catch (e) {
       // Password-protected call → prompt and retry with the entered password
