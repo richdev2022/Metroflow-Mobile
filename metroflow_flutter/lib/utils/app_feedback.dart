@@ -34,7 +34,9 @@ class AppFeedback {
   /// Audio session config for looping rings: do NOT steal audio focus so the
   /// ring plays even during other audio. Wrapped in try/catch at every use —
   /// platform quirks must never crash the app.
-  static AudioContext get _ringAudioContext => const AudioContext(
+  // NOTE: AudioContext's constructor is NOT const in audioplayers 6.x, so
+  // this getter constructs a fresh instance each call (cheap, config-only).
+  static AudioContext get _ringAudioContext => AudioContext(
         android: AudioContextAndroid(
           audioFocus: AndroidAudioFocus.none,
           contentType: AndroidContentType.music,

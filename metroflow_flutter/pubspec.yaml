@@ -36,7 +36,7 @@ dependencies:
   timezone: ^0.9.4
   flutter_webrtc: ^1.5.2
   audioplayers: ^6.1.0
-  record: ^5.1.2
+  record: ^7.1.1
   google_sign_in: ^6.2.1
   flutter_secure_storage: ^9.2.2
   mediasoup_client_flutter:

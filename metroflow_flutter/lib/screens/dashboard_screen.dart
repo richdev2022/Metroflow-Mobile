@@ -1925,7 +1925,7 @@ class _WeeklyActivityCard extends StatelessWidget {
               BarChartData(
                 alignment: BarChartAlignment.spaceAround,
                 maxY: maxY,
-                barTouchData: const BarTouchData(enabled: false),
+                barTouchData: BarTouchData(enabled: false),
                 gridData: const FlGridData(show: false),
                 borderData: FlBorderData(show: false),
                 titlesData: FlTitlesData(
