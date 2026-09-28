@@ -5,6 +5,7 @@ import '../services/api.dart';
 import '../models/employee.dart';
 import '../models/bank.dart';
 import '../theme/app_theme.dart';
+import '../utils/app_timezone.dart';
 import '../utils/app_toast.dart';
 import '../widgets/modern_ui.dart';
 
@@ -445,6 +446,14 @@ class _PayrollScreenState extends State<PayrollScreen> {
     return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
   }
 
+  /// Render the raw custom-payroll datetime (local ISO string) in the
+  /// business timezone, e.g. "Jan 15, 2026, 3:45 PM".
+  String _formatCustomPayrollDate(String raw) {
+    final dt = AppTimezone.tryParse(raw);
+    if (dt == null) return raw;
+    return AppTimezone.instance.formatDateTime(dt);
+  }
+
   Future<void> _selectPayrollStartDate() async {
     final picked = await showDatePicker(
       context: context,
@@ -812,7 +821,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
                                 border: OutlineInputBorder(),
                                 suffixIcon: Icon(Icons.calendar_today_outlined),
                               ),
-                              child: Text(_salaryCustomDate.isEmpty ? 'Select date & time' : _salaryCustomDate),
+                              child: Text(_salaryCustomDate.isEmpty ? 'Select date & time' : _formatCustomPayrollDate(_salaryCustomDate)),
                             ),
                           ),
                         ],
@@ -1498,7 +1507,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
                       const SizedBox(width: 8),
                       Flexible(
                         child: Text(
-                          _salaryCustomDate,
+                          _formatCustomPayrollDate(_salaryCustomDate),
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             fontSize: 11.5,

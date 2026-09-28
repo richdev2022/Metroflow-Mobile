@@ -6,6 +6,8 @@ import '../theme/app_theme.dart';
 import '../services/api.dart';
 import '../models/task.dart';
 import '../models/epic.dart';
+import '../providers/auth_provider.dart';
+import '../utils/app_timezone.dart';
 import '../widgets/modern_ui.dart';
 import 'bulk_create_tasks_screen.dart';
 
@@ -23,6 +25,7 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
   bool isRefreshing = false;
   String selectedStatus = 'all';
   String selectedEpic = 'all';
+  String _quickFilter = 'all';
   String searchQuery = '';
   List<String> selectedTasks = [];
   bool isSelectionMode = false;
@@ -200,13 +203,48 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
   }
 
   List<Task> get filteredTasks {
+    final userId = ref.read(authProvider).userId;
+    final todayKey = AppTimezone.instance.todayKey();
     return tasks.where((task) {
       final matchesEpic = selectedEpic == 'all' || task.epicId == selectedEpic;
       final matchesSearch = searchQuery.isEmpty ||
           task.title.toLowerCase().contains(searchQuery.toLowerCase()) ||
           (task.description?.toLowerCase().contains(searchQuery.toLowerCase()) ?? false);
-      return matchesEpic && matchesSearch;
+
+      // Quick filters are evaluated client-side over the loaded tasks.
+      bool matchesQuick = true;
+      switch (_quickFilter) {
+        case 'my':
+          matchesQuick = userId != null &&
+              userId.isNotEmpty &&
+              (task.assignedTo?.contains(userId) ?? false);
+          break;
+        case 'overdue':
+          matchesQuick = _isTaskOverdue(task, todayKey);
+          break;
+        case 'completed':
+          matchesQuick = task.status == 'completed';
+          break;
+        default:
+          matchesQuick = true;
+      }
+
+      return matchesEpic && matchesSearch && matchesQuick;
     }).toList();
+  }
+
+  bool _isTaskOverdue(Task task, DateTime todayKey) {
+    if (task.status == 'completed') return false;
+    if (task.isOverdue) return true;
+    final due = AppTimezone.tryParse(task.dueDate ?? task.endDate);
+    if (due == null) return false;
+    final dueKey = AppTimezone.instance.dateKeyIn(due);
+    return dueKey.isBefore(todayKey);
+  }
+
+  int get _overdueCount {
+    final todayKey = AppTimezone.instance.todayKey();
+    return tasks.where((task) => _isTaskOverdue(task, todayKey)).length;
   }
 
   String get selectedEpicLabel {
@@ -223,6 +261,21 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
         _TaskFilterOption(value: 'in_progress', label: 'In Progress'),
         _TaskFilterOption(value: 'completed', label: 'Completed'),
       ];
+
+  List<_QuickFilterOption> get _quickFilterOptions {
+    return [
+      const _QuickFilterOption(value: 'all', label: 'All', icon: Icons.apps_rounded),
+      const _QuickFilterOption(value: 'my', label: 'My Tasks', icon: Icons.person_outline_rounded),
+      _QuickFilterOption(
+        value: 'overdue',
+        label: 'Overdue',
+        icon: Icons.error_outline_rounded,
+        tint: AppTheme.colors.error,
+        count: _overdueCount,
+      ),
+      const _QuickFilterOption(value: 'completed', label: 'Completed', icon: Icons.check_circle_outline_rounded),
+    ];
+  }
 
   List<_TaskFilterOption> get _epicOptions => [
         const _TaskFilterOption(value: 'all', label: 'All Epics'),
@@ -303,22 +356,23 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
   }
 
   String formatDate(String dateString) {
-    try {
-      final date = DateTime.parse(dateString).toLocal();
-      return '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
-    } catch (e) {
-      return dateString;
-    }
+    final dt = AppTimezone.tryParse(dateString);
+    if (dt == null) return dateString;
+    return AppTimezone.instance.formatDate(dt);
   }
 
-  IconData _statusIcon(String status) {
+  String _statusLabel(String status) {
     switch (status) {
       case 'completed':
-        return Icons.check_circle_outline_rounded;
+        return 'Completed';
       case 'in_progress':
-        return Icons.autorenew_rounded;
+        return 'In Progress';
+      case 'pending':
+        return 'Pending';
       default:
-        return Icons.radio_button_unchecked_rounded;
+        return status.isEmpty
+            ? 'Pending'
+            : status[0].toUpperCase() + status.substring(1);
     }
   }
 
@@ -478,6 +532,25 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
                       },
               ),
             ),
+            // Quick filters — client-side over loaded tasks.
+            SizedBox(
+              height: 40,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
+                itemCount: _quickFilterOptions.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (context, index) {
+                  final option = _quickFilterOptions[index];
+                  return _QuickFilterChip(
+                    option: option,
+                    selected: _quickFilter == option.value,
+                    onTap: () => setState(() => _quickFilter = option.value),
+                  );
+                },
+              ),
+            ),
+            // Server-driven status + epic filters.
             SizedBox(
               height: 44,
               child: ListView.separated(
@@ -500,12 +573,18 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 6),
-              child: _TaskFilterDropdown(
-                label: 'Epic',
-                valueLabel: selectedEpicLabel,
-                options: _epicOptions,
-                selectedValue: selectedEpic,
-                onSelected: (value) => setState(() => selectedEpic = value),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _TaskFilterDropdown(
+                      label: 'Epic',
+                      valueLabel: selectedEpicLabel,
+                      options: _epicOptions,
+                      selectedValue: selectedEpic,
+                      onSelected: (value) => setState(() => selectedEpic = value),
+                    ),
+                  ),
+                ],
               ),
             ),
             Expanded(
@@ -518,12 +597,28 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
                         children: [
                           const SizedBox(height: 40),
                           EmptyState(
-                            icon: Icons.list_alt_outlined,
-                            title: 'No tasks found',
-                            subtitle:
-                                'Try a different filter, or create a task to get your team moving.',
-                            actionLabel: 'New Task',
-                            onAction: () => context.go('/main/create-task'),
+                            icon: tasks.isEmpty
+                                ? Icons.task_outlined
+                                : Icons.filter_alt_off_outlined,
+                            title: tasks.isEmpty
+                                ? 'No tasks yet'
+                                : 'No matching tasks',
+                            subtitle: tasks.isEmpty
+                                ? 'Create your first task and get your team moving.'
+                                : 'Nothing matches the current filters. Try clearing them or searching for something else.',
+                            actionLabel: tasks.isEmpty
+                                ? 'New Task'
+                                : (_quickFilter != 'all' || selectedEpic != 'all'
+                                    ? 'Clear Filters'
+                                    : null),
+                            onAction: tasks.isEmpty
+                                ? () => context.go('/main/create-task')
+                                : (_quickFilter != 'all' || selectedEpic != 'all'
+                                    ? () => setState(() {
+                                          _quickFilter = 'all';
+                                          selectedEpic = 'all';
+                                        })
+                                    : null),
                           ),
                         ],
                       )
@@ -560,8 +655,8 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
                               isSelected: isSelected,
                               isSelectionMode: isSelectionMode,
                               statusColor: statusColor,
-                              statusIcon: _statusIcon(status),
-                              formattedDate: formatDate(task.endDate),
+                              statusLabel: _statusLabel(status),
+                              formattedDate: formatDate(task.dueDate ?? task.endDate),
                               epicLabel: task.epic,
                               onToggle: () => toggleTaskSelection(task.id),
                             ),
@@ -583,7 +678,7 @@ class _TaskCard extends StatelessWidget {
   final bool isSelected;
   final bool isSelectionMode;
   final Color statusColor;
-  final IconData statusIcon;
+  final String statusLabel;
   final String formattedDate;
   final String? epicLabel;
   final VoidCallback onToggle;
@@ -594,7 +689,7 @@ class _TaskCard extends StatelessWidget {
     required this.isSelected,
     required this.isSelectionMode,
     required this.statusColor,
-    required this.statusIcon,
+    required this.statusLabel,
     required this.formattedDate,
     required this.epicLabel,
     required this.onToggle,
@@ -603,7 +698,7 @@ class _TaskCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
         color: isSelected ? colors.primary.withValues(alpha: 0.08) : colors.surface,
         borderRadius: BorderRadius.circular(16),
@@ -630,152 +725,296 @@ class _TaskCard extends StatelessWidget {
               // Status color leading bar
               Container(width: 5, color: statusColor),
               Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (isSelectionMode)
-                          GestureDetector(
-                            onTap: onToggle,
-                            child: Padding(
-                              padding: const EdgeInsets.only(right: 10, top: 1),
-                              child: Icon(
-                                isSelected
-                                    ? Icons.check_box_rounded
-                                    : Icons.check_box_outline_blank_rounded,
-                                color:
-                                    isSelected ? colors.primary : colors.borderVariant,
-                                size: 21,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (isSelectionMode)
+                            GestureDetector(
+                              onTap: onToggle,
+                              child: Padding(
+                                padding: const EdgeInsets.only(right: 10, top: 1),
+                                child: Icon(
+                                  isSelected
+                                      ? Icons.check_box_rounded
+                                      : Icons.check_box_outline_blank_rounded,
+                                  color:
+                                      isSelected ? colors.primary : colors.borderVariant,
+                                  size: 21,
+                                ),
                               ),
                             ),
-                          )
-                        else
-                          Padding(
-                            padding: const EdgeInsets.only(right: 10, top: 1),
-                            child: Icon(
-                              statusIcon,
-                              color: statusColor,
-                              size: 19,
+                          Expanded(
+                            child: Text(
+                              task.title,
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                                color: colors.text,
+                                height: 1.25,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
-                        Expanded(
+                          const SizedBox(width: 8),
+                          // Status pill with dot indicator
+                          _StatusPill(
+                            label: statusLabel,
+                            color: statusColor,
+                          ),
+                        ],
+                      ),
+                      if (task.description != null && task.description!.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 5),
                           child: Text(
-                            task.title,
+                            task.description!,
                             style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
-                              color: colors.text,
+                              fontSize: 13,
+                              color: colors.textSecondary,
+                              height: 1.3,
                             ),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                      ],
-                    ),
-                    if (task.description != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 6, left: 29),
-                        child: Text(
-                          task.description!,
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: colors.textSecondary,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    const SizedBox(height: 10),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Expanded(
-                          child: Wrap(
-                            spacing: 8,
-                            runSpacing: 6,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              if (epicLabel != null && epicLabel!.isNotEmpty)
-                                ModernBadge(
-                                  label: epicLabel!,
-                                  color: colors.primary,
-                                  icon: Icons.folder_outlined,
-                                ),
-                              ModernBadge(
-                                label: task.isOverdue
-                                    ? 'Overdue · $formattedDate'
-                                    : 'Due $formattedDate',
-                                color: task.isOverdue ? colors.error : colors.textSecondary,
-                                icon: Icons.schedule,
-                              ),
-                            ],
-                          ),
-                        ),
-                        if (task.assignedTo != null && task.assignedTo!.isNotEmpty)
-                          SizedBox(
-                            width: 66,
-                            height: 26,
-                            child: Stack(
-                              clipBehavior: Clip.none,
+                      const SizedBox(height: 9),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Expanded(
+                            child: Wrap(
+                              spacing: 8,
+                              runSpacing: 6,
+                              crossAxisAlignment: WrapCrossAlignment.center,
                               children: [
-                                for (int i = 0;
-                                    i < task.assignedTo!.length && i < 2;
-                                    i++)
-                                  Positioned(
-                                    left: i * 18.0,
-                                    child: Container(
-                                      width: 26,
-                                      height: 26,
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        border: Border.all(
-                                            color: colors.surface, width: 2),
-                                      ),
-                                      child: AvatarInitials(
-                                        name: task.assignedTo![i],
-                                        radius: 12,
-                                      ),
-                                    ),
+                                if (epicLabel != null && epicLabel!.isNotEmpty)
+                                  ModernBadge(
+                                    label: epicLabel!,
+                                    color: colors.primary,
+                                    icon: Icons.folder_outlined,
                                   ),
-                                if (task.assignedTo!.length > 2)
-                                  Positioned(
-                                    left: 36,
-                                    child: Container(
-                                      width: 26,
-                                      height: 26,
-                                      alignment: Alignment.center,
-                                      decoration: BoxDecoration(
-                                        color: colors.surfaceVariant,
-                                        shape: BoxShape.circle,
-                                        border: Border.all(
-                                            color: colors.surface, width: 2),
-                                      ),
-                                      child: Text(
-                                        '+${task.assignedTo!.length - 2}',
-                                        style: TextStyle(
-                                          fontSize: 9.5,
-                                          fontWeight: FontWeight.w700,
-                                          color: colors.textSecondary,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
+                                // Due date label — red when overdue.
+                                ModernBadge(
+                                  label: task.isOverdue
+                                      ? 'Overdue · $formattedDate'
+                                      : 'Due $formattedDate',
+                                  color: task.isOverdue ? colors.error : colors.textSecondary,
+                                  icon: Icons.schedule,
+                                ),
                               ],
                             ),
                           ),
-                      ],
-                    ),
-                  ],
+                          if (task.assignedTo != null && task.assignedTo!.isNotEmpty) ...[
+                            const SizedBox(width: 8),
+                            _AssigneeStack(
+                              assignees: task.assignedTo!,
+                              colors: colors,
+                            ),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Small rounded status pill with a colored dot indicator.
+class _StatusPill extends StatelessWidget {
+  final String label;
+  final Color color;
+
+  const _StatusPill({required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Compact overlapping avatars for a task's assignees.
+class _AssigneeStack extends StatelessWidget {
+  final List<String> assignees;
+  final ThemeColors colors;
+
+  const _AssigneeStack({required this.assignees, required this.colors});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 66,
+      height: 26,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          for (int i = 0; i < assignees.length && i < 2; i++)
+            Positioned(
+              left: i * 18.0,
+              child: Container(
+                width: 26,
+                height: 26,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: colors.surface, width: 2),
+                ),
+                child: AvatarInitials(
+                  name: assignees[i],
+                  radius: 12,
                 ),
               ),
             ),
+          if (assignees.length > 2)
+            Positioned(
+              left: 36,
+              child: Container(
+                width: 26,
+                height: 26,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: colors.surfaceVariant,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: colors.surface, width: 2),
+                ),
+                child: Text(
+                  '+${assignees.length - 2}',
+                  style: TextStyle(
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w700,
+                    color: colors.textSecondary,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuickFilterOption {
+  final String value;
+  final String label;
+  final IconData icon;
+  final Color? tint;
+  final int count;
+
+  const _QuickFilterOption({
+    required this.value,
+    required this.label,
+    required this.icon,
+    this.tint,
+    this.count = 0,
+  });
+}
+
+/// Quick filter chip (All / My Tasks / Overdue / Completed) with an optional
+/// count bubble.
+class _QuickFilterChip extends StatelessWidget {
+  final _QuickFilterOption option;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _QuickFilterChip({
+    required this.option,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppTheme.colors;
+    final accent = option.tint ?? colors.primary;
+    final showCount = option.count > 0;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(
+          color: selected ? accent.withValues(alpha: 0.12) : colors.surface,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: selected ? accent : colors.border,
+            width: selected ? 1.4 : 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              option.icon,
+              size: 15,
+              color: selected ? accent : colors.textSecondary,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              option.label,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: selected ? accent : colors.textSecondary,
+              ),
+            ),
+            if (showCount) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(
+                  color: selected
+                      ? accent
+                      : accent.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  '${option.count}',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: selected ? Colors.white : accent,
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
-      ),
       ),
     );
   }

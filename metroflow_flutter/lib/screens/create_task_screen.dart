@@ -8,6 +8,7 @@ import '../models/epic.dart';
 import '../models/task.dart';
 import '../models/team_member.dart';
 import '../theme/app_theme.dart';
+import '../widgets/modern_ui.dart';
 
 class CreateTaskScreen extends ConsumerStatefulWidget {
   const CreateTaskScreen({super.key});
@@ -42,6 +43,7 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
   Task? _editingTask;
   bool _didLoadRouteTask = false;
   bool _isMultiTaskMode = false;
+  String? _titleError;
 
   @override
   void initState() {
@@ -167,8 +169,13 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
       // Single task mode
       final title = _titleController.text.trim();
       if (title.isEmpty) {
+        // Inline validation error under the title field.
+        setState(() => _titleError = 'Task title is required');
         Fluttertoast.showToast(msg: 'Please enter a task title');
         return;
+      }
+      if (_titleError != null) {
+        setState(() => _titleError = null);
       }
 
       setState(() => _isLoading = true);
@@ -250,12 +257,135 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Epic Details
+        // Epic context
         _buildEpicDetailsSection(colors),
-        const SizedBox(height: 24),
-        // Task Details
-        _buildTaskDetailsSection(colors),
+        const SizedBox(height: 16),
+        // Details group: title + description + images
+        _buildFormSection(
+          colors,
+          title: 'Details',
+          icon: Icons.edit_note_outlined,
+          subtitle: 'What needs to get done',
+          children: [
+            _buildField(
+              'Title',
+              _titleController,
+              hint: 'Task title',
+              colors: colors,
+              errorText: _titleError,
+              onChanged: (_) {
+                if (_titleError != null) setState(() => _titleError = null);
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildField('Description', _descriptionController, hint: 'Task description', maxLines: 4, colors: colors),
+            const SizedBox(height: 12),
+            _buildImagePicker(colors),
+          ],
+        ),
+        const SizedBox(height: 16),
+        // Schedule group: start & end dates
+        _buildFormSection(
+          colors,
+          title: 'Schedule',
+          icon: Icons.event_outlined,
+          subtitle: 'When the work happens',
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: _buildDateField('Start Date', _startDateController, colors: colors),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildDateField('End Date', _endDateController, colors: colors),
+                ),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        // Assignees group
+        _buildFormSection(
+          colors,
+          title: 'Assignees',
+          icon: Icons.group_add_outlined,
+          subtitle: 'Overrides the epic-level assignment',
+          children: [
+            _buildPickerField(
+              label: 'Team Members',
+              value: _getSelectedTaskAssigneesText(),
+              isPlaceholder: _taskAssignedToIds.isEmpty,
+              onTap: () => _showTeamMemberPicker(
+                _taskAssignedToIds,
+                (updated) {
+                  setState(() {
+                    _taskAssignedToIds.clear();
+                    _taskAssignedToIds.addAll(updated);
+                  });
+                },
+              ),
+              colors: colors,
+            ),
+          ],
+        ),
       ],
+    );
+  }
+
+  /// Grouped form section: icon + title header inside a rounded card, with
+  /// consistent spacing between fields.
+  Widget _buildFormSection(
+    ThemeColors colors, {
+    required String title,
+    required IconData icon,
+    required List<Widget> children,
+    String? subtitle,
+  }) {
+    return ModernCard(
+      margin: EdgeInsets.zero,
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              TintedCircleIcon(
+                icon: icon,
+                tint: colors.primary,
+                size: 30,
+                iconSize: 15,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w700,
+                    color: colors.text,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (subtitle != null) ...[
+            const SizedBox(height: 3),
+            Padding(
+              padding: const EdgeInsets.only(left: 40),
+              child: Text(
+                subtitle,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  color: colors.textSecondary,
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(height: 14),
+          ...children,
+        ],
+      ),
     );
   }
 
@@ -273,31 +403,19 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
   }
 
   Widget _buildEpicDetailsSection(ThemeColors colors) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return _buildFormSection(
+      colors,
+      title: 'Epic',
+      icon: Icons.folder_special_outlined,
+      subtitle: 'Group this work under an epic (optional)',
       children: [
-        Text(
-          'Epic Details',
-          style: TextStyle(
-            color: colors.text,
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 16),
         _buildEpicDropdown(colors),
         const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: _buildField(
-                'Sprint',
-                _sprintController,
-                hint: 'Enter sprint name',
-                colors: colors,
-              ),
-            ),
-          ],
+        _buildField(
+          'Sprint',
+          _sprintController,
+          hint: 'Enter sprint name',
+          colors: colors,
         ),
         const SizedBox(height: 12),
         Row(
@@ -618,47 +736,6 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
           );
         },
       ),
-    );
-  }
-
-  Widget _buildTaskDetailsSection(ThemeColors colors) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildField('Title', _titleController, hint: 'Task title', colors: colors),
-        const SizedBox(height: 12),
-        _buildField('Description', _descriptionController, hint: 'Task description', maxLines: 4, colors: colors),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: _buildDateField('Start Date', _startDateController, colors: colors),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildDateField('End Date', _endDateController, colors: colors),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        _buildPickerField(
-          label: 'Assign Team Members (Override Epic Assignment)',
-          value: _getSelectedTaskAssigneesText(),
-          isPlaceholder: _taskAssignedToIds.isEmpty,
-          onTap: () => _showTeamMemberPicker(
-            _taskAssignedToIds,
-            (updated) {
-              setState(() {
-                _taskAssignedToIds.clear();
-                _taskAssignedToIds.addAll(updated);
-              });
-            },
-          ),
-          colors: colors,
-        ),
-        const SizedBox(height: 12),
-        _buildImagePicker(colors),
-      ],
     );
   }
 
@@ -1072,45 +1149,68 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
   }
 
   Widget _buildBottomButtons(ThemeColors colors) {
-    return Padding(
-      padding: const EdgeInsets.all(16),
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        border: Border(top: BorderSide(color: colors.border)),
+      ),
       child: Row(
         children: [
-          const Spacer(),
-          OutlinedButton(
-            onPressed: () => context.go('/main/backlog'),
-            style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
+          Expanded(
+            child: OutlinedButton(
+              onPressed: () => context.go('/main/backlog'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: colors.textSecondary,
+                side: BorderSide(color: colors.border),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
+              child: const Text('Cancel'),
             ),
-            child: Text('Cancel', style: TextStyle(color: colors.text)),
           ),
           const SizedBox(width: 12),
-          ElevatedButton(
-            onPressed: _isLoading ? null : _handleSubmit,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
+          Expanded(
+            flex: 2,
+            child: ElevatedButton(
+              onPressed: _isLoading ? null : _handleSubmit,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                disabledBackgroundColor: AppColors.primary.withValues(alpha: 0.6),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
-            ),
-            child: _isLoading
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                  )
-                : Text(
-                    _editingTask == null ? 'Create' : 'Save Changes',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
+              child: _isLoading
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                    )
+                  : Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _editingTask == null ? Icons.add_task_outlined : Icons.save_outlined,
+                          size: 18,
+                          color: Colors.white,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _editingTask == null ? 'Create Task' : 'Save Changes',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
+            ),
           ),
         ],
       ),
@@ -1247,7 +1347,15 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
     );
   }
 
-  Widget _buildField(String label, TextEditingController controller, {String? hint, int maxLines = 1, required ThemeColors colors}) {
+  Widget _buildField(
+    String label,
+    TextEditingController controller, {
+    String? hint,
+    int maxLines = 1,
+    required ThemeColors colors,
+    String? errorText,
+    ValueChanged<String>? onChanged,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1256,10 +1364,13 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
         TextField(
           controller: controller,
           maxLines: maxLines,
+          onChanged: onChanged,
           style: TextStyle(color: colors.text),
           decoration: InputDecoration(
             hintText: hint,
             hintStyle: TextStyle(color: colors.textSecondary),
+            errorText: errorText,
+            errorStyle: TextStyle(color: colors.error, fontSize: 11.5),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
               borderSide: BorderSide(color: colors.border),
@@ -1271,6 +1382,10 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
               borderSide: BorderSide(color: colors.primary, width: 2),
+            ),
+            focusedErrorBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide(color: colors.error, width: 2),
             ),
             filled: true,
             fillColor: colors.surfaceVariant,

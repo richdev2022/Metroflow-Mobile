@@ -1,8 +1,13 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:record/record.dart';
+import '../providers/call_provider.dart';
 import '../services/api.dart';
 import '../services/socket_service.dart';
 import '../models/message.dart';
@@ -33,6 +38,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   final StorageService _storage = StorageService();
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final AudioRecorder _voiceRecorder = AudioRecorder();
   List<Message> _messages = [];
   bool _isLoading = true;
   bool _isSending = false;
@@ -40,6 +46,11 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   String? _peerTypingName;
   Timer? _typingDebounce;
   Timer? _typingStopTimer;
+  // Voice-note recording state (see _startVoiceRecording)
+  bool _isRecordingVoice = false;
+  int _recordSeconds = 0;
+  Timer? _recordTimer;
+  String? _recordPath;
   late final void Function(dynamic) _messageCreatedHandler;
   late final void Function(dynamic) _typingHandler;
   late final void Function(dynamic) _stopTypingHandler;
@@ -132,6 +143,11 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       if (data is! Map) return;
       final call = Call.fromJson(Map<String, dynamic>.from(data));
 
+      // We are now DIALING OUT: loop the ringback until the callee accepts
+      // (call:accepted), declines (call:rejected), the call ends, or we leave
+      // the room (see CallNotifier.stopOutboundRing).
+      ref.read(callProvider.notifier).startOutboundRing(call.id);
+
       await _api.joinCall(call.id);
       if (!mounted) return;
       final userName = await _storage.getUserName();
@@ -152,6 +168,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
           }
         },
       );
+      // Modal closed → we left the room; make sure the ringback is silenced.
+      if (mounted) ref.read(callProvider.notifier).stopOutboundRing();
     } catch (e) {
       Logger.error('Error starting call from chat: $e');
       if (mounted) {
@@ -253,8 +271,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     });
   }
 
-  Future<void> _sendMessage() async {
-    final content = _messageController.text.trim();
+  Future<void> _sendMessage({Map<String, dynamic>? overrides}) async {
+    final content = (overrides?['content'] as String?) ?? _messageController.text.trim();
     if (content.isEmpty || _isSending) return;
 
     _typingStopTimer?.cancel();
@@ -267,8 +285,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     try {
       final response = await _api.sendMessage(widget.conversation.id, {
         'content': content,
+        ...?overrides,
       });
-      _messageController.clear();
+      if (overrides == null) _messageController.clear();
       if (response.data['success'] == true && mounted) {
         final message = _extractMessage(response.data);
         setState(() {
@@ -290,6 +309,132 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Voice notes (record → upload → send)
+  // -------------------------------------------------------------------------
+
+  String _formatSeconds(int total) {
+    final m = total ~/ 60;
+    final s = total % 60;
+    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+  }
+
+  /// Start recording a voice note to a temp .m4a file. `hasPermission()` also
+  /// triggers the platform mic-permission dialog on first use (built into the
+  /// record package — no separate permission_handler needed).
+  Future<void> _startVoiceRecording() async {
+    if (_isRecordingVoice || _isSending) return;
+    try {
+      final granted = await _voiceRecorder.hasPermission();
+      if (!granted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('Microphone permission is required for voice notes')),
+          );
+        }
+        return;
+      }
+      final dir = await getTemporaryDirectory();
+      final path = '${dir.path}/voice_note_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      await _voiceRecorder.start(
+        const RecordConfig(
+          encoder: AudioEncoder.aacLc,
+          bitRate: 64000,
+          sampleRate: 44100,
+        ),
+        path: path,
+      );
+      _recordPath = path;
+      _recordSeconds = 0;
+      _recordTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() => _recordSeconds += 1);
+      });
+      if (mounted) setState(() => _isRecordingVoice = true);
+    } catch (e) {
+      Logger.error('Voice recording failed to start: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not start recording')),
+        );
+      }
+    }
+  }
+
+  /// Discard the recording: stop the recorder and delete the temp file.
+  Future<void> _cancelVoiceRecording() async {
+    _recordTimer?.cancel();
+    _recordTimer = null;
+    String? stoppedPath;
+    try {
+      stoppedPath = await _voiceRecorder.stop();
+    } catch (_) {}
+    await _deleteTempRecording(stoppedPath ?? _recordPath);
+    _recordPath = null;
+    _recordSeconds = 0;
+    if (mounted) setState(() => _isRecordingVoice = false);
+  }
+
+  /// Stop recording, upload the clip via POST /chat/media, then send the
+  /// message with attachmentUrl/attachmentType through the normal flow.
+  Future<void> _sendVoiceNote() async {
+    if (_isSending) return;
+    _recordTimer?.cancel();
+    _recordTimer = null;
+    final requestedPath = _recordPath;
+    _recordPath = null;
+    _recordSeconds = 0;
+    setState(() {
+      _isRecordingVoice = false;
+      _isSending = true;
+    });
+    try {
+      String? stoppedPath;
+      try {
+        stoppedPath = await _voiceRecorder.stop();
+      } catch (_) {}
+      final filePath =
+          (stoppedPath != null && stoppedPath.isNotEmpty) ? stoppedPath : requestedPath;
+      if (filePath == null || filePath.isEmpty) {
+        throw const FormatException('Recording was not captured');
+      }
+      final url = await _api.uploadChatMedia(File(filePath));
+      if (url == null || url.isEmpty) {
+        throw const FormatException('Voice note upload failed');
+      }
+      await _sendMessage(overrides: <String, dynamic>{
+        'content': '🎤 Voice note',
+        'attachmentUrl': url,
+        'attachmentType': 'audio',
+      });
+      AppFeedback.playSentSound();
+    } catch (e) {
+      Logger.error('Error sending voice note: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e is FormatException
+                ? e.message
+                : ApiService.extractErrorMessage(e)),
+          ),
+        );
+      }
+    } finally {
+      await _deleteTempRecording(requestedPath);
+      if (mounted) setState(() => _isSending = false);
+    }
+  }
+
+  Future<void> _deleteTempRecording(String? path) async {
+    if (path == null || path.isEmpty) return;
+    try {
+      final file = File(path);
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {}
+  }
+
   @override
   void dispose() {
     if (ChatDetailScreen.activeConversationId == widget.conversation.id) {
@@ -306,6 +451,11 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     }
     _typingDebounce?.cancel();
     _typingStopTimer?.cancel();
+    _recordTimer?.cancel();
+    _recordTimer = null;
+    unawaited(_deleteTempRecording(_recordPath));
+    _recordPath = null;
+    unawaited(_voiceRecorder.dispose());
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -513,67 +663,168 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                 color: colors.surface,
                 border: Border(top: BorderSide(color: colors.border)),
               ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _messageController,
-                      textCapitalization: TextCapitalization.sentences,
-                      minLines: 1,
-                      maxLines: 5,
-                      onChanged: _onTextChanged,
-                      style: TextStyle(color: colors.text, fontSize: 14.5),
-                      decoration: InputDecoration(
-                        hintText: 'Type a message...',
-                        hintStyle: TextStyle(color: colors.textSecondary),
-                        filled: true,
-                        fillColor: colors.surfaceVariant,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(22),
-                          borderSide: BorderSide.none,
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 18, vertical: 11),
-                      ),
-                      onSubmitted: (_) => _sendMessage(),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: _messageController.text.trim().isEmpty
-                            ? [colors.textSecondary.withValues(alpha: 0.5), colors.textSecondary.withValues(alpha: 0.5)]
-                            : [colors.primary, colors.primaryDark],
-                      ),
-                      shape: BoxShape.circle,
-                    ),
-                    child: IconButton(
-                      padding: EdgeInsets.zero,
-                      icon: _isSending
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2, color: Colors.white),
-                            )
-                          : const Icon(Icons.send_rounded,
-                              color: Colors.white, size: 20),
-                      onPressed: _isSending ? null : _sendMessage,
-                    ),
-                  ),
-                ],
-              ),
+              child: _isRecordingVoice
+                  ? _buildRecordingComposer(colors)
+                  : _buildTextComposer(colors),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Composer (text + voice-note recording pill)
+  // -------------------------------------------------------------------------
+
+  /// Normal text composer. A mic button sits to the LEFT of the text field
+  /// while it is empty; once the user types, the send button takes over as
+  /// before.
+  Widget _buildTextComposer(ThemeColors colors) {
+    final hasText = _messageController.text.trim().isNotEmpty;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        if (!hasText) ...[
+          SizedBox(
+            width: 44,
+            height: 44,
+            child: IconButton(
+              padding: EdgeInsets.zero,
+              tooltip: 'Record voice note',
+              style: IconButton.styleFrom(
+                backgroundColor: colors.primaryBg,
+                shape: const CircleBorder(),
+              ),
+              icon: Icon(Icons.mic_none_rounded, color: colors.primary, size: 21),
+              onPressed: _startVoiceRecording,
+            ),
+          ),
+          const SizedBox(width: 8),
+        ],
+        Expanded(
+          child: TextField(
+            controller: _messageController,
+            textCapitalization: TextCapitalization.sentences,
+            minLines: 1,
+            maxLines: 5,
+            onChanged: _onTextChanged,
+            style: TextStyle(color: colors.text, fontSize: 14.5),
+            decoration: InputDecoration(
+              hintText: 'Type a message...',
+              hintStyle: TextStyle(color: colors.textSecondary),
+              filled: true,
+              fillColor: colors.surfaceVariant,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(22),
+                borderSide: BorderSide.none,
+              ),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+            ),
+            onSubmitted: (_) => _sendMessage(),
+          ),
+        ),
+        const SizedBox(width: 8),
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: hasText
+                  ? [colors.primary, colors.primaryDark]
+                  : [
+                      colors.textSecondary.withValues(alpha: 0.5),
+                      colors.textSecondary.withValues(alpha: 0.5),
+                    ],
+            ),
+            shape: BoxShape.circle,
+          ),
+          child: IconButton(
+            padding: EdgeInsets.zero,
+            icon: _isSending
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white),
+                  )
+                : const Icon(Icons.send_rounded,
+                    color: Colors.white, size: 20),
+            onPressed: _isSending ? null : () => _sendMessage(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Recording state replaces the composer: pulsing red dot, elapsed timer,
+  /// cancel (trash) and send.
+  Widget _buildRecordingComposer(ThemeColors colors) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        const _PulsingDot(),
+        const SizedBox(width: 10),
+        Text(
+          _formatSeconds(_recordSeconds),
+          style: TextStyle(
+            fontSize: 14.5,
+            fontWeight: FontWeight.w700,
+            fontFeatures: const [FontFeature.tabularFigures()],
+            color: colors.text,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            _isSending ? 'Uploading voice note…' : 'Recording voice note…',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 13,
+              fontStyle: FontStyle.italic,
+              color: colors.textSecondary,
+            ),
+          ),
+        ),
+        IconButton(
+          tooltip: 'Cancel recording',
+          icon:
+              Icon(Icons.delete_outline_rounded, color: colors.error, size: 22),
+          onPressed: _isSending ? null : _cancelVoiceRecording,
+        ),
+        const SizedBox(width: 4),
+        Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [colors.primary, colors.primaryDark],
+            ),
+            shape: BoxShape.circle,
+          ),
+          child: IconButton(
+            padding: EdgeInsets.zero,
+            tooltip: 'Send voice note',
+            icon: _isSending
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white),
+                  )
+                : const Icon(Icons.send_rounded,
+                    color: Colors.white, size: 20),
+            onPressed: _isSending ? null : _sendVoiceNote,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -600,12 +851,18 @@ class _MessageBubble extends StatelessWidget {
       bottomRight: const Radius.circular(16),
     );
 
+    final isVoiceNote = message.attachmentType == 'audio' &&
+        (message.attachmentUrl?.isNotEmpty ?? false);
+    final voiceUrl = isVoiceNote
+        ? ApiService.resolveMediaUrl(message.attachmentUrl)
+        : null;
+
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         margin: const EdgeInsets.only(bottom: 8),
         constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.78,
+          maxWidth: MediaQuery.of(context).size.width * 0.82,
         ),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
         decoration: BoxDecoration(
@@ -643,14 +900,17 @@ class _MessageBubble extends StatelessWidget {
                   ),
                 ),
               ),
-            Text(
-              message.content,
-              style: TextStyle(
-                color: isMe ? Colors.white : colors.text,
-                fontSize: 14.5,
-                height: 1.35,
+            if (isVoiceNote && voiceUrl != null)
+              _VoiceNoteBubble(url: voiceUrl, isMe: isMe, colors: colors)
+            else
+              Text(
+                message.content,
+                style: TextStyle(
+                  color: isMe ? Colors.white : colors.text,
+                  fontSize: 14.5,
+                  height: 1.35,
+                ),
               ),
-            ),
             const SizedBox(height: 3),
             Text(
               DateFormat.Hm().format(message.createdAt.toLocal()),
@@ -660,6 +920,264 @@ class _MessageBubble extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact in-bubble voice-note player (WhatsApp-style): play/pause button,
+/// tap/drag-to-seek progress bar, elapsed/total duration and a 1x → 1.5x → 2x
+/// speed toggle. Owns a single audioplayers instance, disposed with the
+/// widget. Adapts its palette to sent (primary-tinted) vs received (surface)
+/// bubbles.
+class _VoiceNoteBubble extends StatefulWidget {
+  final String url;
+  final bool isMe;
+  final ThemeColors colors;
+
+  const _VoiceNoteBubble({
+    required this.url,
+    required this.isMe,
+    required this.colors,
+  });
+
+  @override
+  State<_VoiceNoteBubble> createState() => _VoiceNoteBubbleState();
+}
+
+class _VoiceNoteBubbleState extends State<_VoiceNoteBubble> {
+  final AudioPlayer _player = AudioPlayer();
+  StreamSubscription<Duration>? _positionSub;
+  StreamSubscription<Duration?>? _durationSub;
+  StreamSubscription<PlayerState>? _stateSub;
+  PlayerState _playerState = PlayerState.stopped;
+  Duration _position = Duration.zero;
+  Duration? _duration;
+  double _speed = 1.0;
+  bool _failed = false;
+
+  bool get _isPlaying => _playerState == PlayerState.playing;
+
+  @override
+  void initState() {
+    super.initState();
+    _positionSub = _player.onPositionChanged.listen((p) {
+      if (mounted) setState(() => _position = p);
+    });
+    _durationSub = _player.onDurationChanged.listen((d) {
+      if (mounted) setState(() => _duration = d);
+    });
+    _stateSub = _player.onPlayerStateChanged.listen((s) {
+      if (mounted) setState(() => _playerState = s);
+    });
+  }
+
+  @override
+  void dispose() {
+    _positionSub?.cancel();
+    _durationSub?.cancel();
+    _stateSub?.cancel();
+    try {
+      _player.dispose();
+    } catch (_) {}
+    super.dispose();
+  }
+
+  Future<void> _toggle() async {
+    try {
+      if (_isPlaying) {
+        await _player.pause();
+        return;
+      }
+      if (_playerState == PlayerState.paused) {
+        await _player.resume();
+      } else {
+        // stopped / completed → (re)start from the beginning (or resume point).
+        await _player.play(UrlSource(widget.url));
+        await _player.setPlaybackRate(_speed);
+      }
+      if (mounted) setState(() => _failed = false);
+    } catch (_) {
+      if (mounted) setState(() => _failed = true);
+    }
+  }
+
+  Future<void> _cycleSpeed() async {
+    final next = _speed >= 2.0 ? 1.0 : (_speed >= 1.5 ? 2.0 : 1.5);
+    setState(() => _speed = next);
+    try {
+      await _player.setPlaybackRate(next);
+    } catch (_) {}
+  }
+
+  Future<void> _seekTo(Duration target) async {
+    try {
+      await _player.seek(target);
+      if (mounted) setState(() => _position = target);
+    } catch (_) {}
+  }
+
+  void _seekFromFraction(double dx, double width) {
+    final total = _duration;
+    if (total == null || total.inMilliseconds <= 0 || width <= 0) return;
+    final fraction = (dx / width).clamp(0.0, 1.0);
+    _seekTo(Duration(milliseconds: (total.inMilliseconds * fraction).round()));
+  }
+
+  String _fmt(Duration d) {
+    final m = d.inMinutes;
+    final s = d.inSeconds % 60;
+    return '$m:${s.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = widget.colors;
+    final isMe = widget.isMe;
+    final iconColor = isMe ? Colors.white : colors.primary;
+    final labelColor = isMe ? Colors.white70 : colors.textSecondary;
+    final trackColor =
+        isMe ? Colors.white24 : colors.primary.withValues(alpha: 0.18);
+
+    final totalMs = _duration?.inMilliseconds ?? 0;
+    final playedMs =
+        totalMs > 0 ? _position.inMilliseconds.clamp(0, totalMs).toInt() : 0;
+    final progress = totalMs > 0 ? playedMs / totalMs : 0.0;
+    final totalLabel = totalMs > 0 ? _fmt(Duration(milliseconds: totalMs)) : '--:--';
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          GestureDetector(
+            onTap: _toggle,
+            child: Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: isMe
+                    ? Colors.white.withValues(alpha: 0.22)
+                    : colors.primary.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                _isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                size: 20,
+                color: iconColor,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTapUp: (details) =>
+                      _seekFromFraction(details.localPosition.dx, constraints.maxWidth),
+                  onHorizontalDragUpdate: (details) => _seekFromFraction(
+                      details.localPosition.dx, constraints.maxWidth),
+                  child: SizedBox(
+                    height: 22,
+                    child: Center(
+                      child: LinearProgressIndicator(
+                        value: progress,
+                        minHeight: 4,
+                        borderRadius: BorderRadius.circular(999),
+                        backgroundColor: trackColor,
+                        valueColor: AlwaysStoppedAnimation<Color>(iconColor),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            _failed
+                ? 'Tap to retry'
+                : '${_fmt(Duration(milliseconds: playedMs))} / $totalLabel',
+            style: TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600,
+              fontFeatures: const [FontFeature.tabularFigures()],
+              color: _failed ? colors.error : labelColor,
+            ),
+          ),
+          const SizedBox(width: 6),
+          GestureDetector(
+            onTap: _cycleSpeed,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+              decoration: BoxDecoration(
+                color: isMe
+                    ? Colors.white.withValues(alpha: 0.18)
+                    : colors.primary.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                '${_speed}x',
+                style: TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                  color: iconColor,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Pulsing red dot shown while a voice note is being recorded.
+class _PulsingDot extends StatefulWidget {
+  const _PulsingDot();
+
+  @override
+  State<_PulsingDot> createState() => _PulsingDotState();
+}
+
+class _PulsingDotState extends State<_PulsingDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 700),
+      vsync: this,
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: Tween<double>(begin: 0.35, end: 1.0).animate(
+        CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+      ),
+      child: ScaleTransition(
+        scale: Tween<double>(begin: 0.85, end: 1.15).animate(
+          CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+        ),
+        child: Container(
+          width: 12,
+          height: 12,
+          decoration: const BoxDecoration(
+            color: Color(0xFFEF4444),
+            shape: BoxShape.circle,
+          ),
         ),
       ),
     );

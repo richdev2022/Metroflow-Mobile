@@ -10,6 +10,7 @@ import 'services/api.dart';
 import 'services/biometrics.dart';
 import 'services/socket_service.dart';
 import 'utils/app_feedback.dart';
+import 'utils/app_timezone.dart';
 import 'utils/logger.dart';
 import 'widgets/inapp_banner.dart';
 import 'providers/badge_provider.dart';
@@ -59,6 +60,9 @@ import 'screens/notifications_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: ".env");
+  // Load the stored business timezone BEFORE the first frame renders so all
+  // screens format dates consistently from the start.
+  await AppTimezone.instance.load();
   runApp(const ProviderScope(child: MyApp()));
 }
 
@@ -116,10 +120,18 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         // Badge increment
         ref.read(chatUnreadProvider.notifier).increment();
 
-        // Sound + haptic pop
+        // Sound + haptic pop — fires for BACKGROUND messages too (the socket
+        // stays connected while the app is paused, and audioplayers keeps
+        // playing as long as the OS hasn't killed the process).
         AppFeedback.playMessageSound();
 
-        // Sliding in-app banner
+        // Sliding in-app banner — only renderable while RESUMED: while the
+        // app is hidden the overlay can't attach, so skip it (sound + badge
+        // above are the background alert).
+        final isResumed =
+            WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+        if (!isResumed) return;
+
         InAppBanner.show(
           title: isGroup && conversationName.isNotEmpty
               ? '$senderName · $conversationName'
@@ -411,7 +423,25 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) async {
     final authNotifier = ref.read(authProvider.notifier);
     bool wasWebViewOpen = _isWebViewOpen; // Store before modifying
-    
+
+    // ---------------------------------------------------------------------
+    // BACKGROUND RINGING CONTRACT:
+    // Nothing here may disconnect the SocketService when the app is paused.
+    // The Dart socket.io client keeps running while the process lives, so
+    // `call:incoming` still arrives in the background and call_provider's
+    // handler starts the looping ringtone + haptics (audioplayers keeps
+    // playing while backgrounded). The only code allowed to disconnect the
+    // socket is an explicit logout (auth_provider.logout) — see the 5-minute
+    // idle logout below, which is a deliberate session end.
+    //
+    // NOTE: full background delivery (ringing after the OS killed the
+    // process, push-style notifications) requires FCM integration later —
+    // this path only covers "app hidden but process alive".
+    // ---------------------------------------------------------------------
+    if (state == AppLifecycleState.paused) {
+      Logger.log('App paused — socket stays connected for background ring/notifications');
+    }
+
     if (_appState == AppLifecycleState.resumed && 
         (state == AppLifecycleState.inactive || state == AppLifecycleState.paused)) {
       // App is going to background - store timestamp and last route

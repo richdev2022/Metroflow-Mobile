@@ -38,6 +38,12 @@ class CallNotifier extends Notifier<IncomingCallState> {
   final ApiService _apiService = ApiService();
   Timer? _ringTimeout;
 
+  /// The call WE are dialing out (ringback playing). Used to stop the
+  /// ringback on call:accepted / call:rejected / call:ended without touching
+  /// the incoming-ring state.
+  String? _outboundCallId;
+  Timer? _outboundRingTimeout;
+
   @override
   IncomingCallState build() {
     // Set up socket listeners
@@ -49,10 +55,42 @@ class CallNotifier extends Notifier<IncomingCallState> {
     ref.onDispose(() {
       _ringTimeout?.cancel();
       _ringTimeout = null;
+      _outboundRingTimeout?.cancel();
+      _outboundRingTimeout = null;
       AppFeedback.stopRingtone();
+      AppFeedback.stopRingback();
     });
 
     return IncomingCallState();
+  }
+
+  // -------------------------------------------------------------------------
+  // Outbound ringback (dialing screen calls this right after creating a call)
+  // -------------------------------------------------------------------------
+
+  /// Play the ringback loop while waiting for the callee to accept an
+  /// OUTBOUND call. Stopped automatically when that call is accepted,
+  /// rejected or ended (see the socket handlers below), and by
+  /// [stopOutboundRing] when the dialer closes the call screen.
+  void startOutboundRing(String callId) {
+    _outboundCallId = callId;
+    AppFeedback.startRingback();
+    // Safety: never ring back forever — auto-silence after 90s.
+    _outboundRingTimeout?.cancel();
+    _outboundRingTimeout = Timer(const Duration(seconds: 90), stopOutboundRing);
+  }
+
+  void stopOutboundRing() {
+    _outboundRingTimeout?.cancel();
+    _outboundRingTimeout = null;
+    _outboundCallId = null;
+    AppFeedback.stopRingback();
+  }
+
+  static String? _callIdFromPayload(dynamic data) {
+    if (data is Map) return (data['callId'] ?? data['callID'] ?? '').toString();
+    if (data is String) return data;
+    return null;
   }
 
   /// Build a Call from the flat `call:incoming` socket payload.
@@ -123,7 +161,13 @@ class CallNotifier extends Notifier<IncomingCallState> {
   }
 
   void _handleCallAccepted(dynamic data) {
-    // Someone accepted (or the caller's own accept echo came back) —
+    // Outbound: the callee accepted OUR call — drop the ringback.
+    final acceptedCallId = _callIdFromPayload(data);
+    if (_outboundCallId != null && acceptedCallId == _outboundCallId) {
+      stopOutboundRing();
+    }
+
+    // Incoming: someone accepted (or the caller's own accept echo came back) —
     // stop ringing and drop the dialog.
     if (_matchesCurrentCall(data)) {
       _ringTimeout?.cancel();
@@ -133,6 +177,12 @@ class CallNotifier extends Notifier<IncomingCallState> {
   }
 
   void _handleCallRejected(dynamic data) {
+    // Outbound: the callee declined — stop the ringback.
+    final rejectedCallId = _callIdFromPayload(data);
+    if (_outboundCallId != null && rejectedCallId == _outboundCallId) {
+      stopOutboundRing();
+    }
+
     if (_matchesCurrentCall(data)) {
       _ringTimeout?.cancel();
       AppFeedback.stopRingtone();
@@ -141,11 +191,24 @@ class CallNotifier extends Notifier<IncomingCallState> {
   }
 
   void _handleCallEnded(dynamic data) {
-    if (_matchesCurrentCall(data)) {
-      _ringTimeout?.cancel();
-      AppFeedback.stopRingtone();
-      state = IncomingCallState();
+    // Outbound: the call we were dialing was ended before we joined.
+    final endedCallId = _callIdFromPayload(data);
+    if (_outboundCallId != null && endedCallId == _outboundCallId) {
+      stopOutboundRing();
     }
+
+    // IMPORTANT: only act on the RINGING state here. Once the user has
+    // accepted and entered the room, VideoCallScreen owns the `call:ended`
+    // UX (it registers its own handler that tears the mediasoup room down);
+    // wiping provider state here would double-handle the event and fight
+    // with the screen. While ringing (no screen mounted), an ended call is a
+    // missed call: stop the ring, blip, and clear the dialog.
+    if (!state.isRinging) return;
+    if (!_matchesCurrentCall(data)) return;
+    _ringTimeout?.cancel();
+    AppFeedback.stopRingtone();
+    AppFeedback.playCallEndedSound();
+    state = IncomingCallState();
   }
 
   /// Accept the incoming call. Emits `call:accept`, clears the ringing state
