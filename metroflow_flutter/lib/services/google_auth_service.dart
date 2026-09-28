@@ -38,14 +38,17 @@ class GoogleAuthService {
   final GoogleSignIn _googleSignIn;
 
   static String? _resolveWebClientId() {
+    // Production Google OAuth Web client ID (required on Android so
+    // google_sign_in returns an ID token). Env override keeps it flexible.
+    const String productionWebClientId =
+        '438902996656-dbmnffpr8vufvso2o10esspalvl9c25c.apps.googleusercontent.com';
     try {
       final value = dotenv.env['EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID'];
-      if (value == null || value.trim().isEmpty) return null;
-      return value.trim();
+      if (value != null && value.trim().isNotEmpty) return value.trim();
     } catch (_) {
-      // dotenv not initialised (e.g. unit tests) — degrade gracefully.
-      return null;
+      // dotenv not initialised (e.g. unit tests) — fall through to default.
     }
+    return productionWebClientId;
   }
 
   /// Opens the Google account picker and returns the Google ID token.

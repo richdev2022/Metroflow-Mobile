@@ -149,6 +149,21 @@ class CallNotifier extends Notifier<IncomingCallState> {
     }
   }
 
+  /// Public entry point for FCM push taps: re-presents the incoming call from
+  /// a push payload (data: { type:'incoming_call', call_id, call_code,
+  /// caller_name, call_type }) — the same shape the socket `call:incoming`
+  /// handler receives. Used by PushNotificationService so tapping the
+  /// full-screen call notification shows the Accept/Decline overlay.
+  void presentIncomingCall(Map<String, dynamic> payload) {
+    final data = Map<String, dynamic>.from(payload);
+    // Normalize the FCM payload keys onto the socket payload names.
+    data['callId'] ??= data['call_id'];
+    data['callCode'] ??= data['call_code'];
+    data['callerName'] ??= data['caller_name'];
+    data['type'] = data['call_type'] ?? data['type'] ?? 'video';
+    _handleIncomingCall(data);
+  }
+
   bool _matchesCurrentCall(dynamic data) {
     final current = state.call;
     if (current == null) return false;
