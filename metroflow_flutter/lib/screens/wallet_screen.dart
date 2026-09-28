@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -39,11 +41,29 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   bool showVirtualAccountModal = false;
   bool showBankSearchModal = false;
 
+  /// Debounced auto account-name lookup: fires 600ms after the user types a
+  /// complete 10-digit account number (or picks a bank with one entered).
+  Timer? _lookupDebounce;
+
   @override
   void initState() {
     super.initState();
     checkKycStatus();
     fetchBanks();
+  }
+
+  @override
+  void dispose() {
+    _lookupDebounce?.cancel();
+    super.dispose();
+  }
+
+  void _scheduleAccountLookup() {
+    _lookupDebounce?.cancel();
+    if (selectedBankCode.isEmpty || accountNumber.trim().length != 10) return;
+    _lookupDebounce = Timer(const Duration(milliseconds: 600), () {
+      if (mounted) handleResolveAccount();
+    });
   }
 
   Future<void> checkKycStatus([bool showLoader = true]) async {
@@ -146,27 +166,25 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
     try {
       final api = ApiService();
       final response = await api.resolveAccount(selectedBankCode, accountNumber, suppressToast: true);
-      if (response.data['success'] == true && mounted) {
-        final data = response.data['data'];
-        String? name;
-        if (data is Map) {
-          if (data['account_name'] != null) {
-            name = data['account_name'];
-          } else if (data['responseBody'] != null && data['responseBody']['accountName'] != null) {
-            name = data['responseBody']['accountName'];
-          }
-        }
-        if (name != null) {
+      // The backend nests provider responses several layers deep:
+      //   { success, data: { status: 'success', data: { account_name } } }
+      // extractAccountName walks every known shape (nested, flattened and
+      // legacy responseBody) and returns null when nothing fits.
+      final name = ApiService.extractAccountName(response.data);
+      if (mounted) {
+        if (name != null && name.isNotEmpty) {
           setState(() {
-            accountName = name!;
+            accountName = name;
           });
+        } else {
+          setState(() => accountName = '');
+          final errorMessage = response.data is Map
+              ? (response.data['message'] ?? response.data['error'] ?? 'Could not verify this account — check the details')
+              : 'Could not verify this account — check the details';
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(errorMessage.toString())),
+          );
         }
-      } else if (mounted) {
-        // Handle failure case
-        final errorMessage = response.data['message'] ?? response.data['error'] ?? 'Failed to verify account';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(errorMessage)),
-        );
       }
     } catch (e) {
       debugPrint('Failed to resolve account: $e');
@@ -675,12 +693,19 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                                 Expanded(
                                   child: TextField(
                                     decoration: InputDecoration(
-                                      hintText: 'Enter account number',
+                                      hintText: 'Enter 10-digit account number',
                                       hintStyle: TextStyle(color: colors.textSecondary),
                                     ),
                                     style: TextStyle(color: colors.text, fontSize: 16),
                                     keyboardType: TextInputType.number,
-                                    onChanged: (value) => setState(() => accountNumber = value),
+                                    maxLength: 10,
+                                    counterText: '',
+                                    onChanged: (value) {
+                                      setState(() => accountNumber = value);
+                                      // Auto-verify once a full 10-digit
+                                      // number is typed (600ms debounce).
+                                      _scheduleAccountLookup();
+                                    },
                                   ),
                                 ),
                                 const SizedBox(width: 8),
@@ -702,12 +727,18 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                                 decoration: BoxDecoration(
                                   color: AppColors.success.withValues(alpha: 0.1),
                                   borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: AppColors.success.withValues(alpha: 0.35)),
                                 ),
                                 child: Row(
                                   children: [
-                                    const Icon(Icons.check_circle, size: 20, color: AppColors.success),
+                                    const Icon(Icons.verified_rounded, size: 20, color: AppColors.success),
                                     const SizedBox(width: 8),
-                                    Text(accountName, style: const TextStyle(color: AppColors.success, fontWeight: FontWeight.w600, fontSize: 14)),
+                                    Expanded(
+                                      child: Text(
+                                        'Account name: $accountName',
+                                        style: const TextStyle(color: AppColors.success, fontWeight: FontWeight.w600, fontSize: 14),
+                                      ),
+                                    ),
                                   ],
                                 ),
                               ),
@@ -994,6 +1025,8 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                                 showBankSearchModal = false;
                                 bankSearchQuery = '';
                               });
+                              // Bank picked after typing the number? Verify now.
+                              _scheduleAccountLookup();
                             },
                             child: Container(
                               padding: const EdgeInsets.symmetric(vertical: 16),

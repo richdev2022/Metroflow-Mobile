@@ -6,6 +6,7 @@ import '../theme/app_theme.dart';
 import '../providers/auth_provider.dart';
 import '../services/biometrics.dart';
 import '../services/api.dart';
+import 'permission_primer.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -38,9 +39,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     if (!mounted) return;
     
     final biometricsEnabled = ref.read(authProvider).biometricsEnabled;
-    final hasBiometrics = await BiometricService.isAvailable();
+    final canAuth = await BiometricService.canAuthenticate();
     
-    if (biometricsEnabled && hasBiometrics && mounted) {
+    if (biometricsEnabled && canAuth && mounted) {
       await _handleBiometricLogin();
     }
   }
@@ -53,7 +54,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _checkBiometrics() async {
-    final available = await BiometricService.isAvailable();
+    final available = await BiometricService.canAuthenticate();
     if (mounted) {
       setState(() {
         _biometricsAvailable = available;
@@ -86,9 +87,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       } else {
         final promptShown = await BiometricService.hasPromptBeenShown();
         final isEnabled = await BiometricService.isEnabled();
-        final hasBiometrics = await BiometricService.isAvailable();
+        final canAuth = await BiometricService.canAuthenticate();
 
-        if (hasBiometrics && !promptShown && !isEnabled) {
+        if (canAuth && !promptShown && !isEnabled) {
           if (mounted) {
             setState(() {
               _showBiometricsSetupModal = true;
@@ -109,12 +110,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     });
 
     try {
-      final success = await ref.read(authProvider.notifier).loginWithBiometrics();
-      if (success) {
+      // Server-backed flow: local_auth prompt (with device-PIN fallback) →
+      // POST /auth/biometric/login with the stored per-device token.
+      final result = await ref.read(authProvider.notifier).loginWithBiometrics();
+      if (result.success) {
         await _checkKycAndNavigate();
+        await PermissionPrimer.maybeShow();
       } else {
         if (mounted) {
-          await _showAlert('Error', 'Biometric authentication failed');
+          await _showAlert('Sign in', result.error ?? 'Biometric authentication failed');
         }
       }
     } catch (e) {
@@ -212,6 +216,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           );
 
       await _checkKycAndNavigate();
+      // One-time permissions primer (never blocks — flag-gated inside).
+      await PermissionPrimer.maybeShow();
     } catch (e) {
       final errorMsg = e.toString();
       if (errorMsg.contains('OTP required')) {
@@ -245,6 +251,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       final success = await ref.read(authProvider.notifier).loginWithGoogle();
       if (!success) return; // user cancelled — no error, stay on screen
       await _checkKycAndNavigate();
+      // One-time permissions primer (never blocks — flag-gated inside).
+      await PermissionPrimer.maybeShow();
     } catch (e) {
       if (mounted) {
         await _showAlert('Google Sign-In', _friendlyError(e));

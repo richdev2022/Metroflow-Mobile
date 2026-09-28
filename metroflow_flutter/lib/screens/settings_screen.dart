@@ -90,6 +90,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _biometricsEnabled = false;
   bool _biometricsAvailable = false;
   bool _hasBiometricHardware = false;
+  bool _deviceCredentialSupported = false;
   String _editIndustry = '';
   String _editCurrency = 'NGN';
   String _otpPreference = 'email';
@@ -127,10 +128,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final hasHardware = await BiometricService.hasHardware();
     final enrolled = await BiometricService.isEnrolled();
     final enabled = await BiometricService.isEnabled();
+    // Device PIN/pattern counts too (device-credential fallback) — low-end
+    // phones without fingerprint hardware can still use biometric unlock.
+    final deviceSupported = await BiometricService.isDeviceSupported();
     if (!mounted) return;
     setState(() {
       _hasBiometricHardware = hasHardware;
       _biometricsAvailable = enrolled;
+      _deviceCredentialSupported = deviceSupported && !enrolled;
       _biometricsEnabled = enabled;
     });
   }
@@ -397,24 +402,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Future<void> _handleBiometricToggle(bool value) async {
     setState(() => _isSaving = true);
     if (value) {
-      final hasHardware = await BiometricService.hasHardware();
-      if (!hasHardware) {
+      // Device capability: biometrics OR the device PIN/pattern fallback.
+      final canAuth = await BiometricService.canAuthenticate();
+      if (!canAuth) {
         setState(() => _isSaving = false);
         _showInfo(
           'Biometrics Not Available',
-          'This device does not support biometric authentication.',
+          'This device does not support biometric or device-credential unlock.',
         );
         return;
       }
       final enrolled = await BiometricService.isEnrolled();
-      if (!enrolled) {
+      if (!enrolled && !await BiometricService.isDeviceSupported()) {
         setState(() => _isSaving = false);
         _showInfo(
           'Biometrics Not Set Up',
-          'Please set up fingerprint or face recognition in your device settings first.',
+          'Please set up fingerprint, face recognition, or a screen lock in your device settings first.',
         );
         return;
       }
+      // enableBiometricsWithResult runs the local_auth prompt (with the
+      // device-credential fallback) and enrolls the device on the backend,
+      // storing the returned biometric_token in secure storage.
       final result = await ref.read(authProvider.notifier).enableBiometricsWithResult();
       if (!result.success) {
         setState(() => _isSaving = false);
@@ -422,8 +431,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         return;
       }
       setState(() => _biometricsEnabled = true);
-      AppToast.show('Biometric login enabled', type: AppToastType.success);
+      AppToast.show('Biometric unlock enabled', type: AppToastType.success);
     } else {
+      // disableBiometrics revokes the enrollment on the backend (DELETE
+      // /auth/biometric/enroll) and wipes the locally stored token.
       await ref.read(authProvider.notifier).disableBiometrics();
       setState(() => _biometricsEnabled = false);
       AppToast.show('Biometric login disabled');
@@ -1023,14 +1034,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     _settingItem(
                       icon: Icons.fingerprint,
                       title: 'Biometric Login',
-                      subtitle: !_biometricsAvailable && !_hasBiometricHardware
-                          ? 'Not available on this device'
-                          : (!_biometricsAvailable
-                              ? 'Not enrolled on device'
-                              : (_biometricsEnabled ? 'Enabled' : 'Disabled')),
+                      subtitle: _biometricsEnabled
+                          ? 'Enabled'
+                          : (!_hasBiometricHardware && !_deviceCredentialSupported
+                              ? 'Not available on this device'
+                              : (_biometricsAvailable
+                                  ? 'Disabled'
+                                  : 'Use biometrics or device PIN')),
                       trailing: Switch(
                         value: _biometricsEnabled,
-                        onChanged: (_isSaving || (!_biometricsAvailable && !_biometricsEnabled))
+                        onChanged: (_isSaving ||
+                                (!_biometricsAvailable &&
+                                    !_deviceCredentialSupported &&
+                                    !_biometricsEnabled))
                             ? null
                             : _handleBiometricToggle,
                       ),

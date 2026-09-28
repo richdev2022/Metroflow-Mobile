@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math';
 
 import 'package:dio/dio.dart';
 import 'package:image_picker/image_picker.dart';
@@ -623,6 +624,52 @@ class ApiService {
   Future<Response> unregisterDevice({required String fcmToken}) async {
     return await _dio.delete('/notifications/register-device',
         data: {'fcm_token': fcmToken}, options: Options(extra: {'suppressToast': true}));
+  }
+
+  // -------------------------------------------------------------------------
+  // Biometric unlock (server-backed)
+  //
+  // POST /auth/biometric/enroll   (auth) { device_id, device_name?, platform? }
+  //   -> { success, message, data: { biometric_token, device_id } }
+  //   The plaintext biometric_token is ONE-TIME: store it in secure storage.
+  // POST /auth/biometric/login    { biometric_token, device_id, device_name? }
+  //   -> same envelope as /auth/login: { success, token, userId, businessId }
+  // DELETE /auth/biometric/enroll (auth) { device_id? }  -> revokes locally.
+  // -------------------------------------------------------------------------
+
+  /// Enables biometric unlock for this device. Requires an authenticated
+  /// session (the Authorization header is attached by the interceptor).
+  Future<Response> biometricEnroll({
+    required String deviceId,
+    String? deviceName,
+    String? platform,
+  }) async {
+    return await _dio.post('/auth/biometric/enroll', data: {
+      'device_id': deviceId,
+      if (deviceName != null && deviceName.isNotEmpty) 'device_name': deviceName,
+      if (platform != null && platform.isNotEmpty) 'platform': platform,
+    }, options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// Exchanges the stored biometric token for a full session. Public route
+  /// (no auth header needed). 401 => the credential was revoked server-side.
+  Future<Response> biometricLogin({
+    required String biometricToken,
+    required String deviceId,
+    String? deviceName,
+  }) async {
+    return await _dio.post('/auth/biometric/login', data: {
+      'biometric_token': biometricToken,
+      'device_id': deviceId,
+      if (deviceName != null && deviceName.isNotEmpty) 'device_name': deviceName,
+    }, options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// Revokes this device's (or all of the user's) biometric credentials.
+  Future<Response> biometricRevoke({String? deviceId}) async {
+    return await _dio.delete('/auth/biometric/enroll', data: {
+      if (deviceId != null && deviceId.isNotEmpty) 'device_id': deviceId,
+    }, options: Options(extra: {'suppressToast': true}));
   }
 
   /// Deep-defensive account-name extraction for bank account lookups.
@@ -1252,6 +1299,122 @@ class StorageService {
   Future<void> removeBiometricsPromptShown() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('biometricsPromptShown');
+  }
+
+  // -------------------------------------------------------------------------
+  // Backend biometric enrollment storage.
+  //
+  // The biometric_token is a bearer secret -> it lives in
+  // flutter_secure_storage, KEYED PER DEVICE (`biometric_token_<device_id>`).
+  // The stable device_id is a random UUID generated once and persisted
+  // alongside it (secure storage first, SharedPreferences fallback).
+  // -------------------------------------------------------------------------
+
+  static const String _biometricDeviceIdKey = 'biometric_device_id';
+
+  Future<String?> getBiometricDeviceId() async {
+    if (_secureStorageAvailable) {
+      try {
+        final v = await _secureStorage.read(key: _biometricDeviceIdKey);
+        if (v != null && v.isNotEmpty) return v;
+      } catch (e) {
+        _secureStorageAvailable = false;
+        debugPrint('Secure device-id read failed, using SharedPreferences: $e');
+      }
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(_biometricDeviceIdKey);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Returns the stable per-install device id, creating (and persisting) a
+  /// random UUID on first use. Never throws.
+  Future<String> getOrCreateBiometricDeviceId() async {
+    final existing = await getBiometricDeviceId();
+    if (existing != null && existing.isNotEmpty) return existing;
+    final id = _generateDeviceId();
+    bool stored = false;
+    if (_secureStorageAvailable) {
+      try {
+        await _secureStorage.write(key: _biometricDeviceIdKey, value: id);
+        stored = true;
+      } catch (e) {
+        _secureStorageAvailable = false;
+      }
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_biometricDeviceIdKey, id);
+      stored = true;
+    } catch (_) {}
+    if (!stored) debugPrint('Warning: biometric device_id could not be persisted');
+    return id;
+  }
+
+  /// Random UUIDv4-shaped id (no extra package needed).
+  static String _generateDeviceId() {
+    final rnd = Random.secure();
+    final bytes = List<int>.generate(16, (_) => rnd.nextInt(256));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    final hex = bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-'
+        '${hex.substring(16, 20)}-${hex.substring(20)}';
+  }
+
+  Future<void> setBiometricToken(String deviceId, String token) async {
+    final key = 'biometric_token_$deviceId';
+    if (_secureStorageAvailable) {
+      try {
+        await _secureStorage.write(key: key, value: token);
+      } catch (e) {
+        _secureStorageAvailable = false;
+        debugPrint('Secure biometric token write failed: $e');
+      }
+    }
+    // Best-effort fallback copy so revoke/login still works on platforms
+    // without secure storage.
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(key, token);
+    } catch (_) {}
+  }
+
+  Future<String?> getBiometricToken(String deviceId) async {
+    final key = 'biometric_token_$deviceId';
+    if (_secureStorageAvailable) {
+      try {
+        final v = await _secureStorage.read(key: key);
+        if (v != null && v.isNotEmpty) return v;
+      } catch (e) {
+        _secureStorageAvailable = false;
+        debugPrint('Secure biometric token read failed: $e');
+      }
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(key);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> clearBiometricToken(String deviceId) async {
+    final key = 'biometric_token_$deviceId';
+    if (_secureStorageAvailable) {
+      try {
+        await _secureStorage.delete(key: key);
+      } catch (e) {
+        _secureStorageAvailable = false;
+      }
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(key);
+    } catch (_) {}
   }
 
   Future<void> setHasSeenOnboarding(bool seen) async {

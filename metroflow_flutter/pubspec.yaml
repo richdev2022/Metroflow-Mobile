@@ -51,6 +51,8 @@ dependencies:
   # Launcher badge (flutter_app_badger is discontinued & Dart-2-only; this is
   # the maintained Dart-3 equivalent with the same iOS/Android coverage).
   app_badge_plus: ^1.3.5
+  # Runtime permission prompts (notifications/camera/mic/photos primer sheet).
+  permission_handler: ^11.3.1
   mediasoup_client_flutter:
     path: third_party/mediasoup_client_flutter
 

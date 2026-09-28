@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -8,12 +11,15 @@ import 'providers/theme_provider.dart';
 import 'providers/auth_provider.dart';
 import 'services/api.dart';
 import 'services/biometrics.dart';
+import 'services/push_notification_service.dart';
 import 'services/socket_service.dart';
 import 'utils/app_feedback.dart';
 import 'utils/app_timezone.dart';
 import 'utils/logger.dart';
 import 'widgets/inapp_banner.dart';
 import 'providers/badge_provider.dart';
+import 'providers/call_provider.dart';
+import 'providers/notifications_provider.dart';
 import 'screens/chat_detail_screen.dart';
 import 'components/error_boundary.dart';
 import 'screens/splash_screen.dart';
@@ -63,6 +69,12 @@ void main() async {
   // Load the stored business timezone BEFORE the first frame renders so all
   // screens format dates consistently from the start.
   await AppTimezone.instance.load();
+  // FCM background/terminated isolate handler — MUST be registered before
+  // runApp. Safe without Firebase native config: assignment only, no platform
+  // channel, and the handler itself is fully guarded.
+  try {
+    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+  } catch (_) {}
   runApp(const ProviderScope(child: MyApp()));
 }
 
@@ -156,6 +168,50 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     };
   }
 
+  /// FCM push wiring (WhatsApp-style ringing while the app is
+  /// killed/backgrounded/locked + notification-tap deep links).
+  ///
+  /// - [PushNotificationService.initialize] is fully guarded: without the
+  ///   Firebase native config it degrades to a silent no-op.
+  /// - [incomingCallHook] feeds tapped incoming-call pushes into the same
+  ///   provider state the socket `call:incoming` handler uses, so the global
+  ///   IncomingCallDialog shows Accept/Decline exactly like an in-app ring.
+  /// - [foregroundCallGuard] prevents a double ring when both the socket AND
+  ///   FCM deliver the same incoming call while the app is open.
+  void _setupPushNotifications() {
+    PushNotificationService.instance.incomingCallHook = (data) {
+      try {
+        ref.read(callProvider.notifier).presentIncomingCall(data);
+      } catch (e) {
+        Logger.error('incomingCallHook failed: $e');
+      }
+    };
+    PushNotificationService.instance.foregroundCallGuard = () {
+      try {
+        return ref.read(callProvider).isRinging;
+      } catch (_) {
+        return false;
+      }
+    };
+    // Initialize after auth bootstrap (authProvider.checkAuth kicks off in
+    // its build); token registration happens post-login via the auth
+    // listener below and inside the service itself.
+    unawaited(PushNotificationService.instance.initialize());
+  }
+
+  /// Launcher badge = unread chats + unread notifications. Refreshed
+  /// whenever either provider changes (see the listeners in build) and on
+  /// app resume.
+  void _syncLauncherBadge() {
+    try {
+      final chats = ref.read(chatUnreadProvider);
+      final notifications = ref.read(notificationsProvider).unreadCount;
+      unawaited(LauncherBadge.update(chats + notifications));
+    } catch (e) {
+      Logger.error('Launcher badge sync failed: $e');
+    }
+  }
+
   String _routeValue(GoRouterState state, String key) {
     final extra = state.extra;
     if (extra is Map) {
@@ -170,6 +226,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _setupGlobalChatNotifications();
+    _setupPushNotifications();
 
     _router = GoRouter(
       navigatorKey: navigatorKey,
@@ -490,12 +547,12 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         // Prompt biometrics if needed
         if (_shouldPromptBiometricsOnResume && updatedAuthState.biometricsEnabled && !updatedAuthState.isAuthenticated) {
           // Prompt biometrics
-          final hasBiometrics = await BiometricService.isAvailable();
+          final hasBiometrics = await BiometricService.canAuthenticate();
           if (hasBiometrics && mounted) {
             // Try to auto-prompt biometrics login
             try {
-              final success = await authNotifier.loginWithBiometrics();
-              if (success) {
+              final result = await authNotifier.loginWithBiometrics();
+              if (result.success) {
               // Navigate to last route or main
               final lastRoute = await _storage.getLastRoute();
               if (lastRoute != null && lastRoute.isNotEmpty && lastRoute != '/login') {
@@ -511,6 +568,9 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
           }
           _shouldPromptBiometricsOnResume = false;
         }
+
+        // Refresh the launcher badge against the live unread counts.
+        _syncLauncherBadge();
       }
     }
     
@@ -537,6 +597,25 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         ref.read(authProvider.notifier).resetIdleTimer();
       }
     });
+
+    // FCM device-registration lifecycle: register the push token after every
+    // login / biometric restore; unregister on ANY logout path (button,
+    // idle timeout, session expiry) — they all flip isAuthenticated.
+    ref.listen<AuthState>(authProvider, (previous, next) {
+      final wasIn = previous?.isAuthenticated == true;
+      final isIn = next.isAuthenticated;
+      if (!wasIn && isIn) {
+        unawaited(PushNotificationService.instance.registerCurrentDevice());
+      } else if (wasIn && !isIn) {
+        unawaited(PushNotificationService.instance.unregisterCurrentDevice());
+        // Clear the launcher badge along with the session.
+        unawaited(LauncherBadge.clear());
+      }
+    });
+
+    // Launcher badge: recompute whenever unread chats or notifications change.
+    ref.listen<int>(chatUnreadProvider, (_, __) => _syncLauncherBadge());
+    ref.listen<NotificationsState>(notificationsProvider, (_, __) => _syncLauncherBadge());
 
     return ErrorBoundary(
       child: IdleTimeoutHandler(

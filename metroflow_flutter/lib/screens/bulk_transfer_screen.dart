@@ -42,6 +42,11 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
   Timer? _otpTimer;
   bool _canResendOtp = false;
 
+  /// Debounced auto account-name lookups per recipient: 600ms after a
+  /// complete 10-digit account number is typed (or a bank is picked for it).
+  final Map<String, Timer> _lookupTimers = {};
+  final Set<String> _resolvingRecipients = {};
+
   @override
   void initState() {
     super.initState();
@@ -74,7 +79,24 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
   void dispose() {
     _bankSearchController.dispose();
     _otpTimer?.cancel();
+    for (final timer in _lookupTimers.values) {
+      timer.cancel();
+    }
+    _lookupTimers.clear();
     super.dispose();
+  }
+
+  void _scheduleRecipientLookup(String recipientId) {
+    _lookupTimers[recipientId]?.cancel();
+    final recipient = _recipients.where((r) => r.id == recipientId).toList();
+    if (recipient.isEmpty) return;
+    final account = recipient.first.recipientAccount.trim();
+    final bank = recipient.first.recipientBank.trim();
+    if (bank.isEmpty || account.length != 10) return;
+    _lookupTimers[recipientId] = Timer(const Duration(milliseconds: 600), () {
+      _lookupTimers.remove(recipientId);
+      if (mounted) _resolveAccountName(recipientId);
+    });
   }
 
   Future<void> _fetchData() async {
@@ -215,6 +237,10 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
         }
       }).toList();
     });
+    // Auto-verify as soon as a full 10-digit account number is typed.
+    if (field == 'recipientAccount') {
+      _scheduleRecipientLookup(id);
+    }
   }
 
   Future<void> _resolveAccountName(String recipientId) async {
@@ -240,6 +266,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
       return;
     }
 
+    setState(() => _resolvingRecipients.add(recipientId));
     try {
       final api = ApiService();
       final response = await api.resolveAccount(
@@ -247,32 +274,27 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
         recipient.recipientAccount,
         suppressToast: true,
       );
-      if (response.data['success'] == true && mounted) {
-        final data = response.data['data'];
-        String? name;
-        if (data is Map) {
-          if (data['account_name'] != null) {
-            name = data['account_name'];
-          } else if (data['responseBody'] != null && data['responseBody']['accountName'] != null) {
-            name = data['responseBody']['accountName'];
-          }
+      // Deep-defensive parsing: the backend nests the provider payload as
+      // { success, data: { status: 'success', data: { account_name } } }.
+      final name = ApiService.extractAccountName(response.data);
+      if (mounted) {
+        if (name != null && name.isNotEmpty) {
+          _updateRecipient(recipientId, 'recipientName', name);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not verify this account — check the details')),
+          );
         }
-        if (name != null) {
-          setState(() {
-            _updateRecipient(recipientId, 'recipientName', name!);
-          });
-        }
-      } else if (mounted) {
-        final errorMessage = response.data['message'] ?? response.data['error'] ?? 'Failed to resolve account';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(errorMessage)),
-        );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to resolve account: ${e.toString()}')),
         );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _resolvingRecipients.remove(recipientId));
       }
     }
   }
@@ -966,17 +988,20 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
               decoration: BoxDecoration(
                 color: AppColors.success.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.success.withValues(alpha: 0.35)),
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.check_circle, size: 20, color: AppColors.success),
+                  const Icon(Icons.verified_rounded, size: 20, color: AppColors.success),
                   const SizedBox(width: 8),
-                  Text(
-                    recipient.recipientName,
-                    style: const TextStyle(
-                      color: AppColors.success,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 14,
+                  Expanded(
+                    child: Text(
+                      'Account name: ${recipient.recipientName}',
+                      style: const TextStyle(
+                        color: AppColors.success,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                      ),
                     ),
                   ),
                 ],
@@ -1034,18 +1059,28 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
             Expanded(
               child: TextField(
                 decoration: const InputDecoration(
-                  hintText: 'Enter account number',
+                  hintText: 'Enter 10-digit account number',
                 ),
                 style: const TextStyle(fontSize: 16),
                 keyboardType: TextInputType.number,
+                maxLength: 10,
+                counterText: '',
                 onChanged: (value) =>
                     _updateRecipient(recipient.id, 'recipientAccount', value),
               ),
             ),
             const SizedBox(width: 8),
             ElevatedButton(
-              onPressed: () => _resolveAccountName(recipient.id),
-              child: const Text('Verify'),
+              onPressed: _resolvingRecipients.contains(recipient.id)
+                  ? null
+                  : () => _resolveAccountName(recipient.id),
+              child: _resolvingRecipients.contains(recipient.id)
+                  ? const SizedBox(
+                      height: 16,
+                      width: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Verify'),
             ),
           ],
         ),
@@ -1313,7 +1348,13 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
                                   return r;
                                 }).toList();
                                 _showBankPicker = false;
+                                final selectedId = _selectedRecipientIdForBank;
                                 _selectedRecipientIdForBank = null;
+                                // Bank picked for a complete 10-digit number?
+                                // Verify automatically.
+                                if (selectedId != null) {
+                                  _scheduleRecipientLookup(selectedId);
+                                }
                               });
                             },
                             child: Container(

@@ -150,6 +150,18 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   void Function(dynamic)? _previousWaitingAdmittedHandler;
   void Function(dynamic)? _previousWaitingDeniedHandler;
 
+  // Join hardening ("preparing to join" forever fix):
+  // - 15s after emitting call:join with media still not connected → re-emit
+  //   the join ONCE;
+  // - 12s later → non-blocking "Still connecting… Retry" banner (the room is
+  //   never silently wiped).
+  // The connecting OVERLAY is dismissed independently on: join ack success,
+  // waiting-room admitted, transport connected, or call ended.
+  Timer? _joinWatchdog;
+  bool _joinReEmitted = false;
+  bool _showJoinRetry = false;
+  bool _mediaConnected = false;
+
   // Live duration tracking: elapsed since joining + plan cap remaining.
   Timer? _elapsedTicker;
   int _elapsedSeconds = 0;
@@ -211,8 +223,18 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   /// 2. ack `waitingRoom: true` → show the waiting overlay, (re-)enqueue via
   ///    `waiting-room:request`, and wait for `waiting-room:admitted` (→
   ///    re-join) or `waiting-room:denied` (→ leave);
-  /// 3. otherwise → start the mediasoup session immediately.
+  /// 3. otherwise → dismiss the connecting overlay immediately (ack success
+  ///    IS the join confirmation) and start the mediasoup session.
+  /// A watchdog re-emits the join once after 15s and surfaces a retry banner
+  /// after 12s more if media never connects.
   Future<void> _joinCallRoom() async {
+    _cancelJoinWatchdog();
+    _joinReEmitted = false;
+    _mediaConnected = false;
+    if (mounted && _showJoinRetry) {
+      setState(() => _showJoinRetry = false);
+    }
+
     final payload = <String, dynamic>{
       'roomId': widget.roomId,
       'userId': _resolvedUserId,
@@ -242,6 +264,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       if (ack['success'] == false) {
         // Server explicitly refused (room not found / ended / ...).
         Logger.error('call:join refused: ${ack['error']}');
+        _cancelJoinWatchdog();
         if (!mounted) return;
         setState(() {
           _isConnecting = false;
@@ -257,7 +280,86 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     if (ackFailed) {
       _socket.emitCallJoin(payload);
     }
+    // Ack success (or legacy join emitted): the server accepted us — drop
+    // the "Preparing to join" overlay now; the connection chip keeps showing
+    // transport-level progress until 'connected'. The join watchdog below
+    // tracks the MEDIA connection, not the overlay.
+    _dismissConnectingOverlay();
+    _armJoinWatchdog(payload);
     await _startMediasoupSession();
+  }
+
+  /// Marks the media path as fully connected and clears the watchdog/banner.
+  void _onMediaConnected() {
+    _mediaConnected = true;
+    _cancelJoinWatchdog();
+    if (!mounted) return;
+    if (_isConnecting || _showJoinRetry) {
+      setState(() {
+        _isConnecting = false;
+        _showJoinRetry = false;
+      });
+    }
+  }
+
+  /// Drops the "Preparing to join" overlay + retry banner (no watchdog
+  /// implications). Called on join ack success and waiting-room admitted.
+  void _dismissConnectingOverlay() {
+    if (!mounted) return;
+    if (_isConnecting || _showJoinRetry) {
+      setState(() {
+        _isConnecting = false;
+        _showJoinRetry = false;
+      });
+    }
+  }
+
+  void _cancelJoinWatchdog() {
+    _joinWatchdog?.cancel();
+    _joinWatchdog = null;
+  }
+
+  /// 15s with media still unconnected → re-emit `call:join` once (idempotent
+  /// server side). 12s more → non-blocking retry banner.
+  void _armJoinWatchdog(Map<String, dynamic> payload) {
+    _cancelJoinWatchdog();
+    _joinWatchdog = Timer(const Duration(seconds: 15), () {
+      if (!mounted || _hasLeft || _mediaConnected || _isWaitingForAdmission) return;
+      if (!_joinReEmitted) {
+        _joinReEmitted = true;
+        Logger.log('call:join watchdog — media not connected after 15s, re-emitting join');
+        _socket.emitCallJoin(payload);
+        _joinWatchdog = Timer(const Duration(seconds: 12), () {
+          if (!mounted || _hasLeft || _mediaConnected || _isWaitingForAdmission) return;
+          setState(() => _showJoinRetry = true);
+        });
+      } else {
+        setState(() => _showJoinRetry = true);
+      }
+    });
+  }
+
+  /// Retry button of the "Still connecting…" banner: reset the overlay and
+  /// run the whole join flow again. Never wipes the room silently.
+  Future<void> _retryJoin() async {
+    if (!mounted) return;
+    setState(() {
+      _showJoinRetry = false;
+      _isConnecting = true;
+      _connectionLabel = 'Reconnecting…';
+    });
+    _mediaConnected = false;
+    if (widget.isMeeting) {
+      _socket.emitMeetingJoin({
+        'meetingId': widget.roomId,
+        'userId': _resolvedUserId,
+        'userName': _resolvedUserName,
+        'isHost': _isCallHost,
+      });
+      await _startMediasoupSession();
+    } else {
+      await _joinCallRoom();
+    }
   }
 
   /// The normal mediasoup start sequence (device load → transports →
@@ -273,6 +375,10 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         onConnectionStateChanged: (connectionState) {
           if (!mounted) return;
           setState(() => _connectionLabel = connectionState);
+          // Transport actually connected → the join is fully done.
+          if (connectionState.toLowerCase() == 'connected') {
+            _onMediaConnected();
+          }
         },
         onRemoteStream: _addRemoteStream,
         onRemoteStreamRemoved: _removeRemoteStream,
@@ -298,6 +404,9 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         _isConnecting = false;
         _connectionLabel = 'Connected';
       });
+      // The mediasoup sequence completed (device load → transports →
+      // produce → consume): treat the media path as connected.
+      _onMediaConnected();
     } catch (e) {
       Logger.error('Error joining room: $e');
       if (!mounted) return;
@@ -364,6 +473,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     final roomId = (payload['roomId'] ?? payload['meetingId'])?.toString();
     if (roomId != null && roomId.isNotEmpty && roomId != widget.roomId) return;
     _clearWaitingRoom();
+    _dismissConnectingOverlay();
     _joinCallRoom();
   }
 
@@ -553,6 +663,11 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       if (endedCallId != null && endedCallId != widget.roomId) return;
       if (_hasLeft) return;
       if (!mounted) return;
+      // Kill the join watchdog + any looping ring on this transition.
+      _cancelJoinWatchdog();
+      _mediaConnected = false;
+      AppFeedback.stopRingtone();
+      AppFeedback.stopRingback();
       AppFeedback.playCallEndedSound();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Call ended')),
@@ -664,6 +779,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _socket.onWaitingRoomDenied = _previousWaitingDeniedHandler;
     _waitingHintTimer?.cancel();
     _waitingHintTimer = null;
+    _joinWatchdog?.cancel();
+    _joinWatchdog = null;
     _elapsedTicker?.cancel();
     _elapsedTicker = null;
 
@@ -782,7 +899,10 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     // added to the room, so we must not end it for everybody else.
     final wasWaitingInRoom = _isWaitingForAdmission;
     _clearWaitingRoom();
-    // Stop any ringback that may still be looping (outbound calls).
+    // Belt & braces: stop ANY looping ring (incoming ring or outbound
+    // ringback) on every leave transition — silence is non-negotiable once
+    // the call screen closes.
+    AppFeedback.stopRingtone();
     AppFeedback.stopRingback();
 
     // POP FIRST: previously we awaited onLeave (a REST call that could throw,
@@ -899,11 +1019,21 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
               child: _buildLocalPreview(),
             ),
             if (_showChat) _buildChatPanel(),
+            if (_showJoinRetry && !_isWaitingForAdmission) _buildJoinRetryBanner(),
+            // Bottom control bar — SafeArea(bottom) guarantees the hang-up
+            // button is NEVER clipped by gesture bars / home indicators, and
+            // the Wrap layout keeps every control reachable down to 320dp.
             Positioned(
-              bottom: 28,
               left: 0,
               right: 0,
-              child: _buildControls(),
+              bottom: 0,
+              child: SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: _buildControls(),
+                ),
+              ),
             ),
             // Waiting room (rooms with waiting_room_enabled): covers everything
             // until the host admits us (or we cancel & leave).
@@ -1410,13 +1540,70 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     );
   }
 
+  /// Non-blocking "Still connecting…" banner shown by the join watchdog —
+  /// offers a manual retry; the room is never silently wiped.
+  Widget _buildJoinRetryBanner() {
+    return Positioned(
+      left: 16,
+      right: 16,
+      bottom: 120,
+      child: SafeArea(
+        top: false,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFF451A03).withValues(alpha: 0.95),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFF59E0B).withValues(alpha: 0.5)),
+          ),
+          child: Row(
+            children: [
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Color(0xFFFBBF24),
+                ),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'Still connecting to the call…',
+                  style: TextStyle(color: Color(0xFFFDE68A), fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+              ),
+              TextButton(
+                onPressed: _retryJoin,
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFFFBBF24),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  minimumSize: const Size(48, 48),
+                ),
+                child: const Text(
+                  'Retry',
+                  style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildControls() {
+    // Wrap (not Row): on narrow screens (320dp) the controls flow onto a
+    // second line instead of overflowing — the hang-up button ALWAYS stays
+    // visible. Minimum touch target is 48dp via _dockButton/_leaveButton.
     return Center(
       child: Container(
+        constraints: const BoxConstraints(maxWidth: 560),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        margin: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
           color: const Color(0xFF0B1220).withValues(alpha: 0.92),
-          borderRadius: BorderRadius.circular(999),
+          borderRadius: BorderRadius.circular(28),
           border: Border.all(color: Colors.white10),
           boxShadow: [
             BoxShadow(
@@ -1426,50 +1613,46 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
             ),
           ],
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
+        child: Wrap(
+          alignment: WrapAlignment.center,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 10,
+          runSpacing: 10,
           children: [
             _dockButton(
               icon: _isAudioEnabled ? Icons.mic : Icons.mic_off,
               active: _isAudioEnabled,
               onPressed: _toggleAudio,
             ),
-            if (widget.enableVideo) ...[
-              const SizedBox(width: 10),
+            if (widget.enableVideo)
               _dockButton(
                 icon: _isVideoEnabled ? Icons.videocam : Icons.videocam_off,
                 active: _isVideoEnabled,
                 onPressed: _toggleVideo,
               ),
-              const SizedBox(width: 10),
+            if (widget.enableVideo)
               _dockButton(
                 icon: Icons.flip_camera_ios,
                 active: true,
                 onPressed: _switchCamera,
               ),
-            ],
-            const SizedBox(width: 10),
             _dockButton(
               icon: _isScreenSharing ? Icons.stop_screen_share : Icons.screen_share,
               active: _isScreenSharing,
               onPressed: _isSwitchingScreenShare ? null : _toggleScreenShare,
             ),
-            if (widget.isMeeting) ...[
-              const SizedBox(width: 10),
+            if (widget.isMeeting)
               _dockButton(
                 icon: Icons.chat_bubble_outline_rounded,
                 active: _showChat,
                 onPressed: () => setState(() => _showChat = !_showChat),
               ),
-            ],
-            const SizedBox(width: 10),
             _dockButton(
               icon: _isRecording ? Icons.fiber_manual_record : Icons.radio_button_unchecked,
               active: _isRecording,
               activeColor: const Color(0xFFEF4444),
               onPressed: _toggleRecording,
             ),
-            const SizedBox(width: 14),
             _leaveButton(),
           ],
         ),
