@@ -558,6 +558,105 @@ class ApiService {
     return await _dio.post('/transfers/$id/retry');
   }
 
+  /// International payout quote (USD payouts funded from an NGN wallet).
+  /// GET /transfers/quote?amount=&source_currency=&destination_currency=
+  /// Response: { success, data: { live_rate, markup_percent, marked_up_rate,
+  /// fee, total_debit (source currency), receiving_amount, ... } }
+  Future<Response> getTransferQuote({
+    required num amount,
+    String sourceCurrency = 'NGN',
+    String destinationCurrency = 'USD',
+  }) async {
+    return await _dio.get('/transfers/quote', queryParameters: {
+      'amount': amount,
+      'source_currency': sourceCurrency,
+      'destination_currency': destinationCurrency,
+    }, options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// Payroll employee directory with verification details.
+  /// GET /payroll/employees?verification_status=&currency=&search=&page=&limit=
+  /// Response: { success, data: [employees], pagination }
+  Future<Response> getPayrollEmployees({Map<String, dynamic>? params}) async {
+    return await _dio.get('/payroll/employees',
+        queryParameters: params, options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// Verify a single payroll employee via backend account lookup.
+  /// POST /payroll/employees/:id/verify → { success, data: { verification_status, account_name } }
+  Future<Response> verifyPayrollEmployee(String id, {bool suppressToast = true}) async {
+    return await _dio.post('/payroll/employees/$id/verify',
+        options: Options(extra: {'suppressToast': suppressToast}));
+  }
+
+  /// Bulk-verify payroll employees. Empty [employeeIds] (or null) = ALL
+  /// pending employees. Response:
+  /// { success, data: { total, verified, failed, results: [...] } }
+  Future<Response> verifyPayrollEmployeesBulk({List<String>? employeeIds, bool suppressToast = true}) async {
+    return await _dio.post('/payroll/employees/verify-bulk', data: {
+      if (employeeIds != null && employeeIds.isNotEmpty) 'employee_ids': employeeIds,
+    }, options: Options(extra: {'suppressToast': suppressToast}));
+  }
+
+  // -------------------------------------------------------------------------
+  // Push notifications (FCM device registration)
+  // -------------------------------------------------------------------------
+
+  /// Registers this device's FCM token so the backend can deliver pushes.
+  /// POST /notifications/register-device (path relative to the /api base —
+  /// NOTE the base URL already contains /api, so NO extra /api here).
+  Future<Response> registerDevice({
+    required String fcmToken,
+    required String platform,
+    String? deviceName,
+    String? appVersion,
+  }) async {
+    return await _dio.post('/notifications/register-device', data: {
+      'fcm_token': fcmToken,
+      'platform': platform,
+      if (deviceName != null && deviceName.isNotEmpty) 'device_name': deviceName,
+      if (appVersion != null && appVersion.isNotEmpty) 'app_version': appVersion,
+    }, options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// Removes this device's FCM token (logout). DELETE /notifications/register-device
+  Future<Response> unregisterDevice({required String fcmToken}) async {
+    return await _dio.delete('/notifications/register-device',
+        data: {'fcm_token': fcmToken}, options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// Deep-defensive account-name extraction for bank account lookups.
+  ///
+  /// The backend wraps provider responses in multiple layers:
+  ///   { success, data: { status: 'success', data: { account_name, account_number } } }
+  /// but older providers return flattened or camelCase shapes:
+  ///   { success, data: { account_name } }
+  ///   { success, data: { responseBody: { accountName } } }
+  /// This helper walks every known shape and returns null when nothing fits.
+  static String? extractAccountName(dynamic payload) {
+    dynamic probe(dynamic node) {
+      if (node is! Map) return null;
+      // Prefer the snake_case key, then the camelCase twin.
+      final direct = node['account_name'] ?? node['accountName'];
+      if (direct is String && direct.trim().isNotEmpty) return direct.trim();
+      return null;
+    }
+
+    // payload === the axios response body: { success, data: {...} }
+    dynamic data = payload is Map ? payload['data'] : null;
+    // 1. data.data.account_name (current backend contract)
+    final name = probe(data is Map ? data['data'] : null);
+    if (name != null) return name;
+    // 2. data.account_name (flattened)
+    final flat = probe(data);
+    if (flat != null) return flat;
+    // 3. data.responseBody.accountName (legacy provider passthrough)
+    final legacy = probe(data is Map ? data['responseBody'] : null);
+    if (legacy != null) return legacy;
+    // 4. top-level account_name (already-unwrapped callers)
+    return probe(payload);
+  }
+
   // Payroll API
   Future<Response> getPayrollSummary({Map<String, dynamic>? params}) async {
     return await _dio.get('/payroll/summary', queryParameters: params);
