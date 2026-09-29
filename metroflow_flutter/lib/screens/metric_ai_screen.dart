@@ -62,6 +62,17 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
   bool _uploadingImage = false;
   String? _pendingImageUrl;
   File? _pendingImagePreview;
+
+  // -- Video attachment (rides to /ai/chat as attachmentUrl+attachmentType) --
+  bool _uploadingVideo = false;
+  String? _pendingVideoUrl;
+  String? _pendingVideoName;
+
+  // -- Per-plan usage limits (GET /ai/usage) shown as header chips ----------
+  int? _chatUsedToday; int? _chatLimitToday;
+  int? _imageUsedToday; int? _imageLimitToday;
+  int? _videoUsedToday; int? _videoLimitToday;
+
   final List<_AiMessage> _messages = [];
 
   // -- Support conversation mode (human handoff) ------------------------------
@@ -130,6 +141,27 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
     }
     if (_available) {
       _loadHistory();
+      _loadUsage();
+    }
+  }
+
+  /// Refresh the per-plan usage counters (called on load and after every
+  /// send so the header chips stay honest).
+  Future<void> _loadUsage() async {
+    try {
+      final response = await _api.getAiUsage();
+      final data = response.data is Map ? response.data['data'] : null;
+      final usage = data is Map ? data['usage'] : null;
+      if (!mounted || usage is! Map) return;
+      int? used(Map? bucket) => bucket is Map ? (bucket['daily'] is Map ? (bucket['daily']['used'] as num?)?.toInt() : null) : null;
+      int? limit(Map? bucket) => bucket is Map ? (bucket['daily'] is Map ? (bucket['daily']['limit'] as num?)?.toInt() : null) : null;
+      setState(() {
+        _chatUsedToday = used(usage['chat'] as Map?); _chatLimitToday = limit(usage['chat'] as Map?);
+        _imageUsedToday = used(usage['image'] as Map?); _imageLimitToday = limit(usage['image'] as Map?);
+        _videoUsedToday = used(usage['video'] as Map?); _videoLimitToday = limit(usage['video'] as Map?);
+      });
+    } catch (e) {
+      Logger.error('MetricAi usage failed: $e');
     }
   }
 
@@ -214,14 +246,17 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
       );
       if (picked == null || !mounted) return;
       setState(() => _uploadingImage = true);
-      final upload = await _api.uploadChatMediaDetailed(File(picked.path));
+      // /ai/attachments is the canonical MetricAi upload endpoint — the URL
+      // comes back ready for /ai/chat (imageUrl) and gets persisted in history.
+      final upload = await _api.uploadAiAttachment(File(picked.path));
       if (!mounted) return;
-      if (upload == null || upload.url.isEmpty) {
+      final url = upload?['url']?.toString();
+      if (upload == null || url == null || url.isEmpty) {
         throw const FormatException('Image upload failed');
       }
       setState(() {
         _uploadingImage = false;
-        _pendingImageUrl = ApiService.resolveMediaUrl(upload.url) ?? upload.url;
+        _pendingImageUrl = ApiService.resolveMediaUrl(url) ?? url;
         _pendingImagePreview = File(picked.path);
       });
     } catch (e) {
@@ -235,17 +270,64 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
     }
   }
 
+  /// Pick + upload a video clip to /ai/attachments. Sent as
+  /// attachmentUrl/attachmentType 'video' — the backend samples frames and
+  /// reasons about them (vision), and the clip is stored with the message.
+  Future<void> _pickVideo() async {
+    if (_uploadingVideo || _sending) return;
+    try {
+      final picked = await _imagePicker.pickVideo(source: ImageSource.gallery);
+      if (picked == null || !mounted) return;
+      setState(() => _uploadingVideo = true);
+      final upload = await _api.uploadAiAttachment(File(picked.path));
+      if (!mounted) return;
+      final url = upload?['url']?.toString();
+      final type = upload?['attachmentType']?.toString() ?? 'video';
+      if (upload == null || url == null || url.isEmpty) {
+        throw const FormatException('Video upload failed');
+      }
+      if (type != 'video') {
+        throw const FormatException('That file is not a supported video');
+      }
+      setState(() {
+        _uploadingVideo = false;
+        _pendingVideoUrl = ApiService.resolveMediaUrl(url) ?? url;
+        _pendingVideoName = picked.name.isNotEmpty
+            ? picked.name
+            : (picked.path.split(Platform.pathSeparator).last);
+      });
+    } catch (e) {
+      Logger.error('MetricAi video upload failed: $e');
+      if (mounted) {
+        setState(() => _uploadingVideo = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(ApiService.extractErrorMessage(e))),
+        );
+      }
+    }
+  }
+
   Future<void> _send() async {
     final text = _messageController.text.trim();
     if (_sending) return;
-    if (text.isEmpty && _pendingImageUrl == null) return;
+    if (text.isEmpty && _pendingImageUrl == null && _pendingVideoUrl == null) return;
     final image = _pendingImageUrl;
+    final video = _pendingVideoUrl;
+    final videoName = _pendingVideoName;
 
     setState(() {
-      _messages.add(_AiMessage(role: 'user', content: text, imageUrl: image));
+      _messages.add(_AiMessage(
+        role: 'user',
+        content: text,
+        imageUrl: image,
+        videoUrl: video,
+        videoName: videoName,
+      ));
       _sending = true;
       _pendingImageUrl = null;
       _pendingImagePreview = null;
+      _pendingVideoUrl = null;
+      _pendingVideoName = null;
       _messageController.clear();
     });
     _scrollToBottom();
@@ -254,10 +336,15 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
       if (_helpMode) {
         // Free help mode — everything goes through the public endpoint.
         data = await _sendViaPublic(text);
-      } else if (image != null) {
-        // Image requests need the full assistant — no public fallback
+      } else if (image != null || video != null) {
+        // Attachment requests need the full assistant — no public fallback
         // (the public endpoint is text-only).
-        final response = await _api.sendAiChat(text, imageUrl: image);
+        final response = await _api.sendAiChat(
+          text,
+          imageUrl: image,
+          attachmentUrl: video,
+          attachmentType: video != null ? 'video' : null,
+        );
         data = response.data is Map && response.data['data'] is Map
             ? Map<String, dynamic>.from(response.data['data'] as Map)
             : null;
@@ -308,6 +395,7 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
         _sending = false;
       });
       _scrollToBottom();
+      _loadUsage();
       if (videoJobId != null && videoJobId.isNotEmpty) {
         await _pollVideoJob(videoJobId);
       }
@@ -318,7 +406,13 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
       Logger.error('MetricAi chat failed: $e');
       if (!mounted) return;
       setState(() => _sending = false);
-      if (code == 'metric_ai_not_enabled' ||
+      if (code == 'ai_limit_reached' || e.response?.statusCode == 429) {
+        // Per-plan usage cap — friendly upgrade dialog (mirrors web LimitRow).
+        final detail = e.response?.data is Map
+            ? (e.response!.data as Map)['error']?.toString() ?? ''
+            : '';
+        _showLimitDialog(detail);
+      } else if (code == 'metric_ai_not_enabled' ||
           e.response?.statusCode == 401 ||
           e.response?.statusCode == 403) {
         // Plan changed mid-session -> drop into free help mode.
@@ -1290,9 +1384,112 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
 
   // -- Chat body --------------------------------------------------------------
 
+  /// Compact per-plan daily quota chips (mirrors the web 'Today: x/y' row):
+  /// Chats 12/200 · Images 3/15 · Videos 0/5. Hidden when the plan sets no
+  /// limits at all (all null = unlimited) to avoid visual noise.
+  Widget _buildUsageChips(ThemeColors colors) {
+    final chips = <_UsageChip>[];
+    void add(String label, IconData icon, int? used, int? limit) {
+      if (used == null && limit == null) return;
+      chips.add(_UsageChip(
+        label: label,
+        icon: icon,
+        text: limit == null ? '$used today' : '$used/$limit today',
+        near: limit != null && used != null && used >= limit,
+      ));
+    }
+
+    add('Chats', Icons.chat_bubble_outline_rounded, _chatUsedToday, _chatLimitToday);
+    add('Images', Icons.image_outlined, _imageUsedToday, _imageLimitToday);
+    add('Videos', Icons.videocam_outlined, _videoUsedToday, _videoLimitToday);
+    if (chips.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        border: Border(bottom: BorderSide(color: colors.border)),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (var i = 0; i < chips.length; i++) ...[
+              if (i > 0) const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: chips[i].near ? AppColors.error.withValues(alpha: 0.08) : colors.primaryBg,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                      color: chips[i].near
+                          ? AppColors.error.withValues(alpha: 0.35)
+                          : colors.border),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(chips[i].icon,
+                        size: 13,
+                        color: chips[i].near ? AppColors.error : colors.primary),
+                    const SizedBox(width: 5),
+                    Text(
+                      '${chips[i].label} ${chips[i].text}',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                        color: chips[i].near ? AppColors.error : colors.text,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Friendly 429 (ai_limit_reached) dialog with an upgrade path — mirrors the
+  /// web LimitRow upgrade card. [detail] carries the backend's human message.
+  void _showLimitDialog(String detail) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: AppTheme.colors.surface,
+        icon: Icon(Icons.speed_rounded, color: AppColors.warning, size: 34),
+        title: const Text('Daily limit reached'),
+        content: Text(
+          detail.isNotEmpty
+              ? detail
+              : 'You have used up your MetricAi allowance for today on your plan. '
+                  'Counters reset at midnight UTC — or upgrade for a larger allowance.',
+          style: const TextStyle(height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('OK'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
+            onPressed: () {
+              Navigator.of(dialogContext).pop();
+              GoRouter.of(context).push('/main/subscription');
+            },
+            child: const Text('Upgrade plan'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildChatBody(ThemeColors colors) {
     return Column(
       children: [
+        if (_available) _buildUsageChips(colors),
         if (_helpMode && !_available) _buildHelpModeBanner(colors),
         Expanded(
           child: _loadingHistory && _messages.isEmpty
@@ -1385,6 +1582,42 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (_pendingVideoUrl != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: colors.primaryBg,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(Icons.videocam_rounded, color: colors.primary, size: 22),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    _pendingVideoName ?? 'Video attached — MetricAi will watch it',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Remove video',
+                  icon: Icon(Icons.close_rounded, color: colors.textSecondary),
+                  onPressed: () {
+                    setState(() {
+                      _pendingVideoUrl = null;
+                      _pendingVideoName = null;
+                    });
+                  },
+                ),
+              ],
+            ),
+          ),
         if (_pendingImagePreview != null)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
@@ -1443,6 +1676,29 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
                       : Icon(Icons.image_outlined,
                           color: colors.primary, size: 21),
                   onPressed: _uploadingImage ? null : _pickImage,
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 44,
+                height: 44,
+                child: IconButton(
+                  padding: EdgeInsets.zero,
+                  tooltip: 'Attach video',
+                  style: IconButton.styleFrom(
+                    backgroundColor: colors.primaryBg,
+                    shape: const CircleBorder(),
+                  ),
+                  icon: _uploadingVideo
+                      ? SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: colors.primary),
+                        )
+                      : Icon(Icons.videocam_outlined,
+                          color: colors.primary, size: 21),
+                  onPressed: _uploadingVideo ? null : _pickVideo,
                 ),
               ),
               const SizedBox(width: 8),
@@ -1514,6 +1770,7 @@ class _AiMessage {
   final String? imageUrl;
   final String? videoUrl;
   final String? videoCoverUrl;
+  final String? videoName; // user-side attached video filename chip
   final bool videoPending;
   final String? localId; // local-only placeholder id for async video jobs
   final bool suggestHumanSupport;
@@ -1524,6 +1781,7 @@ class _AiMessage {
     this.imageUrl,
     this.videoUrl,
     this.videoCoverUrl,
+    this.videoName,
     this.videoPending = false,
     this.localId,
     this.suggestHumanSupport = false,
@@ -1647,7 +1905,9 @@ class _AiBubble extends StatelessWidget {
                         padding: const EdgeInsets.only(bottom: 6),
                         child: ChatVideoCard(
                           url: message.videoUrl!,
-                          name: 'MetricAi video',
+                          name: isUser
+                              ? (message.videoName ?? 'Attached video')
+                              : 'MetricAi video',
                           isMe: isUser,
                           colors: colors,
                         ),
@@ -2099,4 +2359,19 @@ class _BouncingDotsState extends State<_BouncingDots>
       ),
     );
   }
+}
+
+/// Immutable data for one daily-quota chip in the MetricAi header row.
+class _UsageChip {
+  final String label;
+  final IconData icon;
+  final String text;
+  final bool near;
+
+  const _UsageChip({
+    required this.label,
+    required this.icon,
+    required this.text,
+    required this.near,
+  });
 }

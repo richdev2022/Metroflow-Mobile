@@ -1111,14 +1111,44 @@ class ApiService {
     return await _dio.get('/ai/status', options: Options(extra: {'suppressToast': true}));
   }
 
-  /// Chat with MetricAi. `imageUrl` (optional) is a /chat/media upload URL
-  /// passed as visual context — the backend stores it with the message and
-  /// describes the attachment to the model (text-only model).
-  Future<Response> sendAiChat(String message, {String? imageUrl}) async {
+  /// Chat with MetricAi. [imageUrl] is an attached/validated image URL (the
+  /// backend runs OCR/vision on it and stores it with the message).
+  /// [attachmentUrl] + [attachmentType] carry generic attachments
+  /// (currently video clips — attachmentType 'video') which the backend
+  /// stores and, for videos, samples frames from for vision.
+  Future<Response> sendAiChat(String message, {String? imageUrl, String? attachmentUrl, String? attachmentType}) async {
     return await _dio.post('/ai/chat', data: {
       'message': message,
       if (imageUrl != null && imageUrl.isNotEmpty) 'imageUrl': imageUrl,
+      if (attachmentUrl != null && attachmentUrl.isNotEmpty) 'attachmentUrl': attachmentUrl,
+      if (attachmentType != null && attachmentType.isNotEmpty) 'attachmentType': attachmentType,
     }, options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// MetricAi usage vs the caller's plan limits — GET /ai/usage.
+  /// `{ usage: { chat|image|video: { daily: {used, limit, resetsAt},
+  /// monthly: {...} } } }` (limit null = unlimited).
+  Future<Response> getAiUsage() async {
+    return await _dio.get('/ai/usage', options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// Upload a MetricAi attachment (image/video/pdf/text, 100MB) via
+  /// POST /ai/attachments as multipart form-data (field `file`). Returns
+  /// `{ url, filename, mimeType, attachmentType }` — pass url back as
+  /// imageUrl (images) or attachmentUrl+attachmentType (video) on /ai/chat.
+  /// Throws on network/server errors so the caller can surface them.
+  Future<Map<String, dynamic>?> uploadAiAttachment(File file) async {
+    final fileName = file.path.split(Platform.pathSeparator).last;
+    final formData = FormData.fromMap(<String, dynamic>{
+      'file': await MultipartFile.fromFile(file.path, filename: fileName),
+    });
+    final response = await _dio.post('/ai/attachments', data: formData,
+        options: Options(extra: {'suppressToast': true}));
+    final data = response.data is Map ? response.data['data'] : null;
+    if (data is Map && data['url'] != null) {
+      return Map<String, dynamic>.from(data);
+    }
+    return null;
   }
 
   /// MetricAi conversation history (oldest first).
