@@ -16,12 +16,16 @@ import '../utils/logger.dart';
 import '../widgets/chat_attachment_views.dart';
 import '../widgets/metric_ai_logo.dart';
 
-/// MetricAi — the plan-gated built-in AI assistant (like Meta AI in
-/// WhatsApp). Backed by GET /ai/status, POST /ai/chat, GET/DELETE /ai/history.
+/// MetricAi — the built-in AI assistant (like Meta AI in WhatsApp). Backed by
+/// GET /ai/status, POST /ai/chat, GET/DELETE /ai/history, and — in FREE HELP
+/// MODE — the public POST /public/metric-ai/ask endpoint.
 ///
-/// - If the caller's plan doesn't include MetricAi (available != true) the
-///   screen shows a locked card with an Upgrade CTA and never calls the chat
-///   endpoints.
+/// - Full assistant (image generation, any topic): when the caller's plan
+///   includes MetricAi (available == true).
+/// - FREE HELP MODE: when the plan doesn't include the full assistant (or the
+///   session is unauthenticated), the screen falls back to the public endpoint
+///   — Metricorex-scoped answers + human handoff — with an Upgrade CTA, so the
+///   AI is never a dead end. Matches the web app behaviour.
 /// - Replies arrive as markdown-ish text: rendered with paragraph/bullet/
 ///   **bold** handling. Generated images render as rounded images.
 /// - When the AI flags `suggestHumanSupport` the reply is followed by a
@@ -45,6 +49,13 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
   bool _available = false;
   String? _planName;
   String? _chatModel;
+
+  // -- Free help mode (public endpoint fallback) -----------------------------
+  // When the plan doesn't include the full assistant, the screen switches to
+  // the free public "Ask MetricAi" endpoint (Metricorex help + human handoff)
+  // instead of a dead-end lock screen. [a33b2c4] mirrors web help-mode.
+  bool _helpMode = false;
+  String? _helpSessionId;
 
   bool _loadingHistory = false;
   bool _sending = false;
@@ -94,6 +105,8 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
       if (data is Map) {
         setState(() {
           _available = data['available'] == true;
+          // Plan without the full assistant -> free Metricorex help mode.
+          _helpMode = !_available;
           _planName = data['planName']?.toString();
           _chatModel = data['chatModel']?.toString();
           _checkingStatus = false;
@@ -101,6 +114,7 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
       } else {
         setState(() {
           _available = false;
+          _helpMode = true;
           _checkingStatus = false;
         });
       }
@@ -109,6 +123,7 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
       if (!mounted) return;
       setState(() {
         _available = false;
+        _helpMode = true;
         _checkingStatus = false;
       });
       return;
@@ -227,13 +242,49 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
     });
     _scrollToBottom();
     try {
-      final response = await _api.sendAiChat(text, imageUrl: image);
-      final data = response.data is Map ? response.data['data'] : null;
+      Map<String, dynamic>? data;
+      if (_helpMode) {
+        // Free help mode — everything goes through the public endpoint.
+        data = await _sendViaPublic(text);
+      } else if (image != null) {
+        // Image requests need the full assistant — no public fallback
+        // (the public endpoint is text-only).
+        final response = await _api.sendAiChat(text, imageUrl: image);
+        data = response.data is Map && response.data['data'] is Map
+            ? Map<String, dynamic>.from(response.data['data'] as Map)
+            : null;
+      } else {
+        // Full assistant first; seamless downgrade to free help mode when
+        // the session hits the plan gate (401/403 metric_ai_not_enabled).
+        try {
+          final response = await _api.sendAiChat(text);
+          data = response.data is Map && response.data['data'] is Map
+              ? Map<String, dynamic>.from(response.data['data'] as Map)
+              : null;
+        } on DioException catch (e) {
+          final code = e.response?.data is Map
+              ? (e.response!.data as Map)['code']?.toString()
+              : null;
+          final gated = code == 'metric_ai_not_enabled' ||
+              e.response?.statusCode == 401 ||
+              e.response?.statusCode == 403;
+          if (!gated) rethrow;
+          if (mounted) {
+            setState(() {
+              _helpMode = true;
+              _available = false;
+            });
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text(
+                    'Switched to free Metricorex help mode. Upgrade any time for the full assistant.')));
+          }
+          data = await _sendViaPublic(text);
+        }
+      }
       if (!mounted) return;
-      final reply = data is Map ? (data['reply']?.toString() ?? '') : '';
-      final imageUrl = data is Map ? data['imageUrl']?.toString() : null;
-      final suggestHumanSupport =
-          data is Map && data['suggestHumanSupport'] == true;
+      final reply = data?['reply']?.toString() ?? '';
+      final imageUrl = data?['imageUrl']?.toString();
+      final suggestHumanSupport = data?['suggestHumanSupport'] == true;
       setState(() {
         _messages.add(_AiMessage(
           role: 'assistant',
@@ -253,9 +304,17 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
       Logger.error('MetricAi chat failed: $e');
       if (!mounted) return;
       setState(() => _sending = false);
-      if (code == 'metric_ai_not_enabled') {
-        // Plan changed mid-session → show the locked state.
-        setState(() => _available = false);
+      if (code == 'metric_ai_not_enabled' ||
+          e.response?.statusCode == 401 ||
+          e.response?.statusCode == 403) {
+        // Plan changed mid-session -> drop into free help mode.
+        setState(() {
+          _helpMode = true;
+          _available = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text(
+                'Switched to free Metricorex help mode. Ask any Metricorex question.')));
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -271,6 +330,22 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
             content: Text('MetricAi could not respond. Please try again.')),
       );
     }
+  }
+
+  /// Free help-mode turn through the PUBLIC endpoint (Metricorex-scoped +
+  /// human handoff). Persists the server session id for multi-turn context.
+  Future<Map<String, dynamic>?> _sendViaPublic(String text) async {
+    final response =
+        await _api.askPublicMetricAi(text, sessionId: _helpSessionId);
+    if (response.data is Map && response.data['data'] is Map) {
+      final data = Map<String, dynamic>.from(response.data['data'] as Map);
+      final sessionId = data['sessionId']?.toString();
+      if (sessionId != null && sessionId.isNotEmpty) {
+        _helpSessionId = sessionId;
+      }
+      return data;
+    }
+    return null;
   }
 
   void _scrollToBottom() {
@@ -722,7 +797,7 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
             : _buildAiAppBar(colors),
         body: _checkingStatus
             ? Center(child: CircularProgressIndicator(color: colors.primary))
-            : !_available
+            : (!_available && !_helpMode)
                 ? _buildLockedCard(colors)
                 : _supportMode
                     ? _buildSupportBody(colors)
@@ -755,9 +830,11 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
                 ),
               ),
               Text(
-                _chatModel != null
-                    ? 'Your AI assistant · $_chatModel'
-                    : 'Your AI assistant',
+                _helpMode && !_available
+                    ? 'Free help · Metricorex questions'
+                    : _chatModel != null
+                        ? 'Your AI assistant · $_chatModel'
+                        : 'Your AI assistant',
                 style: TextStyle(
                   fontSize: 11,
                   color: colors.textSecondary,
@@ -776,6 +853,43 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
           ),
         const SizedBox(width: 6),
       ],
+    );
+  }
+
+  /// Slim upgrade banner pinned above the composer in free help mode — keeps
+  /// the path to the full assistant (any topic + image generation) visible.
+  Widget _buildHelpModeBanner(ThemeColors colors) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: colors.primaryBg,
+        border: Border(bottom: BorderSide(color: colors.border)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              'Free help mode — I answer Metricorex questions and can hand you\nto a human. Upgrade for the full assistant.',
+              style: TextStyle(fontSize: 11.5, height: 1.35, color: colors.textSecondary),
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            height: 30,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+              ),
+              onPressed: () => GoRouter.of(context).push('/main/subscription'),
+              child: const Text('Upgrade',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1083,6 +1197,7 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
   Widget _buildChatBody(ThemeColors colors) {
     return Column(
       children: [
+        if (_helpMode && !_available) _buildHelpModeBanner(colors),
         Expanded(
           child: _loadingHistory && _messages.isEmpty
               ? Center(child: CircularProgressIndicator(color: colors.primary))
@@ -1094,7 +1209,9 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
                           MetricAiGlowLogo(radius: 40),
                           const SizedBox(height: 16),
                           Text(
-                            'Hi, I\'m MetricAi 👋',
+                            _helpMode && !_available
+                                ? 'Hi, I\'m MetricAi 👋'
+                                : 'Hi, I\'m MetricAi 👋',
                             style: TextStyle(
                               fontSize: 17,
                               fontWeight: FontWeight.w700,
@@ -1103,7 +1220,9 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            'Ask me anything about Metricorex — or anything else.\nTry "Generate a logo for my bakery".',
+                            _helpMode && !_available
+                                ? 'Ask me anything about Metricorex — plans, wallets,\ntransfers or meetings. Type \"Talk to a human\" for support.'
+                                : 'Ask me anything about Metricorex — or anything else.\nTry "Generate a logo for my bakery".',
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               fontSize: 13,
@@ -1207,29 +1326,31 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
         Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            SizedBox(
-              width: 44,
-              height: 44,
-              child: IconButton(
-                padding: EdgeInsets.zero,
-                tooltip: 'Attach image',
-                style: IconButton.styleFrom(
-                  backgroundColor: colors.primaryBg,
-                  shape: const CircleBorder(),
+            if (!_helpMode) ...[
+              SizedBox(
+                width: 44,
+                height: 44,
+                child: IconButton(
+                  padding: EdgeInsets.zero,
+                  tooltip: 'Attach image',
+                  style: IconButton.styleFrom(
+                    backgroundColor: colors.primaryBg,
+                    shape: const CircleBorder(),
+                  ),
+                  icon: _uploadingImage
+                      ? SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: colors.primary),
+                        )
+                      : Icon(Icons.image_outlined,
+                          color: colors.primary, size: 21),
+                  onPressed: _uploadingImage ? null : _pickImage,
                 ),
-                icon: _uploadingImage
-                    ? SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: colors.primary),
-                      )
-                    : Icon(Icons.image_outlined,
-                        color: colors.primary, size: 21),
-                onPressed: _uploadingImage ? null : _pickImage,
               ),
-            ),
-            const SizedBox(width: 8),
+              const SizedBox(width: 8),
+            ],
             Expanded(
               child: TextField(
                 controller: _messageController,
@@ -1238,7 +1359,9 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
                 maxLines: 5,
                 style: TextStyle(color: colors.text, fontSize: 14.5),
                 decoration: InputDecoration(
-                  hintText: 'Ask MetricAi anything...',
+                  hintText: _helpMode && !_available
+                      ? 'Ask a Metricorex question...'
+                      : 'Ask MetricAi anything...',
                   hintStyle: TextStyle(color: colors.textSecondary),
                   filled: true,
                   fillColor: colors.surfaceVariant,
