@@ -1134,6 +1134,13 @@ class ApiService {
     return await _dio.delete('/ai/history', options: Options(extra: {'suppressToast': true}));
   }
 
+  /// Poll an async MetricAi video job (GET /ai/video/:jobId). Status is
+  /// processing|success|failed; videoUrl (our own storage, never expires) is
+  /// present on success.
+  Future<Response> getAiVideoJob(String jobId) async {
+    return await _dio.get('/ai/video/$jobId', options: Options(extra: {'suppressToast': true}));
+  }
+
   /// Free public "Ask MetricAi" — POST /public/metric-ai/ask.
   /// No plan required: Metricorex-scoped help with human handoff
   /// (suggestHumanSupport in the response). [sessionId] keeps the 30-minute

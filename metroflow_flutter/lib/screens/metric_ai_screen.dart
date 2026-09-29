@@ -146,11 +146,19 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
             ..clear()
             ..addAll(messages.whereType<Map>().map((m) {
               final imageUrl = m['imageUrl']?.toString();
+              final videoUrl = m['videoUrl']?.toString();
+              final videoCoverUrl = m['videoCoverUrl']?.toString();
               return _AiMessage(
                 role: m['role']?.toString() ?? 'assistant',
                 content: m['content']?.toString() ?? '',
                 imageUrl: (imageUrl != null && imageUrl.isNotEmpty)
                     ? ApiService.resolveMediaUrl(imageUrl)
+                    : null,
+                videoUrl: (videoUrl != null && videoUrl.isNotEmpty)
+                    ? ApiService.resolveMediaUrl(videoUrl)
+                    : null,
+                videoCoverUrl: (videoCoverUrl != null && videoCoverUrl.isNotEmpty)
+                    ? ApiService.resolveMediaUrl(videoCoverUrl)
                     : null,
               );
             }));
@@ -285,6 +293,9 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
       final reply = data?['reply']?.toString() ?? '';
       final imageUrl = data?['imageUrl']?.toString();
       final suggestHumanSupport = data?['suggestHumanSupport'] == true;
+      final videoJobId = data?['videoJob'] is Map
+          ? (data!['videoJob'] as Map)['id']?.toString()
+          : null;
       setState(() {
         _messages.add(_AiMessage(
           role: 'assistant',
@@ -297,6 +308,9 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
         _sending = false;
       });
       _scrollToBottom();
+      if (videoJobId != null && videoJobId.isNotEmpty) {
+        await _pollVideoJob(videoJobId);
+      }
     } on DioException catch (e) {
       final code = e.response?.data is Map
           ? (e.response!.data as Map)['code']?.toString()
@@ -346,6 +360,88 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
       return data;
     }
     return null;
+  }
+
+  /// Poll an async MetricAi video job (10s interval, ~12.5min cap). A pending
+  /// placeholder bubble is swapped in place for the finished video (or a
+  /// friendly retry note on failure). The result also lands in history.
+  Future<void> _pollVideoJob(String jobId) async {
+    final localId = 'video-job-$jobId';
+    if (!mounted) return;
+    setState(() {
+      _messages.add(_AiMessage(
+        role: 'assistant',
+        content: 'Generating your video — it will appear here in a few minutes.',
+        videoPending: true,
+        localId: localId,
+      ));
+    });
+    _scrollToBottom();
+    final deadline =
+        DateTime.now().add(const Duration(minutes: 12, seconds: 30));
+    while (DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(seconds: 10));
+      if (!mounted) return;
+      try {
+        final response = await _api.getAiVideoJob(jobId);
+        final data =
+            response.data is Map ? response.data['data'] : null;
+        if (data is! Map) continue;
+        final status = data['status']?.toString();
+        final videoUrl = data['videoUrl']?.toString();
+        final coverUrl = data['coverUrl']?.toString();
+        final videoResolved = (videoUrl != null && videoUrl.isNotEmpty)
+            ? ApiService.resolveMediaUrl(videoUrl)
+            : null;
+        final coverResolved = (coverUrl != null && coverUrl.isNotEmpty)
+            ? ApiService.resolveMediaUrl(coverUrl)
+            : null;
+        if (status == 'success' && videoResolved != null) {
+          if (!mounted) return;
+          setState(() {
+            final i = _messages.indexWhere((m) => m.localId == localId);
+            if (i >= 0) {
+              _messages[i] = _messages[i].copyWith(
+                content: 'Your video is ready.',
+                videoUrl: videoResolved,
+                videoCoverUrl: coverResolved,
+                videoPending: false,
+              );
+            }
+          });
+          _scrollToBottom();
+          return;
+        }
+        if (status == 'failed') {
+          if (!mounted) return;
+          setState(() {
+            final i = _messages.indexWhere((m) => m.localId == localId);
+            if (i >= 0) {
+              _messages[i] = _messages[i].copyWith(
+                content:
+                    "The video didn't finish this time. You can ask me to try again — or I can generate an image of the same idea instead.",
+                videoPending: false,
+              );
+            }
+          });
+          _scrollToBottom();
+          return;
+        }
+      } catch (e) {
+        Logger.error('MetricAi video poll failed: $e');
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      final i = _messages.indexWhere((m) => m.localId == localId);
+      if (i >= 0) {
+        _messages[i] = _messages[i].copyWith(
+          content:
+              'The video is taking longer than expected. It may still arrive here in a few minutes.',
+          videoPending: false,
+        );
+      }
+    });
   }
 
   void _scrollToBottom() {
@@ -1416,14 +1512,39 @@ class _AiMessage {
   final String role; // 'user' | 'assistant'
   final String content;
   final String? imageUrl;
+  final String? videoUrl;
+  final String? videoCoverUrl;
+  final bool videoPending;
+  final String? localId; // local-only placeholder id for async video jobs
   final bool suggestHumanSupport;
 
   const _AiMessage({
     required this.role,
     required this.content,
     this.imageUrl,
+    this.videoUrl,
+    this.videoCoverUrl,
+    this.videoPending = false,
+    this.localId,
     this.suggestHumanSupport = false,
   });
+
+  _AiMessage copyWith({
+    String? content,
+    String? videoUrl,
+    String? videoCoverUrl,
+    bool? videoPending,
+  }) =>
+      _AiMessage(
+        role: role,
+        content: content ?? this.content,
+        imageUrl: imageUrl,
+        videoUrl: videoUrl ?? this.videoUrl,
+        videoCoverUrl: videoCoverUrl ?? this.videoCoverUrl,
+        videoPending: videoPending ?? this.videoPending,
+        localId: localId,
+        suggestHumanSupport: suggestHumanSupport,
+      );
 }
 
 class _AiBubble extends StatelessWidget {
@@ -1521,7 +1642,43 @@ class _AiBubble extends StatelessWidget {
                           ),
                         ),
                       ),
-                    if (message.content.isNotEmpty)
+                    if (message.videoUrl != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: ChatVideoCard(
+                          url: message.videoUrl!,
+                          name: 'MetricAi video',
+                          isMe: isUser,
+                          colors: colors,
+                        ),
+                      ),
+                    if (message.videoPending && message.videoUrl == null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: colors.primary),
+                            ),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                message.content,
+                                style: TextStyle(
+                                  color: colors.textSecondary,
+                                  fontSize: 13.5,
+                                  height: 1.35,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    if (message.content.isNotEmpty && !message.videoPending)
                       isUser
                           ? Text(
                               message.content,
