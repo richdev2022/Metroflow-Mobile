@@ -1253,11 +1253,11 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
           decoration: InputDecoration(
             hintText: 'e.g. 021000021',
             hintStyle: TextStyle(color: colors.textSecondary),
+            counterText: '',
           ),
           style: TextStyle(color: colors.text, fontSize: 16),
           keyboardType: TextInputType.number,
           maxLength: 12,
-          counterText: '',
           onChanged: (value) => setState(() => routingNumber = value),
         )),
       ],
