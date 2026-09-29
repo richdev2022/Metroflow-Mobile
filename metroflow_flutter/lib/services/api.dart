@@ -1134,6 +1134,18 @@ class ApiService {
     return await _dio.delete('/ai/history', options: Options(extra: {'suppressToast': true}));
   }
 
+  /// Free public "Ask MetricAi" — POST /public/metric-ai/ask.
+  /// No plan required: Metricorex-scoped help with human handoff
+  /// (suggestHumanSupport in the response). [sessionId] keeps the 30-minute
+  /// server-side conversation thread; pass the id returned by the previous
+  /// call to continue the same thread.
+  Future<Response> askPublicMetricAi(String message, {String? sessionId}) async {
+    return await _dio.post('/public/metric-ai/ask', data: {
+      'message': message,
+      if (sessionId != null && sessionId.isNotEmpty) 'sessionId': sessionId,
+    }, options: Options(extra: {'suppressToast': true}));
+  }
+
   // -------------------------------------------------------------------------
   // MetricAi human handoff — support desk (customer side, JWT auth).
   // POST /support/escalate, GET /support/my/:id/messages?after=ISO,

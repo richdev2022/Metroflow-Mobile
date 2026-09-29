@@ -73,8 +73,11 @@ class _MetricAiGlowLogoState extends State<MetricAiGlowLogo>
           ),
           padding: EdgeInsets.all(size * 0.08),
           child: ClipOval(
+            // Use the SQUARE app icon here: the wide wordmark (logo.png,
+            // 1024x273) is cropped to a blank sliver inside a circular
+            // BoxFit.cover frame — the same bug fixed on the web app.
             child: Image.asset(
-              'assets/images/logo.png',
+              'assets/images/appIcon.png',
               fit: BoxFit.cover,
             ),
           ),
