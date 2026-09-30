@@ -186,6 +186,9 @@ class _MeetingsScreenState extends ConsumerState<MeetingsScreen> {
       final response = await _api.joinMeeting(meeting.id);
       if (response.data['success'] == true && mounted) {
         final userName = await StorageService().getUserName();
+        // Provider credentials from the join response (absent = default flow).
+        final joinData = response.data['data'];
+        final callingRaw = joinData is Map ? joinData['calling'] : null;
         await VideoCallScreen.showModal(
           context: context,
           roomId: meeting.id,
@@ -193,6 +196,7 @@ class _MeetingsScreenState extends ConsumerState<MeetingsScreen> {
           isMeeting: true,
           userName: userName,
           onLeave: () => _leaveMeeting(meeting.id),
+          calling: callingRaw is Map ? Map<String, dynamic>.from(callingRaw) : null,
         );
       }
     } catch (e) {
