@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "268045301442",
+    "project_id": "metricorex",
+    "storage_bucket": "metricorex.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:268045301442:android:0893c79e4e7676f7312d5b",
+        "android_client_info": {
+          "package_name": "com.example.Metricorex_flutter"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD6xaYI5Oq8BpMc2yEvC9xB2UAx_7M2yxk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
