@@ -200,10 +200,13 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       // the room (see CallNotifier.stopOutboundRing).
       ref.read(callProvider.notifier).startOutboundRing(call.id);
 
-      await _api.joinCall(call.id);
+      final joinResponse = await _api.joinCall(call.id);
       if (!mounted) return;
       final userName = await _storage.getUserName();
       if (!mounted) return;
+      // Provider credentials from the join response (absent = default flow).
+      final joinData = joinResponse.data['data'];
+      final callingRaw = joinData is Map ? joinData['calling'] : null;
       await VideoCallScreen.showModal(
         context: context,
         roomId: call.id,
@@ -219,6 +222,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
             Logger.error('leaveCall failed (non-fatal): $e');
           }
         },
+        calling: callingRaw is Map ? Map<String, dynamic>.from(callingRaw) : null,
       );
       // Modal closed → we left the room; make sure the ringback is silenced.
       if (mounted) ref.read(callProvider.notifier).stopOutboundRing();

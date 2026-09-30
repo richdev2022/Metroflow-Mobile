@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../services/mediasoup_room_service.dart';
+import '../services/calling/calling_engine.dart';
+import '../services/calling/livekit_engine.dart';
 import '../services/socket_service.dart';
 import '../services/api.dart' show StorageService;
 import '../utils/app_feedback.dart';
@@ -19,6 +21,11 @@ class VideoCallScreen extends StatefulWidget {
   final bool isGroupCall;
   final FutureOr<void> Function()? onLeave;
 
+  /// Provider credentials from the REST join response (`data.calling`).
+  /// Optional: when null the screen falls back to the `call:join` ack, and
+  /// when both are absent the socket media flow is used unchanged.
+  final Map<String, dynamic>? calling;
+
   const VideoCallScreen({
     super.key,
     required this.roomId,
@@ -29,6 +36,7 @@ class VideoCallScreen extends StatefulWidget {
     this.isHost = false,
     this.isGroupCall = false,
     this.onLeave,
+    this.calling,
   });
 
   static Future<void> showModal({
@@ -41,6 +49,7 @@ class VideoCallScreen extends StatefulWidget {
     bool isHost = false,
     bool isGroupCall = false,
     FutureOr<void> Function()? onLeave,
+    Map<String, dynamic>? calling,
   }) {
     return showDialog<void>(
       context: context,
@@ -56,6 +65,7 @@ class VideoCallScreen extends StatefulWidget {
           isHost: isHost,
           isGroupCall: isGroupCall,
           onLeave: onLeave,
+          calling: calling,
         ),
       ),
     );
@@ -115,6 +125,12 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   final List<_ChatLine> _chatLines = [];
 
   MediasoupRoomService? _room;
+  CallingEngine? _engine;
+
+  /// Provider credentials for this room — from the REST join response
+  /// (widget.calling) or, for entry points without one (incoming call
+  /// accept), from the `call:join` ack.
+  Map<String, dynamic>? _effectiveCalling;
   bool _isAudioEnabled = true;
   bool _isVideoEnabled = true;
   bool _isScreenSharing = false;
@@ -198,6 +214,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     }
     if (_resolvedUserName.trim().isEmpty) _resolvedUserName = widget.userName ?? 'User';
 
+    _effectiveCalling = widget.calling;
+
     await _localRenderer.initialize();
     await _screenRenderer.initialize();
     _wireRoomEvents();
@@ -209,7 +227,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         'userName': _resolvedUserName,
         'isHost': false,
       });
-      await _startMediasoupSession();
+      await _startMediaSession();
       return;
     }
 
@@ -275,6 +293,12 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         );
         return;
       }
+      // Newer backends attach provider credentials to the join ack — this
+      // covers entry points without a REST join response (incoming accept).
+      final calling = ack['calling'];
+      if (_effectiveCalling == null && calling is Map) {
+        _effectiveCalling = Map<String, dynamic>.from(calling);
+      }
     }
 
     if (ackFailed) {
@@ -286,7 +310,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     // tracks the MEDIA connection, not the overlay.
     _dismissConnectingOverlay();
     _armJoinWatchdog(payload);
-    await _startMediasoupSession();
+    await _startMediaSession();
   }
 
   /// Marks the media path as fully connected and clears the watchdog/banner.
@@ -356,9 +380,91 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         'userName': _resolvedUserName,
         'isHost': _isCallHost,
       });
-      await _startMediasoupSession();
+      await _startMediaSession();
     } else {
       await _joinCallRoom();
+    }
+  }
+
+  /// Provider-aware start: when the join credentials point at the secondary
+  /// provider the session runs through [LiveKitEngine]; every other case
+  /// (credentials absent, degraded, legacy backend) keeps the socket
+  /// MediaSoup flow below untouched.
+  Future<void> _startMediaSession() async {
+    if (_isLiveKit) {
+      await _startLiveKitSession();
+    } else {
+      await _startMediasoupSession();
+    }
+  }
+
+  bool get _isLiveKit {
+    final calling = _effectiveCalling;
+    if (calling == null) return false;
+    return calling['provider']?.toString() == 'livekit' &&
+        (calling['token']?.toString() ?? '').isNotEmpty &&
+        (calling['serverUrl']?.toString() ?? '').isNotEmpty;
+  }
+
+  Future<void> _startLiveKitSession() async {
+    try {
+      final session = CallingSession.fromMap(
+        _effectiveCalling,
+        roomId: widget.roomId,
+        roomType: widget.isMeeting ? 'meeting' : 'call',
+        identity: _resolvedUserId,
+        displayName: _resolvedUserName,
+        isHost: _isCallHost,
+        audioStartEnabled: true,
+        videoStartEnabled: widget.enableVideo,
+      );
+      if (session.fallback) {
+        Logger.log('Calling provider degraded: ${session.fallbackReason}');
+      }
+
+      final engine = LiveKitEngine();
+      engine.onConnectionStateChanged = (state) {
+        if (!mounted) return;
+        setState(() => _connectionLabel = state);
+        if (state.toLowerCase() == 'connected') {
+          _onMediaConnected();
+        }
+      };
+      engine.onRemoteStream = _addRemoteStream;
+      engine.onRemoteStreamRemoved = _removeRemoteStream;
+      engine.onLocalStreamReady = (stream) {
+        if (!mounted) return;
+        setState(() => _localRenderer.srcObject = stream);
+      };
+      engine.onScreenShareStarted = (stream) {
+        if (!mounted) return;
+        setState(() => _screenRenderer.srcObject = stream);
+      };
+      engine.onScreenShareStopped = () {
+        if (!mounted) return;
+        setState(() => _screenRenderer.srcObject = null);
+      };
+
+      _engine = engine;
+      await engine.connect(session);
+      if (!mounted) return;
+      final localStream = engine.localStream;
+      setState(() {
+        if (localStream != null) _localRenderer.srcObject = localStream;
+        _isConnecting = false;
+        _connectionLabel = 'Connected';
+      });
+      _onMediaConnected();
+    } catch (e) {
+      Logger.error('Error joining room: $e');
+      if (!mounted) return;
+      setState(() {
+        _isConnecting = false;
+        _connectionLabel = 'Unable to connect media';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Unable to connect media: $e')),
+      );
     }
   }
 
@@ -786,6 +892,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
     if (_cleanupDone) return;
     _cleanupDone = true;
+    await _engine?.disconnect();
+    _engine = null;
     await _room?.stop();
     for (final tile in _remoteTiles) {
       await tile.renderer.dispose();
@@ -799,7 +907,11 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     final enabled = !_isAudioEnabled;
     setState(() => _isAudioEnabled = enabled);
     try {
-      await _room?.setAudioEnabled(enabled);
+      if (_isLiveKit) {
+        await _engine?.setMicEnabled(enabled);
+      } else {
+        await _room?.setAudioEnabled(enabled);
+      }
     } catch (e) {
       Logger.error('Error toggling microphone: $e');
       if (!mounted) return;
@@ -814,7 +926,11 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     final enabled = !_isVideoEnabled;
     setState(() => _isVideoEnabled = enabled);
     try {
-      await _room?.setVideoEnabled(enabled);
+      if (_isLiveKit) {
+        await _engine?.setCameraEnabled(enabled);
+      } else {
+        await _room?.setVideoEnabled(enabled);
+      }
     } catch (e) {
       Logger.error('Error toggling camera: $e');
       if (!mounted) return;
@@ -827,7 +943,11 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
   Future<void> _switchCamera() async {
     try {
-      await _room?.switchCamera();
+      if (_isLiveKit) {
+        await _engine?.switchCamera();
+      } else {
+        await _room?.switchCamera();
+      }
     } catch (e) {
       Logger.error('Error switching camera: $e');
       if (!mounted) return;
@@ -843,10 +963,18 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     try {
       final roomKey = widget.isMeeting ? 'meetingId' : 'callId';
       if (_isScreenSharing) {
-        await _room?.stopScreenShare();
+        if (_isLiveKit) {
+          await _engine?.stopScreenShare();
+        } else {
+          await _room?.stopScreenShare();
+        }
         _socket.emitScreenShareStop({roomKey: widget.roomId});
       } else {
-        await _room?.startScreenShare();
+        if (_isLiveKit) {
+          await _engine?.startScreenShare();
+        } else {
+          await _room?.startScreenShare();
+        }
         _socket.emitScreenShareStart({roomKey: widget.roomId});
       }
       if (mounted) setState(() => _isScreenSharing = !_isScreenSharing);
