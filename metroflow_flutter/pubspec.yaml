@@ -61,6 +61,18 @@ dependencies:
   permission_handler: ^11.3.1
   mediasoup_client_flutter:
     path: third_party/mediasoup_client_flutter
+  # Second calling provider (server decides via the join response's `calling`
+  # object). livekit_client 2.x pins flutter_webrtc exactly — 2.9.0 pins
+  # flutter_webrtc 1.5.2 (the version this app + the vendored mediasoup client
+  # are locked on); 2.10+ force flutter_webrtc 1.6.0, so the range is capped
+  # until the mediasoup stack is regression-tested on the newer webrtc.
+  livekit_client: ">=2.9.0 <2.10.0"
+
+# livekit_client needs meta ^1.17.0 while some Flutter SDKs pin flutter_test
+# to an older meta. meta is a pure-Dart annotations package and 1.17+ is
+# backward compatible — this override only lifts the SDK's soft pin.
+dependency_overrides:
+  meta: "^1.17.0"
 
 dev_dependencies:
   flutter_test:

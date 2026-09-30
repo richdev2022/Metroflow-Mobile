@@ -127,8 +127,9 @@ class IncomingCallDialog extends ConsumerWidget {
                       // this overlay dialog — using `context` afterwards
                       // silently skipped opening the call screen.
                       final navContext = navigatorKey.currentContext;
+                      Map<String, dynamic>? calling;
                       try {
-                        await callNotifier.acceptCall(call);
+                        calling = await callNotifier.acceptCall(call);
                       } catch (e) {
                         debugPrint('Error accepting call: $e');
                       }
@@ -149,6 +150,7 @@ class IncomingCallDialog extends ConsumerWidget {
                               debugPrint('leaveCall failed (non-fatal): $e');
                             }
                           },
+                          calling: calling,
                         );
                       } catch (e) {
                         debugPrint('Error opening call screen: $e');
