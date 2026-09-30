@@ -238,6 +238,15 @@ class LiveKitEngine implements CallingEngine {
       Logger.error('Error subscribing to a remote track: '
           '${event.reason} (sid: ${event.sid})');
     }));
+    // Real audio-level active speakers — drives the speaking glow on the
+    // call screen tiles (local participant included).
+    keep(room.events.on<lk.ActiveSpeakersChangedEvent>((event) {
+      final ids = event.speakers
+          .map((p) => p.identity)
+          .where((id) => id.isNotEmpty)
+          .toList();
+      onActiveSpeakers?.call(ids);
+    }));
   }
 
   void _emitExistingTracks(lk.RemoteParticipant participant) {
