@@ -31,6 +31,10 @@ class SocketService {
   void Function(dynamic)? onMeetingEnded;
   void Function(dynamic)? onConversationCreated;
   void Function(dynamic)? onMessageCreated;
+  /// Batch-4 parity: `message:updated` fires after an edit / delete-for-
+  /// everyone; payload is the updated message row (editedAt, content and/or
+  /// deletedForEveryone flags).
+  void Function(dynamic)? onMessageUpdated;
   void Function(dynamic)? onCallCreated;
   void Function(dynamic)? onCallUpdated;
   void Function(dynamic)? onCallInvite;
@@ -41,6 +45,10 @@ class SocketService {
   void Function(dynamic)? onCallParticipantLeft;
   void Function(dynamic)? onCallDeleted;
   void Function(dynamic)? onUserPresenceUpdated;
+  /// Presence parity (batch 4): `presence:update` { userId, lastSeenAt,
+  /// presenceStatus } — carries the last-seen instant the chat header needs
+  /// ("last seen today at 19:46"). `lastSeenAt` may be ISO string OR epoch.
+  void Function(dynamic)? onPresenceUpdate;
   void Function(dynamic)? onMediasoupNewProducer;
   void Function(dynamic)? onMediasoupProducerClosed;
   void Function(dynamic)? onRecordingStarted;
@@ -173,6 +181,10 @@ class SocketService {
       if (onMessageCreated != null) onMessageCreated!(data);
     });
 
+    _socket?.on('message:updated', (data) {
+      if (onMessageUpdated != null) onMessageUpdated!(data);
+    });
+
     _socket?.on('chat:new-message-notification', (data) {
       if (onChatNewMessageNotification != null) onChatNewMessageNotification!(data);
     });
@@ -242,6 +254,13 @@ class SocketService {
 
     _socket?.on('user-presence-updated', (data) {
       if (onUserPresenceUpdated != null) onUserPresenceUpdated!(data);
+    });
+
+    // Newer presence payload with the last-seen instant (chat last-seen
+    // header). Kept separate from user-presence-updated so old backends
+    // simply never fire it.
+    _socket?.on('presence:update', (data) {
+      if (onPresenceUpdate != null) onPresenceUpdate!(data);
     });
 
     _socket?.on('mediasoup:newProducer', (data) {

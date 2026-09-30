@@ -3,6 +3,11 @@ class ConversationParticipant {
   final String userId;
   final DateTime? lastReadAt;
 
+  /// Presence parity: the backend enriches participants with the user's
+  /// `last_seen_at` (best-effort; null on older payloads).
+  final DateTime? lastSeenAt;
+  final String? presenceStatus;
+
   // Enriched fields from the backend (LEFT JOIN users) — used to build the
   // profile sheet and derive display names when `displayName` is missing.
   final String name;
@@ -13,6 +18,8 @@ class ConversationParticipant {
     required this.id,
     required this.userId,
     this.lastReadAt,
+    this.lastSeenAt,
+    this.presenceStatus,
     this.name = '',
     this.email = '',
     this.avatarUrl,
@@ -23,6 +30,8 @@ class ConversationParticipant {
       id: (json['id'] ?? '').toString(),
       userId: (json['userId'] ?? json['user_id'] ?? '').toString(),
       lastReadAt: _parseDate(json['lastReadAt'] ?? json['last_read_at']),
+      lastSeenAt: _parseDate(json['lastSeenAt'] ?? json['last_seen_at']),
+      presenceStatus: (json['presenceStatus'] ?? json['presence_status'])?.toString(),
       name: (json['name'] ?? '').toString(),
       email: (json['email'] ?? '').toString(),
       avatarUrl: (json['avatarUrl'] ?? json['avatar_url'])?.toString(),
@@ -44,7 +53,15 @@ class ConversationParticipant {
 DateTime? _parseDate(dynamic value) {
   if (value == null) return null;
   if (value is DateTime) return value;
-  return DateTime.tryParse(value.toString());
+  // Epoch support: JSON numbers arrive as seconds (< 1e11) or milliseconds.
+  // Parsed as UTC instants — every formatter renders via toLocal()/AppTimezone.
+  if (value is num && value > 0) {
+    final ms = value >= 100000000000 ? value.toInt() : (value.toInt() * 1000);
+    return DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true);
+  }
+  final raw = value.toString();
+  if (raw.isEmpty) return null;
+  return DateTime.tryParse(raw);
 }
 
 int _parseIntOrZero(dynamic value) {
@@ -73,6 +90,12 @@ class Conversation {
   final String? displayName;
   final String? displayAvatarUrl;
 
+  /// Presence parity (batch 4): the OTHER participant's last-seen instant —
+  /// top-level `otherUserLastSeenAt` on the conversations payload or the
+  /// participant's own `lastSeenAt`. Null on older backends.
+  final DateTime? otherUserLastSeenAt;
+  final String? otherUserPresenceStatus;
+
   Conversation({
     required this.id,
     this.name,
@@ -88,6 +111,8 @@ class Conversation {
     this.isGroupFlag,
     this.displayName,
     this.displayAvatarUrl,
+    this.otherUserLastSeenAt,
+    this.otherUserPresenceStatus,
   });
 
   factory Conversation.fromJson(Map<String, dynamic> json) {
@@ -110,7 +135,28 @@ class Conversation {
       isGroupFlag: json['isGroup'] is bool ? json['isGroup'] as bool : null,
       displayName: json['displayName']?.toString(),
       displayAvatarUrl: json['displayAvatarUrl']?.toString(),
+      otherUserLastSeenAt: _parseDate(
+          json['otherUserLastSeenAt'] ?? json['other_user_last_seen_at']),
+      otherUserPresenceStatus:
+          (json['otherUserPresenceStatus'] ?? json['other_user_presence_status'])?.toString(),
     );
+  }
+
+  /// Best-effort last-seen for the peer: the top-level enriched field first,
+  /// then the participant row. Handles both ISO strings (already parsed by
+  /// fromJson) and epoch MILLIS values smuggled through as num via the raw
+  /// maps — the socket `presence:update` handler also normalizes there.
+  DateTime? otherLastSeen(String? currentUserId) {
+    if (otherUserLastSeenAt != null) return otherUserLastSeenAt;
+    final other = otherParticipant(currentUserId);
+    return other?.lastSeenAt;
+  }
+
+  String? otherPresenceStatus(String? currentUserId) {
+    final provided = otherUserPresenceStatus?.trim();
+    if (provided != null && provided.isNotEmpty) return provided;
+    final other = otherParticipant(currentUserId);
+    return other?.presenceStatus?.trim();
   }
 
   bool get isGroup => isGroupFlag ?? type == 'group';
