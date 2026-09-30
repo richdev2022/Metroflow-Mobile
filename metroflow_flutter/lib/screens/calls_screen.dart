@@ -237,6 +237,8 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
         final currentUserId = await StorageService().getUserId();
         final isHost = updatedCall.createdById == currentUserId ||
             updatedCall.hostId == currentUserId;
+        // Provider credentials from the join response (absent = default flow).
+        final callingRaw = responseData is Map ? responseData['calling'] : null;
         await VideoCallScreen.showModal(
           context: context,
           roomId: updatedCall.id,
@@ -246,6 +248,7 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
           isHost: isHost,
           isGroupCall: updatedCall.isGroupCall,
           onLeave: () => _leaveCall(updatedCall.id),
+          calling: callingRaw is Map ? Map<String, dynamic>.from(callingRaw) : null,
         );
         // Modal closed → we left the room. Make sure the outbound ringback
         // is silenced even if no call:accepted/rejected/ended arrived.

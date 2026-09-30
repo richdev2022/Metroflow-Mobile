@@ -230,7 +230,10 @@ class CallNotifier extends Notifier<IncomingCallState> {
   /// immediately (so the overlay disappears), and best-effort marks the
   /// participant as joined via REST. Never throws — navigation continues
   /// regardless of REST failures.
-  Future<void> acceptCall(Call call) async {
+  ///
+  /// Returns the provider credentials attached to the join response (when the
+  /// backend routes the room through its secondary provider), null otherwise.
+  Future<Map<String, dynamic>?> acceptCall(Call call) async {
     _ringTimeout?.cancel();
     AppFeedback.stopRingtone();
     try {
@@ -240,11 +243,15 @@ class CallNotifier extends Notifier<IncomingCallState> {
     }
     state = IncomingCallState();
     try {
-      await _apiService.joinCall(call.id);
+      final response = await _apiService.joinCall(call.id);
+      final data = response.data['data'];
+      final calling = data is Map ? data['calling'] : null;
+      return calling is Map ? Map<String, dynamic>.from(calling) : null;
     } catch (e) {
       // Non-fatal: the participant may not exist in call_participants yet;
-      // the socket room join + mediasoup flow do not depend on this.
+      // the socket room join + media flow do not depend on this.
       debugPrint('Non-fatal: REST joinCall failed while accepting: $e');
+      return null;
     }
   }
 
