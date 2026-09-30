@@ -150,6 +150,14 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   final CaptionsController _captions = CaptionsController();
   bool _showCaptions = false;
 
+  // Real audio-level active speakers (LiveKit engine). Empty when nobody is
+  // speaking or the engine doesn't report levels (MediaSoup → legacy glow).
+  Set<String> _activeSpeakerIds = {};
+
+  // Google Meet-style pin: tap a tile to make it the big stage tile; tap
+  // again (or tap the stage) to unpin. Screen shares always take the stage.
+  String? _pinnedPeerId;
+
   // AI meeting notes: notified while a meeting room is open when the backend
   // finishes generating notes for THIS meeting.
   void Function(dynamic)? _previousNotesHandler;
@@ -513,6 +521,10 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     engine.onScreenShareStopped = () {
       if (!mounted) return;
       setState(() => _screenRenderer.srcObject = null);
+    };
+    engine.onActiveSpeakers = (ids) {
+      if (!mounted) return;
+      setState(() => _activeSpeakerIds = ids.toSet());
     };
 
     _engine = engine;
@@ -1497,12 +1509,65 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       );
     }
 
+    // Stage + filmstrip: screen shares always take the stage; a tapped tile
+    // is pinned to it (tap again to release). Mirrors the web app behaviour.
+    _ParticipantTileData? stageTile;
+    for (final p in participants) {
+      if (p.isScreenShare) {
+        stageTile = p;
+        break;
+      }
+    }
+    if (stageTile == null && _pinnedPeerId != null) {
+      for (final p in participants) {
+        if (p.id == _pinnedPeerId) {
+          stageTile = p;
+          break;
+        }
+      }
+      // The pinned participant left — clear the pin.
+      if (stageTile == null) _pinnedPeerId = null;
+    }
+
+    if (stageTile != null) {
+      final stage = stageTile;
+      final strip = participants.where((p) => p.id != stage.id).toList();
+      return Column(
+        children: [
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+              child: _buildParticipantTile(stage, pinned: stage.id == _pinnedPeerId),
+            ),
+          ),
+          if (strip.isNotEmpty)
+            SizedBox(
+              height: 118,
+              child: ListView.separated(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                scrollDirection: Axis.horizontal,
+                itemCount: strip.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                itemBuilder: (context, index) => SizedBox(
+                  width: 168,
+                  child: _buildParticipantTile(strip[index], filmstrip: true),
+                ),
+              ),
+            ),
+        ],
+      );
+    }
+
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
     return GridView.builder(
       padding: const EdgeInsets.all(12),
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: participants.length <= 2 ? 1 : 2,
+        crossAxisCount: isLandscape
+            ? 2
+            : (participants.length <= 2 ? 1 : 2),
         mainAxisSpacing: 10,
         crossAxisSpacing: 10,
+        childAspectRatio: isLandscape && participants.length == 2 ? 1.5 : 1.0,
       ),
       itemCount: participants.length,
       itemBuilder: (context, index) {
@@ -1569,92 +1634,134 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     return 'Guest ${id.substring(id.length - 4).toUpperCase()}';
   }
 
-  Widget _buildParticipantTile(_ParticipantTileData participant) {
-    final isSpeaking = participant.hasAudioActivity && !participant.isMuted;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 220),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0F172A),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: isSpeaking ? const Color(0xFF22C55E) : Colors.white12,
-          width: isSpeaking ? 2 : 1,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.4),
-            blurRadius: 16,
-            offset: const Offset(0, 6),
+  /// True when this participant is actively speaking. With the LiveKit engine
+  /// we know exactly who is speaking (audio level events); with MediaSoup we
+  /// fall back to "has an open audio stream".
+  bool _isSpeaking(_ParticipantTileData participant) {
+    if (_isLiveKit) {
+      if (participant.isLocal) {
+        return _activeSpeakerIds.contains(_resolvedUserId) && _isAudioEnabled;
+      }
+      return _activeSpeakerIds.contains(participant.id);
+    }
+    return participant.hasAudioActivity && !participant.isMuted;
+  }
+
+  Widget _buildParticipantTile(
+    _ParticipantTileData participant, {
+    bool pinned = false,
+    bool filmstrip = false,
+  }) {
+    final isSpeaking = _isSpeaking(participant);
+    return GestureDetector(
+      onTap: participant.isScreenShare
+          ? null
+          : () => setState(() {
+                _pinnedPeerId = _pinnedPeerId == participant.id ? null : participant.id;
+              }),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0F172A),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: isSpeaking
+                ? const Color(0xFF22C55E)
+                : pinned
+                    ? const Color(0xFF60A5FA)
+                    : Colors.white12,
+            width: isSpeaking || pinned ? 2 : 1,
           ),
-        ],
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          if (participant.hasVideo && participant.renderer != null)
-            RTCVideoView(
-              participant.renderer!,
-              mirror: participant.isLocal && !participant.isScreenShare,
-              objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
-            )
-          else
-            _buildAvatarFallback(participant.displayName, large: true),
-          if (participant.isScreenShare)
-            Positioned(
-              left: 12,
-              top: 12,
-              child: _statusChip(
-                Icons.screen_share,
-                participant.isLocal ? 'You are presenting' : 'Presenting',
+          boxShadow: [
+            // Speaking glow: soft pulsing-ish emerald aura (stronger while
+            // the participant is talking, per Google Meet).
+            if (isSpeaking)
+              BoxShadow(
+                color: const Color(0xFF22C55E).withValues(alpha: 0.35),
+                blurRadius: 22,
+                spreadRadius: 2,
               ),
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.4),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
             ),
-          Positioned(
-            left: 10,
-            right: 10,
-            bottom: 10,
-            child: Row(
-              children: [
-                Expanded(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.55),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Flexible(
-                          child: Text(
-                            participant.displayName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w700,
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (participant.hasVideo && participant.renderer != null)
+              RTCVideoView(
+                participant.renderer!,
+                mirror: participant.isLocal && !participant.isScreenShare,
+                objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+              )
+            else
+              _buildAvatarFallback(participant.displayName, large: !filmstrip),
+            if (participant.isScreenShare)
+              Positioned(
+                left: 12,
+                top: 12,
+                child: _statusChip(
+                  Icons.screen_share,
+                  participant.isLocal ? 'You are presenting' : 'Presenting',
+                ),
+              ),
+            if (pinned)
+              Positioned(
+                left: 12,
+                top: 12,
+                child: _statusChip(Icons.push_pin, 'Pinned'),
+              ),
+            Positioned(
+              left: 10,
+              right: 10,
+              bottom: 10,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.55),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              participant.displayName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
                           ),
-                        ),
-                        if (participant.isScreenShare) ...[
-                          const SizedBox(width: 6),
-                          const Icon(Icons.screen_share,
-                              size: 13, color: Colors.white70),
+                          if (participant.isScreenShare) ...[
+                            const SizedBox(width: 6),
+                            const Icon(Icons.screen_share,
+                                size: 13, color: Colors.white70),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                _buildMicIndicator(
-                  muted: participant.isMuted,
-                  active: isSpeaking,
-                ),
-              ],
+                  const SizedBox(width: 8),
+                  _buildMicIndicator(
+                    muted: participant.isMuted,
+                    active: isSpeaking,
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
