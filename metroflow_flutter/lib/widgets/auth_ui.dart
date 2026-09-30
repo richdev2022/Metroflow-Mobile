@@ -171,11 +171,13 @@ class AuthBrandHeader extends StatelessWidget {
               ),
             ],
           ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(logoSize * 0.28),
+          // Square shield mark with BoxFit.contain — the wide wordmark
+          // (logo.png, 1024x273) is cropped to a sliver by BoxFit.cover.
+          child: Padding(
+            padding: EdgeInsets.all(logoSize * 0.06),
             child: Image.asset(
-              'assets/images/logo.png',
-              fit: BoxFit.cover,
+              'assets/images/logo-mark.png',
+              fit: BoxFit.contain,
             ),
           ),
         ),
