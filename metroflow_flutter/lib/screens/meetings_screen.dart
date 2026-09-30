@@ -12,6 +12,7 @@ import '../utils/app_toast.dart';
 import '../theme/app_theme.dart';
 import '../utils/timezone_data.dart';
 import '../widgets/modern_ui.dart';
+import 'meeting_notes_screen.dart';
 import 'video_call_screen.dart';
 
 class MeetingsScreen extends ConsumerStatefulWidget {
@@ -228,6 +229,15 @@ class _MeetingsScreenState extends ConsumerState<MeetingsScreen> {
     AppToast.show('Meeting link copied to clipboard');
   }
 
+  void _openMeetingNotes(Meeting meeting) {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => MeetingNotesScreen(
+        meetingId: meeting.id,
+        meetingTitle: meeting.title,
+      ),
+    ));
+  }
+
   List<Meeting> get _filteredMeetings {
     final now = DateTime.now();
     return _meetings.where((meeting) {
@@ -358,6 +368,7 @@ class _MeetingsScreenState extends ConsumerState<MeetingsScreen> {
                             statusLabel: _statusLabelFor(meeting),
                             onJoin: () => _joinMeeting(meeting),
                             onCopy: () => _copyMeetingLink(meeting),
+                            onNotes: () => _openMeetingNotes(meeting),
                             onEdit: () => _showCreateMeetingDialog(meeting),
                             onDelete: () => _deleteMeeting(meeting),
                           );
@@ -490,6 +501,7 @@ class _MeetingCard extends StatelessWidget {
   final String statusLabel;
   final VoidCallback onJoin;
   final VoidCallback onCopy;
+  final VoidCallback onNotes;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
@@ -501,6 +513,7 @@ class _MeetingCard extends StatelessWidget {
     required this.statusLabel,
     required this.onJoin,
     required this.onCopy,
+    required this.onNotes,
     required this.onEdit,
     required this.onDelete,
   });
@@ -579,6 +592,12 @@ class _MeetingCard extends StatelessWidget {
                             color: colors.text,
                           ),
                         ),
+                      ),
+                      IconButton(
+                        tooltip: 'Meeting notes',
+                        onPressed: onNotes,
+                        icon: Icon(Icons.notes_outlined,
+                            size: 20, color: colors.textSecondary),
                       ),
                       PopupMenuButton<String>(
                         onSelected: (value) {

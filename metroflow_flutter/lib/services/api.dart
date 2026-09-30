@@ -1303,6 +1303,20 @@ class ApiService {
     return await _dio.post('/calls/$id/leave');
   }
 
+  /// Mint/refresh short-lived media credentials for a room
+  /// (`POST /rtc/token`). Used by the call screen to retry the media
+  /// connection ONCE with fresh credentials when the first connect fails —
+  /// the backend health-checks its media servers and returns credentials for
+  /// whichever provider is actually healthy (or the default one when the
+  /// secondary provider is down).
+  Future<Response> refreshRtcToken({required String roomType, required String roomId}) async {
+    return await _dio.post(
+      '/rtc/token',
+      data: {'roomType': roomType, 'roomId': roomId},
+      options: Options(extra: {'suppressToast': true}),
+    );
+  }
+
   Future<Response> deleteCall(String id) async {
     return await _dio.delete('/calls/$id');
   }
@@ -1313,6 +1327,35 @@ class ApiService {
 
   Future<Response> leaveMeeting(String id) async {
     return await _dio.post('/meetings/$id/leave');
+  }
+
+  /// AI meeting notes (summary / key points / decisions / action items).
+  /// Returns `{ success, data: { meetingId, notes: <map|null> } }` — notes is
+  /// null when they have not been generated yet.
+  Future<Response> getMeetingNotes(String id) async {
+    return await _dio.get(
+      '/meetings/$id/notes',
+      options: Options(extra: {'suppressToast': true}),
+    );
+  }
+
+  /// (Re)generate AI meeting notes from the stored live-caption transcript.
+  /// Responds 409 with `errorCode: 'no_transcript'` when not enough transcript
+  /// content exists yet.
+  Future<Response> generateMeetingNotes(String id) async {
+    return await _dio.post(
+      '/meetings/$id/notes/generate',
+      options: Options(extra: {'suppressToast': true}),
+    );
+  }
+
+  /// Stored live-caption transcript segments for a meeting
+  /// (`{ success, data: { meetingId, segments: [...] } }`).
+  Future<Response> getMeetingTranscript(String id) async {
+    return await _dio.get(
+      '/meetings/$id/transcript',
+      options: Options(extra: {'suppressToast': true}),
+    );
   }
 
   // Recordings API
