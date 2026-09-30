@@ -4,6 +4,14 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Google Services plugin (FCM push): applied ONLY when google-services.json is
+// present so CI/local builds keep working before the Firebase config lands.
+// Drop google-services.json into android/app/ (package name must equal the
+// applicationId below) and this activates automatically.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 android {
     namespace = "com.example.Metricorex_flutter"
     compileSdk = 36

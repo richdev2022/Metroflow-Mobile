@@ -180,7 +180,10 @@ class AuthNotifier extends Notifier<AuthState> {
       final token = data['token'];
       final userId = data['userId'] ?? data['user']?['id'];
       final businessId = data['businessId'] ?? data['business']?['id'];
-      final userName = data['user']?['name'] ?? email;
+      // Backend returns the profile name top-level on every login method —
+      // greet the user by NAME, never by their email address.
+      final userName = (data['name'] ?? data['user']?['name'] ?? email)
+          .toString();
 
       await Future.wait([
         _storageService.setToken(token),
@@ -527,7 +530,8 @@ class AuthNotifier extends Notifier<AuthState> {
       final token = data['token'];
       final userId = data['userId'] ?? data['user']?['id'];
       final businessId = data['businessId'] ?? data['businessId'] ?? data['user']?['businessId'];
-      final userName = data['user']?['name'] ?? email;
+      final userName = (data['name'] ?? data['user']?['name'] ?? email)
+          .toString();
 
       if (token != null) {
         await Future.wait([
