@@ -76,9 +76,12 @@ class _MetricAiGlowLogoState extends State<MetricAiGlowLogo>
             // Use the SQUARE app icon here: the wide wordmark (logo.png,
             // 1024x273) is cropped to a blank sliver inside a circular
             // BoxFit.cover frame — the same bug fixed on the web app.
+            // BoxFit.contain (object-contain) guarantees the full new
+            // blue-purple mark stays visible inside the white circle no
+            // matter its aspect ratio.
             child: Image.asset(
               'assets/images/appIcon.png',
-              fit: BoxFit.cover,
+              fit: BoxFit.contain,
             ),
           ),
         );
