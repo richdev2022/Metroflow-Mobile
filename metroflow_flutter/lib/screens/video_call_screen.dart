@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
+import '../services/audio_route_service.dart';
 import '../services/mediasoup_room_service.dart';
 import '../services/calling/calling_engine.dart';
 import '../services/calling/livekit_engine.dart';
@@ -153,6 +154,14 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   // Real audio-level active speakers (LiveKit engine). Empty when nobody is
   // speaking or the engine doesn't report levels (MediaSoup → legacy glow).
   Set<String> _activeSpeakerIds = {};
+
+  // Audio output routing (Google-Dialer style earpiece/speaker/bluetooth).
+  // Both engines end up on the flutter_webrtc native layer, so one service
+  // drives the route for LiveKit AND MediaSoup rooms.
+  final AudioRouteService _audioRoutes = AudioRouteService.instance;
+  bool _routeInitialized = false;
+  bool _switchingAudioRoute = false;
+  AudioRoute get _audioRoute => _audioRoutes.route;
 
   // Google Meet-style pin: tap a tile to make it the big stage tile; tap
   // again (or tap the stage) to unpin. Screen shares always take the stage.
@@ -346,12 +355,159 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   void _onMediaConnected() {
     _mediaConnected = true;
     _cancelJoinWatchdog();
+    // (Re-)assert the audio output route: a fresh connect must seed the
+    // per-call default (video → speaker, audio → earpiece) and a reconnect
+    // must not silently fall back to the platform default once the user has
+    // picked a route. Runs after the connection settles — see
+    // AudioRouteService for the Android audio-focus settle notes.
+    unawaited(_ensureAudioRoute());
     if (!mounted) return;
     if (_isConnecting || _showJoinRetry) {
       setState(() {
         _isConnecting = false;
         _showJoinRetry = false;
       });
+    }
+  }
+
+  /// First media connect: seed the per-call default route. Later (re)connects
+  /// re-assert whatever the user picked. Never throws (service is guarded).
+  Future<void> _ensureAudioRoute() async {
+    if (!_routeInitialized) {
+      _routeInitialized = true;
+      await _audioRoutes.resetForCall(isVideoCall: widget.enableVideo);
+    } else {
+      await _audioRoutes.reapply();
+    }
+    if (mounted) setState(() {});
+  }
+
+  /// Apply a route picked from the bottom sheet. [apply] already waits out
+  /// the Android audio-focus settle before refreshing the device list
+  /// (AudioManager can take 1-3s to settle the communication route).
+  Future<void> _selectAudioRoute(AudioRoute route) async {
+    if (_switchingAudioRoute) return;
+    setState(() => _switchingAudioRoute = true);
+    try {
+      await _audioRoutes.apply(route, settleDelay: const Duration(milliseconds: 1200));
+    } finally {
+      if (mounted) setState(() => _switchingAudioRoute = false);
+    }
+  }
+
+  /// Refresh the device list (so the sheet knows about headsets attached
+  /// mid-call), then show the Google-Dialer-style radio sheet.
+  Future<void> _showAudioRouteSheet() async {
+    await _audioRoutes.refreshOutputs();
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF0B1220),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 14),
+            Text(
+              'Audio output',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.9),
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 6),
+            _audioRouteOption(
+              sheetContext: sheetContext,
+              route: AudioRoute.earpiece,
+              icon: Icons.volume_down_rounded,
+              title: 'Earpiece',
+            ),
+            _audioRouteOption(
+              sheetContext: sheetContext,
+              route: AudioRoute.speaker,
+              icon: Icons.volume_up_rounded,
+              title: 'Speaker',
+            ),
+            _audioRouteOption(
+              sheetContext: sheetContext,
+              route: AudioRoute.bluetooth,
+              icon: Icons.bluetooth_audio_rounded,
+              title: _audioRoutes.bluetoothName ?? 'Bluetooth',
+              enabled: _audioRoutes.hasBluetooth,
+              subtitle: _audioRoutes.hasBluetooth
+                  ? null
+                  : 'No Bluetooth device connected',
+            ),
+            const SizedBox(height: 10),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _audioRouteOption({
+    required BuildContext sheetContext,
+    required AudioRoute route,
+    required IconData icon,
+    required String title,
+    bool enabled = true,
+    String? subtitle,
+  }) {
+    final selected = _audioRoute == route && (enabled || route != AudioRoute.bluetooth);
+    final accent = selected ? const Color(0xFF22C55E) : Colors.white70;
+    return Opacity(
+      opacity: enabled ? 1.0 : 0.45,
+      child: ListTile(
+        leading: Icon(icon, color: accent),
+        title: Text(
+          title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 14.5,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+          ),
+        ),
+        subtitle: subtitle == null
+            ? null
+            : Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.5),
+                  fontSize: 12,
+                ),
+              ),
+        trailing: selected
+            ? const Icon(Icons.check_rounded, color: Color(0xFF22C55E))
+            : null,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+        minVerticalPadding: 6,
+        onTap: !enabled
+            ? null
+            : () {
+              Navigator.of(sheetContext).pop();
+              unawaited(_selectAudioRoute(route));
+            },
+      ),
+    );
+  }
+
+  IconData get _audioRouteIcon {
+    switch (_audioRoute) {
+      case AudioRoute.speaker:
+        return Icons.volume_up_rounded;
+      case AudioRoute.bluetooth:
+        return Icons.bluetooth_audio_rounded;
+      case AudioRoute.earpiece:
+        return Icons.volume_down_rounded;
     }
   }
 
@@ -1384,6 +1540,37 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     );
   }
 
+  /// Participant count chip for the top bar ("N" with a people icon) —
+  /// parity with the web CallRoom header. Reuses the same tile builder that
+  /// feeds the video grid, so screen shares count like the web does.
+  Widget _buildParticipantCountChip() {
+    final count = _buildParticipantTiles().length;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.people_alt_rounded,
+              size: 12, color: Colors.white.withValues(alpha: 0.85)),
+          const SizedBox(width: 4),
+          Text(
+            '$count',
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
+              fontFeatures: const [FontFeature.tabularFigures()],
+              color: Colors.white.withValues(alpha: 0.85),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildTopBar() {
     return Positioned(
       top: 0,
@@ -1458,6 +1645,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                       ),
                       const SizedBox(width: 6),
                       _buildDurationChip(),
+                      const SizedBox(width: 6),
+                      _buildParticipantCountChip(),
                     ],
                   ),
                 ],
@@ -2018,6 +2207,13 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                 active: true,
                 onPressed: _switchCamera,
               ),
+            // Audio output route (earpiece / speaker / bluetooth) — opens the
+            // Google-Dialer-style picker sheet.
+            _dockButton(
+              icon: _audioRouteIcon,
+              active: _audioRoute != AudioRoute.earpiece,
+              onPressed: _switchingAudioRoute ? null : _showAudioRouteSheet,
+            ),
             _dockButton(
               icon: _isScreenSharing ? Icons.stop_screen_share : Icons.screen_share,
               active: _isScreenSharing,

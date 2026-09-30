@@ -1275,6 +1275,37 @@ class ApiService {
     return await _dio.put('/chat/conversations/$conversationId/read');
   }
 
+  // -------------------------------------------------------------------------
+  // Message actions (parity with the web batch-4 contract)
+  // -------------------------------------------------------------------------
+
+  /// Edit the text of one of YOUR messages (backend enforces the ≤24h window
+  /// on text messages). PATCH /chat/conversations/:cid/messages/:mid
+  Future<Response> editChatMessage(
+    String conversationId,
+    String messageId, {
+    required String content,
+  }) async {
+    return await _dio.patch(
+      '/chat/conversations/$conversationId/messages/$messageId',
+      data: {'content': content},
+    );
+  }
+
+  /// Delete a message. [scope] `me` hides it for this user only; `everyone`
+  /// tombstones it for the whole conversation (own messages only).
+  /// DELETE /chat/conversations/:cid/messages/:mid?scope=me|everyone
+  Future<Response> deleteChatMessage(
+    String conversationId,
+    String messageId, {
+    String scope = 'me',
+  }) async {
+    return await _dio.delete(
+      '/chat/conversations/$conversationId/messages/$messageId',
+      queryParameters: {'scope': scope},
+    );
+  }
+
   // Calls API
   Future<Response> getCalls({int page = 1, int limit = 10}) async {
     return await _dio.get('/calls', queryParameters: {
@@ -1285,6 +1316,18 @@ class ApiService {
 
   Future<Response> getCallByCode(String code) async {
     return await _dio.get('/calls/code/$code');
+  }
+
+  /// Full call record incl. participants (`{ userId, status, joinedAt,
+  /// leftAt }`) — used by the chat call-log tap-through summary sheet.
+  Future<Response> getCallById(String id) async {
+    return await _dio.get('/calls/$id', options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// Stored live-caption transcript for a call (absent on backends without
+  /// the endpoint — callers must treat failures as "no transcript").
+  Future<Response> getCallTranscript(String id) async {
+    return await _dio.get('/calls/$id/transcript', options: Options(extra: {'suppressToast': true}));
   }
 
   Future<Response> createCall(Map<String, dynamic> data) async {

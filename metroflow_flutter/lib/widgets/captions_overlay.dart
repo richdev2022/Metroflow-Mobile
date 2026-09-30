@@ -12,43 +12,70 @@ import '../services/captions_service.dart';
 /// Provider-agnostic by design: captions arrive over the app's own socket
 /// connection, so this overlay never references (or knows about) the media
 /// provider powering the room.
-class CaptionsOverlay extends StatelessWidget {
+///
+/// Each segment is capped at 2 lines (WhatsApp/Meet style) so a chatty
+/// speaker can never flood the room or cover the control dock; tapping the
+/// overlay expands to 8 lines and tapping again collapses it.
+class CaptionsOverlay extends StatefulWidget {
   final CaptionsController controller;
 
   /// Distance from the bottom of the screen — keep the block clear of the
-  /// control dock (dock ≈ 110dp incl. safe area + margins).
+  /// control dock (dock + SafeArea + margins ≈ 124-130dp on notched phones).
   final double bottom;
+
+  /// Text lines per caption while collapsed ([_expanded] shows more).
+  final int collapsedLines;
+
+  /// Text lines per caption while expanded.
+  final int expandedLines;
 
   const CaptionsOverlay({
     super.key,
     required this.controller,
-    this.bottom = 124,
+    this.bottom = 132,
+    this.collapsedLines = 2,
+    this.expandedLines = 8,
   });
+
+  @override
+  State<CaptionsOverlay> createState() => _CaptionsOverlayState();
+}
+
+class _CaptionsOverlayState extends State<CaptionsOverlay> {
+  bool _expanded = false;
 
   @override
   Widget build(BuildContext context) {
     return Positioned(
       left: 16,
       right: 16,
-      bottom: bottom,
-      child: IgnorePointer(
-        child: AnimatedBuilder(
-          animation: controller,
-          builder: (context, _) {
-            final entries = controller.entries;
-            return Column(
+      bottom: widget.bottom,
+      child: AnimatedBuilder(
+        animation: widget.controller,
+        builder: (context, _) {
+          final entries = widget.controller.entries;
+          if (entries.isEmpty) return const SizedBox.shrink();
+          return GestureDetector(
+            // Tap-to-expand: consuming the tap here keeps the captions block
+            // from also pinning/unpinning the video tile underneath.
+            behavior: HitTestBehavior.opaque,
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 for (final entry in entries)
                   _CaptionRow(
                     key: ValueKey(entry.key),
                     segment: entry.segment,
-                    opacity: controller.opacityFor(entry.segment),
+                    opacity: widget.controller.opacityFor(entry.segment),
+                    maxLines:
+                        _expanded ? widget.expandedLines : widget.collapsedLines,
                   ),
               ],
-            );
-          },
-        ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -57,11 +84,13 @@ class CaptionsOverlay extends StatelessWidget {
 class _CaptionRow extends StatelessWidget {
   final CaptionSegment segment;
   final double opacity;
+  final int maxLines;
 
   const _CaptionRow({
     super.key,
     required this.segment,
     required this.opacity,
+    required this.maxLines,
   });
 
   @override
@@ -106,7 +135,7 @@ class _CaptionRow extends StatelessWidget {
             const SizedBox(height: 2),
             Text(
               segment.text,
-              maxLines: 3,
+              maxLines: maxLines,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 color: Colors.white,
