@@ -283,7 +283,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                                     return _MetricAiEntry(colors: colors);
                                   }
                                   final conversation = filtered[index - 1];
-                                  final name = conversation.name ?? 'Direct Chat';
+                                  // Real display name: backend displayName ->
+                                  // other participant's name -> group name.
+                                  // NEVER show "Direct Chat" placeholders.
+                                  final name = conversation.displayTitle(currentUserId);
                                   final hasUnread = conversation.unreadCount > 0 ||
                                       _hasUnread(conversation, currentUserId);
                                   return _ConversationTile(
