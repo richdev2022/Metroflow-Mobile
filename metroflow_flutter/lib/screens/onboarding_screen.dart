@@ -79,13 +79,15 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
               padding: const EdgeInsets.fromLTRB(20, 8, 12, 0),
               child: Row(
                 children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
+                  // Square shield mark — the wide wordmark gets cropped to a
+                  // sliver by BoxFit.cover inside a 28x28 square.
+                  Padding(
+                    padding: const EdgeInsets.all(2),
                     child: Image.asset(
-                      'assets/images/logo.png',
-                      width: 28,
-                      height: 28,
-                      fit: BoxFit.cover,
+                      'assets/images/logo-mark.png',
+                      width: 26,
+                      height: 26,
+                      fit: BoxFit.contain,
                     ),
                   ),
                   const SizedBox(width: 8),
