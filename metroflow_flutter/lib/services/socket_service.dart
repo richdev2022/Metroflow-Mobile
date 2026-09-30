@@ -58,6 +58,16 @@ class SocketService {
   void Function(dynamic)? onCallDurationActive;
   void Function(dynamic)? onCallCountdownWarning;
 
+  /// Live captions relay (provider-agnostic — rides the app socket whether
+  /// the room media runs through either provider). Payload:
+  /// { roomId, roomType: "call"|"meeting", speakerId, speakerName, text,
+  ///   isFinal, language, ts }
+  void Function(dynamic)? onCaptionUpdated;
+
+  /// AI meeting notes generated/refreshed after a meeting ends. Payload:
+  /// { meetingId, notes }
+  void Function(dynamic)? onMeetingNotesUpdated;
+
   /// Waiting-room results for THIS socket (server unicasts to the waiter):
   /// - `waiting-room:admitted` payload { roomId, meetingId, participantId, userName }
   /// - `waiting-room:denied`  payload { roomId, meetingId, participantId }
@@ -283,6 +293,14 @@ class SocketService {
     _socket?.on('chat:stop-typing', (data) {
       if (onChatStopTyping != null) onChatStopTyping!(data);
     });
+
+    _socket?.on('caption:updated', (data) {
+      if (onCaptionUpdated != null) onCaptionUpdated!(data);
+    });
+
+    _socket?.on('meeting:notes_updated', (data) {
+      if (onMeetingNotesUpdated != null) onMeetingNotesUpdated!(data);
+    });
   }
 
   void disconnect() {
@@ -412,6 +430,14 @@ class SocketService {
 
   void emitMeetingChatMessage(Map<String, dynamic> data) {
     _socket?.emit('meeting-chat:message', data);
+  }
+
+  /// Publish one live-caption segment for the room we are in. The backend
+  /// relays it to everyone in the room as `caption:updated` and persists
+  /// final segments for meetings (transcript → AI notes). Payload:
+  /// { roomId, roomType: "call"|"meeting", text, isFinal, language }
+  void emitCaptionSegment(Map<String, dynamic> data) {
+    _socket?.emit('caption:segment', data);
   }
 
   void joinConversation(String conversationId) {
