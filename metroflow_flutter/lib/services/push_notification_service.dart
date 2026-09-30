@@ -60,6 +60,15 @@ import 'api.dart';
 const String kPushCallChannelId = 'calls';
 const String kPushGeneralChannelId = 'general';
 
+/// Normalizes the backend's push `type` discriminator. The contract has used
+/// BOTH spellings over time (socket era: `incoming_call`; FCM era:
+/// `incoming-call`), so everything is lowercased and hyphens folded to
+/// underscores before comparison.
+String _normalizePushType(dynamic raw) {
+  final value = raw?.toString().trim().toLowerCase() ?? '';
+  return value.replaceAll('-', '_');
+}
+
 /// Stable notification ids: a new incoming call REPLACES the previous one
 /// instead of stacking, and chat notifications group per conversation.
 const int _kCallNotificationId = 1001;
@@ -80,11 +89,23 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     // app is closed/backgrounded — chat messages land as normal notifications
     // posted by FCM itself (notification payloads) or here for data-only sends.
     final data = message.data;
-    final type = (data['type'] ?? '').toString();
+    final type = _normalizePushType(data['type']);
     if (type == 'incoming_call') {
       await PushNotificationService.showCallNotification(
-        callerName: (data['caller_name'] ?? data['callerName'] ?? 'Incoming call').toString(),
+        callerName: (data['caller_name'] ?? data['callerName'] ?? data['callerId'] ?? 'Incoming call').toString(),
         callType: (data['call_type'] ?? data['callType'] ?? 'video').toString(),
+        payload: Map<String, dynamic>.from(data),
+      );
+      return;
+    }
+    if (type == 'missed_call') {
+      // Missed-call push: an ordinary heads-up on the "general" channel —
+      // the user must NOT get a full-screen ring for a call already gone.
+      final caller = (data['caller_name'] ?? data['callerName'] ?? data['callerId'] ?? '').toString();
+      final callType = (data['call_type'] ?? data['callType'] ?? 'audio').toString();
+      await PushNotificationService.showGeneralNotification(
+        title: 'Missed ${callType == 'video' ? 'video' : 'audio'} call',
+        body: caller.isEmpty ? 'You missed a call' : 'Missed call from $caller',
         payload: Map<String, dynamic>.from(data),
       );
       return;
@@ -410,19 +431,32 @@ class PushNotificationService {
   void _handleForegroundMessage(RemoteMessage message) {
     try {
       final data = message.data;
-      final type = (data['type'] ?? '').toString();
+      final type = _normalizePushType(data['type']);
       switch (type) {
         case 'incoming_call':
           final alreadyRinging = foregroundCallGuard?.call() ?? false;
           showCallNotification(
-            callerName: (data['caller_name'] ?? data['callerName'] ?? 'Incoming call').toString(),
+            callerName: (data['caller_name'] ?? data['callerName'] ?? data['callerId'] ?? 'Incoming call').toString(),
             callType: (data['call_type'] ?? data['callType'] ?? 'video').toString(),
             payload: Map<String, dynamic>.from(data),
           );
           if (!alreadyRinging) {
-            // Foreground ring mirrors the socket-driven incoming call UX.
+            // The socket path did NOT deliver call:incoming (process was
+            // half-dead / push-only delivery): mirror it by presenting the
+            // same global incoming-call overlay the tap handler uses, then
+            // ring. incomingCallHook is assigned from main.dart.
+            _presentIncomingCall(Map<String, dynamic>.from(data));
             AppFeedback.startRingtone();
           }
+          break;
+        case 'missed_call':
+          final caller = (data['caller_name'] ?? data['callerName'] ?? data['callerId'] ?? '').toString();
+          final callType = (data['call_type'] ?? data['callType'] ?? 'audio').toString();
+          showGeneralNotification(
+            title: 'Missed ${callType == 'video' ? 'video' : 'audio'} call',
+            body: caller.isEmpty ? 'You missed a call' : 'Missed call from $caller',
+            payload: Map<String, dynamic>.from(data),
+          );
           break;
         case 'chat_message':
           showChatNotification(
@@ -474,12 +508,15 @@ class PushNotificationService {
         _navigate('/main');
         return;
       }
-      final type = (data['type'] ?? '').toString();
+      final type = _normalizePushType(data['type']);
       switch (type) {
         case 'incoming_call':
           // Re-present the global incoming-call overlay (WhatsApp-style):
           // the user tapped the call notification, show Accept/Decline.
           _presentIncomingCall(data);
+          break;
+        case 'missed_call':
+          _navigate('/main/calls');
           break;
         case 'chat_message':
           _navigate('/main/chat');
@@ -500,6 +537,9 @@ class PushNotificationService {
   /// (no riverpod import) to avoid an import cycle.
   void _presentIncomingCall(Map<String, dynamic> data) {
     try {
+      // Cancel the full-screen notification: once the overlay is up, the OS
+      // banner would just keep ringing after the in-app ring starts.
+      unawaited(cancelCallNotification());
       incomingCallHook?.call(data);
     } catch (e) {
       debugPrint('_presentIncomingCall failed: $e');

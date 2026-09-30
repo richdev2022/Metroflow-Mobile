@@ -150,17 +150,25 @@ class CallNotifier extends Notifier<IncomingCallState> {
   }
 
   /// Public entry point for FCM push taps: re-presents the incoming call from
-  /// a push payload (data: { type:'incoming_call', call_id, call_code,
-  /// caller_name, call_type }) — the same shape the socket `call:incoming`
-  /// handler receives. Used by PushNotificationService so tapping the
-  /// full-screen call notification shows the Accept/Decline overlay.
+  /// a push payload — e.g. the FCM contract
+  /// `{ type:'incoming-call', callId, callType:'audio'|'video', callerName,
+  /// callerId, callCode, conversationId? }` or the legacy
+  /// `{ type:'incoming_call', call_id, call_code, caller_name, call_type }` —
+  /// the same shape the socket `call:incoming` handler receives. Used by
+  /// PushNotificationService so tapping the full-screen call notification
+  /// shows the Accept/Decline overlay.
   void presentIncomingCall(Map<String, dynamic> payload) {
     final data = Map<String, dynamic>.from(payload);
     // Normalize the FCM payload keys onto the socket payload names.
     data['callId'] ??= data['call_id'];
     data['callCode'] ??= data['call_code'];
     data['callerName'] ??= data['caller_name'];
-    data['type'] = data['call_type'] ?? data['type'] ?? 'video';
+    // The call type is `callType`/`call_type`; the push `type` discriminator
+    // ('incoming-call') must NEVER leak in as the call type.
+    final callType = (data['callType'] ?? data['call_type'])?.toString();
+    data['type'] = (callType == 'audio' || callType == 'video')
+        ? callType
+        : 'video';
     _handleIncomingCall(data);
   }
 
