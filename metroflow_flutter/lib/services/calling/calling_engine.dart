@@ -137,4 +137,10 @@ abstract class CallingEngine {
   MediaStream? get screenStream;
   void Function(MediaStream stream)? onScreenShareStarted;
   void Function()? onScreenShareStopped;
+
+  /// Identities of participants currently speaking (audio level above the
+  /// silence threshold). The LiveKit engine reports real active-speaker
+  /// events; engines without level detection never call this and the call
+  /// screen falls back to its legacy "has audio stream" heuristic.
+  void Function(List<String> speakerIds)? onActiveSpeakers;
 }
