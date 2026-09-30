@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
@@ -17,6 +18,7 @@ import '../models/conversation.dart';
 import '../models/call.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_feedback.dart';
+import '../utils/app_timezone.dart';
 import '../utils/chat_media_utils.dart';
 import '../widgets/chat_attachment_views.dart';
 import '../widgets/emoji_sticker_gif_panel.dart';
@@ -63,7 +65,17 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   // Whether the backend GIF proxy is configured (GET /chat/gifs) — hides the
   // GIF tab in the emoji/sticker/GIF panel when Tenor is not set up.
   bool _gifsConfigured = false;
+  // Reply quoting + edit composer context (batch-4 parity).
+  Message? _replyTo;
+  Message? _editingMessage;
+  // Peer presence for the header: live values from `presence:update`, falling
+  // back to the conversation payload's otherUserLastSeenAt / participant
+  // lastSeenAt when no socket event has arrived yet.
+  DateTime? _peerLastSeenAt;
+  String? _peerPresenceStatus;
   late final void Function(dynamic) _messageCreatedHandler;
+  late final void Function(dynamic) _messageUpdatedHandler;
+  late final void Function(dynamic) _presenceHandler;
   late final void Function(dynamic) _typingHandler;
   late final void Function(dynamic) _stopTypingHandler;
 
@@ -94,6 +106,56 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       _scrollToBottom();
     };
     _socket.onMessageCreated = _messageCreatedHandler;
+
+    _messageUpdatedHandler = (data) {
+      // `message:updated` payload: { conversationId, message: { ...row } } —
+      // edit + delete-for-everyone echo. Upsert keeps ids stable.
+      try {
+        if (!mounted || data is! Map) return;
+        final payload = Map<String, dynamic>.from(data);
+        final cid = (payload['conversationId'] ?? payload['conversation_id'] ?? '').toString();
+        if (cid.isNotEmpty && cid != widget.conversation.id) return;
+        final raw = payload['message'] is Map
+            ? Map<String, dynamic>.from(payload['message'] as Map)
+            : payload;
+        if (cid.isEmpty) {
+          final innerCid = (raw['conversationId'] ?? raw['conversation_id'] ?? '').toString();
+          if (innerCid.isNotEmpty && innerCid != widget.conversation.id) return;
+        }
+        final message = Message.fromJson(raw);
+        if (message.id.isEmpty) return;
+        setState(() => _upsertMessage(message));
+      } catch (e) {
+        Logger.error('message:updated handler failed: $e');
+      }
+    };
+    _socket.onMessageUpdated = _messageUpdatedHandler;
+
+    _presenceHandler = (data) {
+      // `presence:update` { userId, lastSeenAt, presenceStatus } (or the
+      // legacy `user-presence-updated` { userId, status }). Only the chat
+      // partner's presence updates the header.
+      try {
+        if (!mounted || data is! Map) return;
+        final payload = Map<String, dynamic>.from(data);
+        final userId = (payload['userId'] ?? payload['user_id'] ?? '').toString();
+        final other = widget.conversation.otherParticipant(_currentUserId);
+        if (userId.isEmpty || other == null || userId != other.userId) return;
+        final seen = _parsePresenceTime(payload['lastSeenAt'] ?? payload['last_seen_at']);
+        final status = (payload['presenceStatus'] ??
+                    payload['presence_status'] ??
+                    payload['status'])
+                ?.toString() ??
+            '';
+        setState(() {
+          if (seen != null) _peerLastSeenAt = seen;
+          _peerPresenceStatus = status.trim().isEmpty ? null : status.trim();
+        });
+      } catch (e) {
+        Logger.error('presence:update handler failed: $e');
+      }
+    };
+    _socket.onPresenceUpdate = _presenceHandler;
 
     _typingHandler = (data) {
       final payload = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
@@ -367,13 +429,22 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       'userId': _currentUserId,
     });
 
+    // Reply quoting: the backend validates `replyToId` against the same
+    // conversation (server/routes/chat.ts sendMessage).
+    final reply = _replyTo;
+    final payloadWithReply = <String, dynamic>{
+      ...payload,
+      if (reply != null) 'replyToId': reply.id,
+    };
+
     setState(() => _isSending = true);
     try {
-      final response = await _api.sendMessage(widget.conversation.id, payload);
+      final response = await _api.sendMessage(widget.conversation.id, payloadWithReply);
       if (response.data['success'] == true && mounted) {
         final message = _extractMessage(response.data);
         setState(() {
           _upsertMessage(message);
+          _replyTo = null;
         });
         _scrollToBottom();
       }
@@ -392,6 +463,238 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   }
 
   // -------------------------------------------------------------------------
+  // Message actions (long-press): reply / copy / edit / delete
+  // -------------------------------------------------------------------------
+
+  void _clearComposerContext() {
+    if (!mounted) return;
+    setState(() {
+      _replyTo = null;
+      _editingMessage = null;
+      _messageController.clear();
+    });
+  }
+
+  /// WhatsApp-style long-press sheet. Edit is limited to the sender's own
+  /// TEXT messages within 24h (mirrors the backend's MESSAGE_EDIT_WINDOW_MS);
+  /// delete-for-everyone is sender-only, delete-for-me is always available.
+  void _showMessageActions(Message message) {
+    final colors = AppTheme.colors;
+    final isMine = _currentUserId != null && message.senderId == _currentUserId;
+    final kind = (message.messageType ?? 'text').trim().toLowerCase();
+    final isText = kind.isEmpty || kind == 'text';
+    final canEdit = isMine &&
+        isText &&
+        DateTime.now().difference(message.createdAt.toLocal()) <=
+            const Duration(hours: 24);
+
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: colors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 10),
+            _MessageActionTile(
+              icon: Icons.reply_rounded,
+              color: colors.primary,
+              title: 'Reply',
+              colors: colors,
+              onTap: () {
+                Navigator.pop(sheetContext);
+                setState(() {
+                  _replyTo = message;
+                  _editingMessage = null;
+                });
+              },
+            ),
+            _MessageActionTile(
+              icon: Icons.copy_rounded,
+              color: colors.primary,
+              title: 'Copy',
+              colors: colors,
+              onTap: () {
+                Navigator.pop(sheetContext);
+                Clipboard.setData(ClipboardData(text: message.content));
+              },
+            ),
+            if (canEdit)
+              _MessageActionTile(
+                icon: Icons.edit_rounded,
+                color: colors.primary,
+                title: 'Edit',
+                colors: colors,
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  setState(() {
+                    _editingMessage = message;
+                    _replyTo = null;
+                    _messageController.text = message.content;
+                  });
+                },
+              ),
+            _MessageActionTile(
+              icon: Icons.visibility_off_rounded,
+              color: colors.warning,
+              title: 'Delete for me',
+              colors: colors,
+              onTap: () {
+                Navigator.pop(sheetContext);
+                unawaited(_deleteMessage(message, scope: 'me'));
+              },
+            ),
+            if (isMine)
+              _MessageActionTile(
+                icon: Icons.delete_rounded,
+                color: colors.error,
+                title: 'Delete for everyone',
+                colors: colors,
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  unawaited(_deleteMessage(message, scope: 'everyone'));
+                },
+              ),
+            const SizedBox(height: 10),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// PATCH /chat/conversations/:cid/messages/:mid { content } then mirror
+  /// locally (the socket `message:updated` echo also upserts — same id).
+  Future<void> _submitEdit() async {
+    final editing = _editingMessage;
+    if (editing == null || _isSending) return;
+    final content = _messageController.text.trim();
+    if (content.isEmpty) return;
+    setState(() => _isSending = true);
+    try {
+      final response = await _api.editChatMessage(
+        widget.conversation.id,
+        editing.id,
+        content: content,
+      );
+      if (response.data['success'] == true && mounted) {
+        setState(() {
+          _upsertMessage(editing.copyWith(content: content, editedAt: DateTime.now()));
+          _editingMessage = null;
+          _messageController.clear();
+        });
+      }
+    } catch (e) {
+      Logger.error('editMessage failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(ApiService.extractErrorMessage(e))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSending = false);
+    }
+  }
+
+  /// DELETE /chat/conversations/:cid/messages/:mid?scope=me|everyone.
+  /// scope=everyone optimistically tombstones (the server echo upserts the
+  /// authoritative row); scope=me removes the row locally (no broadcast —
+  /// it only disappears for THIS user).
+  Future<void> _deleteMessage(Message message, {required String scope}) async {
+    try {
+      await _api.deleteChatMessage(widget.conversation.id, message.id, scope: scope);
+      if (!mounted) return;
+      setState(() {
+        if (scope == 'everyone') {
+          _upsertMessage(message.copyWith(
+            content: '',
+            deletedForEveryone: true,
+            isPendingDelete: true,
+          ));
+        } else {
+          _messages.removeWhere((m) => m.id == message.id);
+        }
+      });
+    } catch (e) {
+      Logger.error('deleteMessage($scope) failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(ApiService.extractErrorMessage(e))),
+        );
+      }
+    }
+  }
+
+  /// Reply/edit context pill above the composer.
+  Widget _buildContextPill(ThemeColors colors) {
+    final editing = _editingMessage;
+    final reply = _replyTo;
+    final isEdit = editing != null;
+    final subject = isEdit ? editing : reply;
+    final title = isEdit
+        ? 'Editing message'
+        : 'Replying to ${subject?.senderName ?? (subject?.senderId == _currentUserId ? 'yourself' : 'message')}';
+    final snippet = subject?.content.trim() ?? '';
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+      decoration: BoxDecoration(
+        color: colors.surfaceVariant,
+        borderRadius: BorderRadius.circular(12),
+        border: Border(
+          left: BorderSide(color: colors.primary, width: 3),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            isEdit ? Icons.edit_rounded : Icons.reply_rounded,
+            size: 18,
+            color: colors.primary,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: colors.primary,
+                  ),
+                ),
+                if (snippet.isNotEmpty)
+                  Text(
+                    snippet,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      color: colors.textSecondary,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Cancel',
+            icon: Icon(Icons.close_rounded, size: 18, color: colors.textSecondary),
+            onPressed: _clearComposerContext,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // -------------------------------------------------------------------------
   // Attachments (paperclip) — pick → optimistic pending bubble → POST
   // /chat/media → send message with attachmentUrl/name/size/messageType.
   // -------------------------------------------------------------------------
@@ -405,6 +708,47 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     } catch (_) {
       if (mounted) setState(() => _gifsConfigured = false);
     }
+  }
+
+  /// Tolerant parse of presence timestamps: ISO strings or epoch
+  /// seconds/millis (the exact UTC-vs-millis bug class the last-seen header
+  /// used to hit — see worklog).
+  DateTime? _parsePresenceTime(dynamic value) {
+    if (value == null) return null;
+    if (value is DateTime) return value;
+    if (value is num && value > 0) {
+      final ms = value >= 100000000000 ? value.toInt() : (value.toInt() * 1000);
+      return DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true);
+    }
+    final raw = value.toString().trim();
+    if (raw.isEmpty || raw == 'null') return null;
+    return DateTime.tryParse(raw);
+  }
+
+  /// Header subtitle for direct chats: "online" or "last seen today at
+  /// 19:46" — relative day + wall clock in the DEVICE timezone, honouring
+  /// the app's 12/24h preference. Falls back to 'Direct message' when the
+  /// backend has no presence data.
+  String? _lastSeenLabel() {
+    final status = _peerPresenceStatus?.toLowerCase();
+    if (status == 'online' || status == 'available') return 'online';
+    if (status == 'offline' && _peerLastSeenAt == null) return null;
+    final seen =
+        _peerLastSeenAt ?? widget.conversation.otherLastSeen(_currentUserId);
+    if (seen == null) return null;
+    final local = seen.toLocal();
+    final now = DateUtils.dateOnly(DateTime.now());
+    final that = DateUtils.dateOnly(local);
+    final String day;
+    if (that == now) {
+      day = 'today';
+    } else if (that == now.subtract(const Duration(days: 1))) {
+      day = 'yesterday';
+    } else {
+      day = DateFormat.MMMEd().format(local);
+    }
+    final pattern = AppTimezone.instance.is24h ? 'HH:mm' : 'h:mm a';
+    return 'last seen $day at ${DateFormat(pattern).format(local)}';
   }
 
   void _openAttachmentSheet() {
@@ -754,6 +1098,12 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     if (_socket.onMessageCreated == _messageCreatedHandler) {
       _socket.onMessageCreated = null;
     }
+    if (_socket.onMessageUpdated == _messageUpdatedHandler) {
+      _socket.onMessageUpdated = null;
+    }
+    if (_socket.onPresenceUpdate == _presenceHandler) {
+      _socket.onPresenceUpdate = null;
+    }
     if (_socket.onChatTyping == _typingHandler) {
       _socket.onChatTyping = null;
     }
@@ -830,7 +1180,11 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                       ),
                     ),
                     Text(
-                      isDirect ? 'Direct message' : '$memberCount members',
+                      isDirect
+                          ? (_lastSeenLabel() ?? 'Direct message')
+                          : '$memberCount members',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 11.5,
                         color: colors.textSecondary,
@@ -905,6 +1259,19 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                                   _messages[index - 1].senderId !=
                                       message.senderId ||
                                   dateLabel != null);
+                          // Long-press actions (reply/edit/delete) — skipped
+                          // for call-log rows (they have their own tap-
+                          // through) and for tombstones.
+                          final canShowActions = !message.isPendingUpload &&
+                              !message.isTombstone &&
+                              (message.messageType ?? '').trim().toLowerCase() !=
+                                  'call-log';
+                          final nameMap = <String, String>{
+                            for (final p in widget.conversation.participants)
+                              p.userId: p.name.trim().isNotEmpty
+                                  ? p.name.trim()
+                                  : (p.email.isNotEmpty ? p.email : 'Member'),
+                          };
 
                           return Column(
                             children: [
@@ -930,18 +1297,27 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                                     ),
                                   ),
                                 ),
-                              _MessageBubble(
-                                message: message,
-                                isMe: isMe,
-                                showSenderName:
-                                    !isDirect && showHeader,
-                                colors: colors,
+                              GestureDetector(
+                                onLongPress: canShowActions
+                                    ? () => _showMessageActions(message)
+                                    : null,
+                                child: _MessageBubble(
+                                  message: message,
+                                  isMe: isMe,
+                                  showSenderName:
+                                      !isDirect && showHeader,
+                                  colors: colors,
+                                  participantNames: nameMap,
+                                ),
                               ),
                             ],
                           );
                         },
                       ),
           ),
+          // Reply/edit context pill (WhatsApp-style quote above composer)
+          if (_replyTo != null || _editingMessage != null)
+            _buildContextPill(colors),
           // Typing indicator row
           if (_peerTypingName != null)
             Padding(
@@ -996,8 +1372,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   /// Normal text composer. A paperclip (attachments), emoji panel button and
   /// — while the field is empty — a mic button sit to the LEFT of the text
   /// field; once the user types, the send button takes over on the right.
+  /// While EDITING a message the send button confirms the edit instead.
   Widget _buildTextComposer(ThemeColors colors) {
     final hasText = _messageController.text.trim().isNotEmpty;
+    final isEditing = _editingMessage != null;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
@@ -1016,7 +1394,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
           ),
         ),
         const SizedBox(width: 8),
-        if (!hasText) ...[
+        if (!hasText && !isEditing) ...[
           SizedBox(
             width: 44,
             height: 44,
@@ -1057,7 +1435,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
             onChanged: _onTextChanged,
             style: TextStyle(color: colors.text, fontSize: 14.5),
             decoration: InputDecoration(
-              hintText: 'Type a message...',
+              hintText: isEditing ? 'Update message…' : 'Type a message...',
               hintStyle: TextStyle(color: colors.textSecondary),
               filled: true,
               fillColor: colors.surfaceVariant,
@@ -1068,7 +1446,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
             ),
-            onSubmitted: (_) => _sendMessage(),
+            onSubmitted: (_) =>
+                isEditing ? _submitEdit() : _sendMessage(),
           ),
         ),
         const SizedBox(width: 8),
@@ -1091,6 +1470,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
           ),
           child: IconButton(
             padding: EdgeInsets.zero,
+            tooltip: isEditing ? 'Confirm edit' : 'Send',
             icon: _isSending
                 ? const SizedBox(
                     width: 18,
@@ -1098,9 +1478,11 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                     child: CircularProgressIndicator(
                         strokeWidth: 2, color: Colors.white),
                   )
-                : const Icon(Icons.send_rounded,
+                : Icon(isEditing ? Icons.check_rounded : Icons.send_rounded,
                     color: Colors.white, size: 20),
-            onPressed: _isSending ? null : () => _sendMessage(),
+            onPressed: _isSending
+                ? null
+                : (isEditing ? _submitEdit : () => _sendMessage()),
           ),
         ),
       ],
@@ -1181,11 +1563,16 @@ class _MessageBubble extends StatelessWidget {
   final bool showSenderName;
   final ThemeColors colors;
 
+  /// conversationId → display name (from the conversation's enriched
+  /// participants) for the call-log summary sheet.
+  final Map<String, String> participantNames;
+
   const _MessageBubble({
     required this.message,
     required this.isMe,
     required this.showSenderName,
     required this.colors,
+    this.participantNames = const {},
   });
 
   /// Resolved presentation kind. Prefers the explicit messageType from the
@@ -1205,9 +1592,52 @@ class _MessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final kind = _kind;
 
+    // Deleted tombstone (WhatsApp-style) — wins over every other layout.
+    if (message.isTombstone) {
+      return Align(
+        alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width * 0.7,
+          ),
+          decoration: BoxDecoration(
+            color: colors.surfaceVariant,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: colors.border),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.block_rounded, size: 14, color: colors.textSecondary),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  isMe ? 'You deleted this message' : 'This message was deleted',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontStyle: FontStyle.italic,
+                    color: colors.textSecondary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     // Call-log rows are slim centered entries without a bubble.
     if (kind == 'call-log') {
-      return CallLogRow(message: message, isMe: isMe, colors: colors);
+      return CallLogRow(
+        message: message,
+        isMe: isMe,
+        colors: colors,
+        participantNames: participantNames,
+      );
     }
 
     // Optimistic pending bubble while POST /chat/media is in flight.
@@ -1271,6 +1701,58 @@ class _MessageBubble extends StatelessWidget {
     }
 
     return _regularBubble(context, kind);
+  }
+
+  /// Quoted reply preview inside the bubble (from message.replyTo — the
+  /// backend hydrates { id, senderName, content, messageType }).
+  Widget _quoteBlock(ThemeColors colors) {
+    final reply = message.replyTo!;
+    final name = (reply.senderName?.trim().isNotEmpty ?? false)
+        ? reply.senderName!.trim()
+        : 'Message';
+    final snippet = reply.content.trim().isEmpty ? 'Media' : reply.content.trim();
+    return Container(
+      margin: const EdgeInsets.only(bottom: 5),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: isMe
+            ? Colors.white.withValues(alpha: 0.16)
+            : colors.surfaceVariant,
+        borderRadius: BorderRadius.circular(8),
+        border: Border(
+          left: BorderSide(
+            color: isMe ? Colors.white70 : colors.primary,
+            width: 3,
+          ),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
+              color: isMe ? Colors.white : colors.primary,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            snippet,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 12.5,
+              color: isMe ? Colors.white70 : colors.textSecondary,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _regularBubble(BuildContext context, String kind) {
@@ -1369,6 +1851,7 @@ class _MessageBubble extends StatelessWidget {
                   ),
                 ),
               ),
+            if (message.replyTo != null) _quoteBlock(colors),
             if (media == null)
               Text(
                 message.content,
@@ -1394,7 +1877,8 @@ class _MessageBubble extends StatelessWidget {
             ],
             const SizedBox(height: 3),
             Text(
-              DateFormat.Hm().format(message.createdAt.toLocal()),
+              '${DateFormat.Hm().format(message.createdAt.toLocal())}'
+              '${message.editedAt != null ? ' · edited' : ''}',
               style: TextStyle(
                 fontSize: 10,
                 color: isMe ? Colors.white70 : colors.textSecondary,
@@ -1899,6 +2383,50 @@ class _RoundIconAction extends StatelessWidget {
               child: Icon(icon, color: color, size: 21),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// One row of the long-press message actions sheet (Reply / Copy / Edit /
+/// Delete for me / Delete for everyone).
+class _MessageActionTile extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String title;
+  final ThemeColors colors;
+  final VoidCallback onTap;
+
+  const _MessageActionTile({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.colors,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        child: Row(
+          children: [
+            Icon(icon, color: color, size: 21),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Text(
+                title,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: colors.text,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

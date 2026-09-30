@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -685,26 +686,32 @@ class _ChatDocumentTileState extends State<ChatDocumentTile> {
 // =============================================================================
 
 /// Slim centered row for messageType == 'call-log'. No bubble background:
-/// phone/video icon (green completed / red missed-cancelled), direction-aware
-/// title, status subtitle ("Ended · 12:34" / "Cancelled" / "Missed") + time.
+/// direction-aware phone/video icon (green completed / red missed-cancelled-
+/// declined), WhatsApp-style in/out arrow, direction-aware title, status
+/// subtitle ("Ended · 12:34" / "Cancelled" / "Missed" / "Declined") + time.
+/// Tapping opens the call summary sheet (participants + transcript when the
+/// backend stored one).
 class CallLogRow extends StatelessWidget {
   final Message message;
   final bool isMe;
   final ThemeColors colors;
+
+  /// conversationId → display name, used by the summary sheet to label the
+  /// participant ids the backend returns (which carry no names).
+  final Map<String, String> participantNames;
 
   const CallLogRow({
     super.key,
     required this.message,
     required this.isMe,
     required this.colors,
+    this.participantNames = const {},
   });
 
   @override
   Widget build(BuildContext context) {
     final meta = ChatCallLogMeta.tryParse(message.content);
-    final missed = meta == null ||
-        meta.status == 'missed' ||
-        meta.status == 'cancelled';
+    final missed = meta == null || meta.isUnsuccessful;
     final accent = missed ? colors.error : colors.success;
 
     final String title;
@@ -724,11 +731,13 @@ class CallLogRow extends StatelessWidget {
       statusLabel = 'Cancelled';
     } else if (meta.status == 'missed') {
       statusLabel = 'Missed';
+    } else if (meta.status == 'declined') {
+      statusLabel = 'Declined';
     } else {
       statusLabel = meta.status;
     }
 
-    return Center(
+    final row = Center(
       child: Container(
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -741,10 +750,11 @@ class CallLogRow extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // WhatsApp-style direction arrow layered over the phone icon.
             Icon(
               meta?.callType == 'video'
                   ? Icons.videocam_rounded
-                  : Icons.call_rounded,
+                  : (isMe ? Icons.call_made_rounded : Icons.call_received_rounded),
               size: 18,
               color: accent,
             ),
@@ -786,5 +796,386 @@ class CallLogRow extends StatelessWidget {
         ),
       ),
     );
+
+    // Tap-through: call summary bottom sheet (participants + transcript).
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => CallLogSummarySheet.show(
+        context,
+        message: message,
+        isMe: isMe,
+        colors: colors,
+        participantNames: participantNames,
+      ),
+      child: row,
+    );
   }
+}
+
+/// WhatsApp-style call summary bottom sheet, opened from a call-log row.
+/// Shows the meta (initiator, type, status, duration) and — best-effort —
+/// the participant join/leave list (GET /calls/:id) plus the stored live-
+/// caption transcript (GET /calls/:id/transcript) when present.
+///
+/// Deliberately defensive: every fetch failure degrades to the static meta
+/// instead of an error screen (older backends have neither endpoint).
+class CallLogSummarySheet extends StatefulWidget {
+  final Message message;
+  final bool isMe;
+  final ThemeColors colors;
+  final Map<String, String> participantNames;
+
+  const CallLogSummarySheet({
+    super.key,
+    required this.message,
+    required this.isMe,
+    required this.colors,
+    this.participantNames = const {},
+  });
+
+  static void show(
+    BuildContext context, {
+    required Message message,
+    required bool isMe,
+    required ThemeColors colors,
+    Map<String, String> participantNames = const {},
+  }) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: colors.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => FractionallySizedBox(
+        heightFactor: 0.75,
+        child: CallLogSummarySheet(
+          message: message,
+          isMe: isMe,
+          colors: colors,
+          participantNames: participantNames,
+        ),
+      ),
+    );
+  }
+
+  @override
+  State<CallLogSummarySheet> createState() => _CallLogSummarySheetState();
+}
+
+class _CallLogSummarySheetState extends State<CallLogSummarySheet> {
+  Map<String, dynamic>? _call;
+  final List<_TranscriptLine> _transcript = [];
+  bool _loading = true;
+  bool _transcriptAvailable = false;
+
+  late final ChatCallLogMeta? _meta;
+
+  @override
+  void initState() {
+    super.initState();
+    _meta = ChatCallLogMeta.tryParse(widget.message.content);
+    unawaited(_load());
+  }
+
+  String _nameFor(String userId) {
+    final known = widget.participantNames[userId];
+    if (known != null && known.trim().isNotEmpty) return known.trim();
+    if (userId.length <= 10) return userId;
+    return 'Guest ${userId.substring(userId.length - 4).toUpperCase()}';
+  }
+
+  Future<void> _load() async {
+    final api = ApiService();
+    final callId = _meta?.callId ?? '';
+    if (callId.isNotEmpty) {
+      try {
+        final response = await api.getCallById(callId);
+        if (response.data['success'] == true && response.data['data'] is Map) {
+          _call = Map<String, dynamic>.from(response.data['data'] as Map);
+        }
+      } catch (e) {
+        Logger.error('CallLogSummarySheet: getCallById failed: $e');
+      }
+      final wantsTranscript = _meta?.hasTranscript == true ||
+          _call?['hasTranscript'] == true;
+      if (wantsTranscript) {
+        try {
+          final response = await api.getCallTranscript(callId);
+          final data = response.data['data'];
+          final List raw = data is List
+              ? data
+              : (data is Map && data['segments'] is List)
+                  ? data['segments'] as List
+                  : (data is Map && data['transcript'] is List)
+                      ? data['transcript'] as List
+                      : <dynamic>[];
+          for (final entry in raw) {
+            if (entry is! Map) continue;
+            final text = (entry['text'] ?? entry['segment'] ?? '').toString();
+            if (text.trim().isEmpty) continue;
+            _transcript.add(_TranscriptLine(
+              speaker: (entry['speakerName'] ?? entry['speaker_name'] ?? entry['speaker'] ?? 'Speaker')
+                  .toString(),
+              text: text,
+            ));
+          }
+          _transcriptAvailable = _transcript.isNotEmpty;
+        } catch (e) {
+          // Transcript endpoint may not exist on the deployed backend yet —
+          // degrade silently (the summary still renders).
+          Logger.error('CallLogSummarySheet: transcript unavailable: $e');
+        }
+      }
+    }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  String _statusLabel() {
+    final status = _call?['status']?.toString() ?? _meta?.status ?? '';
+    switch (status) {
+      case 'completed':
+        // `duration` arrives as a SQL numeric; never trust a raw `as num?`.
+        final seconds = _call?['duration'] is num
+            ? (_call?['duration'] as num).toInt()
+            : _meta?.durationSeconds;
+        return 'Ended · ${formatCallDuration(seconds)}';
+      case 'cancelled':
+        return 'Cancelled';
+      case 'missed':
+        return 'Missed';
+      case 'declined':
+        return 'Declined';
+      case '':
+        return '';
+      default:
+        return status;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = widget.colors;
+    final meta = _meta;
+    final missed = meta == null || meta.isUnsuccessful;
+    final accent = missed ? colors.error : colors.success;
+    final callType = meta?.callType ??
+        (_call?['type']?.toString() == 'video' ? 'video' : 'audio');
+    final title = widget.isMe
+        ? 'Outgoing ${callType == 'video' ? 'video call' : 'voice call'}'
+        : 'Incoming ${callType == 'video' ? 'video call' : 'voice call'}';
+
+    final participants = _call?['participants'];
+    final participantList =
+        participants is List ? participants.whereType<Map>().toList() : <Map>[];
+
+    return SafeArea(
+      top: false,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Stack(
+            children: [
+              Align(
+                alignment: Alignment.topCenter,
+                child: Container(
+                  margin: const EdgeInsets.only(top: 10),
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: colors.border,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              Align(
+                alignment: Alignment.topRight,
+                child: IconButton(
+                  icon: const Icon(Icons.close_rounded, size: 20),
+                  color: colors.textSecondary,
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 6, 20, 0),
+            child: Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    callType == 'video'
+                        ? Icons.videocam_rounded
+                        : (widget.isMe
+                            ? Icons.call_made_rounded
+                            : Icons.call_received_rounded),
+                    color: accent,
+                    size: 22,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: colors.text,
+                        ),
+                      ),
+                      if (_statusLabel().isNotEmpty)
+                        Text(
+                          _statusLabel(),
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight:
+                                missed ? FontWeight.w600 : FontWeight.w400,
+                            color: missed ? colors.error : colors.textSecondary,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (meta?.initiatorName?.isNotEmpty ?? false)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+              child: Text(
+                'Started by ${meta!.initiatorName}',
+                style: TextStyle(fontSize: 12.5, color: colors.textSecondary),
+              ),
+            ),
+          const SizedBox(height: 8),
+          Divider(height: 1, color: colors.border),
+          Expanded(
+            child: _loading
+                ? Center(
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: colors.primary,
+                    ),
+                  )
+                : ListView(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 12),
+                    children: [
+                      if (participantList.isNotEmpty) ...[
+                        Text(
+                          'Participants',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.4,
+                            color: colors.textSecondary,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        for (final p in participantList)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.person_rounded,
+                                  size: 16,
+                                  color: colors.primary,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    _nameFor(
+                                        (p['userId'] ?? p['user_id'] ?? '').toString()),
+                                    style: TextStyle(
+                                      fontSize: 13.5,
+                                      color: colors.text,
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  '${p['status'] ?? ''}',
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    color: colors.textSecondary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        const SizedBox(height: 8),
+                      ],
+                      if (_transcriptAvailable) ...[
+                        Text(
+                          'Live transcript',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.4,
+                            color: colors.textSecondary,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        for (final line in _transcript)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  line.speaker,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                    color: colors.primary,
+                                  ),
+                                ),
+                                Text(
+                                  line.text,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    height: 1.3,
+                                    color: colors.text,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ] else if (!_loading &&
+                          participantList.isEmpty &&
+                          meta == null)
+                        Center(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 24),
+                            child: Text(
+                              'No call details available',
+                              style: TextStyle(
+                                  fontSize: 13, color: colors.textSecondary),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TranscriptLine {
+  final String speaker;
+  final String text;
+  const _TranscriptLine({required this.speaker, required this.text});
 }

@@ -173,10 +173,19 @@ DocumentIconMeta documentIconMeta(String? filename) {
 
 class ChatCallLogMeta {
   final String callType; // 'audio' | 'video'
-  final String status; // 'completed' | 'missed' | 'cancelled'
+  final String status; // 'completed' | 'missed' | 'cancelled' | 'declined'
   final int? durationSeconds;
   final String? initiatorName;
   final String? callCode;
+
+  /// Call id carried by newer call-log payloads — enables the tap-through
+  /// call summary sheet (GET /calls/:id). Null on older payloads: the sheet
+  /// then renders the meta info only.
+  final String? callId;
+
+  /// Whether the backend stored a live-caption transcript for the call
+  /// (GET /calls/:id/transcript). Null = unknown (older payloads).
+  final bool? hasTranscript;
 
   const ChatCallLogMeta({
     this.callType = 'audio',
@@ -184,7 +193,13 @@ class ChatCallLogMeta {
     this.durationSeconds,
     this.initiatorName,
     this.callCode,
+    this.callId,
+    this.hasTranscript,
   });
+
+  /// Anything but a clean completion rings red (WhatsApp-style): the callee
+  /// never answered or the call was abandoned/declined.
+  bool get isUnsuccessful => status != 'completed';
 
   /// Defensive parse: content is a JSON string produced by the backend's
   /// postCallLogMessage(). Garbage in -> null (caller renders a fallback).
@@ -201,6 +216,12 @@ class ChatCallLogMeta {
             : int.tryParse('${decoded['durationSeconds']}'),
         initiatorName: decoded['initiatorName']?.toString(),
         callCode: decoded['callCode']?.toString(),
+        callId: (decoded['callId'] ?? decoded['call_id'])?.toString(),
+        hasTranscript: decoded['hasTranscript'] is bool
+            ? decoded['hasTranscript'] as bool
+            : (decoded['has_transcript'] is bool
+                ? decoded['has_transcript'] as bool
+                : null),
       );
     } catch (_) {
       return null;

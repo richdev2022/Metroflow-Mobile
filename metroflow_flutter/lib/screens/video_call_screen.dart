@@ -383,12 +383,13 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   }
 
   /// Apply a route picked from the bottom sheet. [apply] already waits out
-  /// the Android audio-focus settle before refreshing the device list.
+  /// the Android audio-focus settle before refreshing the device list
+  /// (AudioManager can take 1-3s to settle the communication route).
   Future<void> _selectAudioRoute(AudioRoute route) async {
     if (_switchingAudioRoute) return;
     setState(() => _switchingAudioRoute = true);
     try {
-      await _audioRoutes.apply(route, settleDelay: const Duration(milliseconds: 600));
+      await _audioRoutes.apply(route, settleDelay: const Duration(milliseconds: 1200));
     } finally {
       if (mounted) setState(() => _switchingAudioRoute = false);
     }
