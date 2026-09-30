@@ -47,6 +47,8 @@ class LiveKitEngine implements CallingEngine {
   void Function(rtc.MediaStream stream)? onScreenShareStarted;
   @override
   void Function()? onScreenShareStopped;
+  @override
+  void Function(List<String> speakerIds)? onActiveSpeakers;
 
   @override
   Future<void> connect(CallingSession session) async {
