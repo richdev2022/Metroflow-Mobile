@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#FFFFFF</color>
+    <!-- Adaptive-icon background. #4353FF matches the new blue-purple
+         Metroflow brand gradient; the foreground drawable is inset 16% by
+         res/mipmap-anydpi-v26/ic_launcher.xml, so a solid brand blue keeps
+         the mark visually centered without a white halo. -->
+    <color name="ic_launcher_background">#4353FF</color>
 </resources>
