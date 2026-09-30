@@ -7,8 +7,10 @@ import '../providers/theme_provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/notifications_provider.dart';
 import '../providers/badge_provider.dart';
+import '../providers/user_profile_provider.dart';
 import '../services/api.dart';
 import '../utils/app_toast.dart';
+import '../widgets/avatar_with_initials.dart';
 import 'dashboard_screen.dart';
 import 'tasks_screen.dart';
 import 'wallet_screen.dart';
@@ -30,11 +32,16 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   bool _checkingProtectedTab = false;
 
+  // NOTE on ordering: the bottom-nav shows [Home, Tasks, Chat, Meetings, More]
+  // — so index 2 MUST be the ChatScreen and index 3 the MeetingsScreen.
+  // These two were historically swapped (nav said "Chat" but opened
+  // Meetings) which is also why the dashboard quick actions
+  // (Start Meeting → tab=3, New Chat → tab=2) looked dead/mixed up.
   final List<Widget> _pages = const [
     DashboardScreen(),
     TasksScreen(),
-    MeetingsScreen(),
     ChatScreen(),
+    MeetingsScreen(),
     CallsScreen(),
     WalletScreen(),
     PayrollScreen(),
@@ -43,8 +50,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   final List<String> _pageTitles = const [
     'Home',
     'Tasks',
-    'Meetings',
     'Chat',
+    'Meetings',
     'Calls',
     'Wallet',
     'Payroll',
@@ -62,6 +69,11 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && (widget.initialIndex == 5 || widget.initialIndex == 6)) {
         _onItemTapped(widget.initialIndex);
+      }
+      // Warm the shared user profile so the drawer identity block shows the
+      // real name/email even before the dashboard finishes loading.
+      if (mounted) {
+        ref.read(userProfileProvider.notifier).hydrate();
       }
     });
   }
@@ -344,192 +356,356 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         ],
       ),
       drawer: Drawer(
-        child: Column(
-          children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.only(
-                top: 64,
-                bottom: 24,
-                left: 24,
-                right: 24,
-              ),
-              decoration: BoxDecoration(
-                color: colors.primary,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Image.asset(
-                    'assets/images/Logo-white.png',
-                    height: 64,
+        backgroundColor: colors.background,
+        child: SafeArea(
+          bottom: false,
+          child: Column(
+            children: [
+              // ---- Brand + identity header (fixed brand gradient) ----
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      Color(0xFF1E3A8A),
+                      Color(0xFF2563EB),
+                      Color(0xFF7C3AED),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    stops: [0.0, 0.55, 1.0],
                   ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'Metricorex',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                    ),
+                  borderRadius: BorderRadius.vertical(
+                    bottom: Radius.circular(24),
                   ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: ListView(
-                padding: EdgeInsets.zero,
-                children: [
-                  ListTile(
-                    leading: const Icon(Icons.dashboard_outlined),
-                    title: const Text('Board'),
-                    onTap: () {
-                      context.go('/main/board');
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.calendar_today_outlined),
-                    title: const Text('Meetings'),
-                    onTap: () {
-                      context.go('/main/meetings');
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.chat_outlined),
-                    title: const Text('Chat'),
-                    onTap: () {
-                      context.go('/main/chat');
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.video_call_outlined),
-                    title: const Text('Calls'),
-                    onTap: () {
-                      context.go('/main/calls');
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.person_outline),
-                    title: const Text('Profile'),
-                    onTap: () {
-                      context.push('/main/profile');
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.credit_card_outlined),
-                    title: const Text('Subscription'),
-                    onTap: () {
-                      context.push('/main/subscription');
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.local_offer_outlined),
-                    title: const Text('Pricing'),
-                    onTap: () {
-                      context.push('/main/fees');
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.lightbulb_outline),
-                    title: const Text('Ideas'),
-                    onTap: () {
-                      context.push('/main/ideas');
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.archive_outlined),
-                    title: const Text('Backlog'),
-                    onTap: () {
-                      context.push('/main/backlog');
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.receipt_long_outlined),
-                    title: const Text('Activity Logs'),
-                    onTap: () {
-                      context.push('/main/activity-logs');
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.swap_horiz_outlined),
-                    title: const Text('Transfers'),
-                    onTap: () {
-                      context.push('/main/transfers');
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.people_outline),
-                    title: const Text('Team'),
-                    onTap: () {
-                      context.push('/main/team');
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.leaderboard_outlined),
-                    title: const Text('Rankings'),
-                    onTap: () {
-                      Navigator.of(context).pop();
-                      context.push('/main/ranking');
-                    },
-                  ),
-                  const Divider(),
-                  ListTile(
-                    leading: Icon(
-                      themeState.mode == ThemeMode.dark
-                          ? Icons.dark_mode_outlined
-                          : Icons.light_mode_outlined,
-                    ),
-                    title: const Text('Dark Mode'),
-                    trailing: themeState.isLoading
-                        ? const SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : Switch(
-                            value: themeState.mode == ThemeMode.dark,
-                            onChanged: (value) {
-                              ref.read(themeProvider.notifier).toggleTheme(
-                                value ? ThemeMode.dark : ThemeMode.light,
-                              );
-                            },
+                ),
+                child: Consumer(builder: (context, ref, _) {
+                  final authState = ref.watch(authProvider);
+                  final profile = ref.watch(userProfileProvider);
+                  final nameCandidate = (profile.name.trim().isNotEmpty
+                          ? profile.name.trim()
+                          : (authState.userName ?? '').trim())
+                      .split(' ')
+                      .first;
+                  final email = profile.email.trim();
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            width: 46,
+                            height: 46,
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(13),
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.25),
+                                width: 1,
+                              ),
+                            ),
+                            child: Image.asset(
+                              'assets/images/logo-mark-white.png',
+                              fit: BoxFit.contain,
+                            ),
                           ),
-                  ),
-                  const Divider(),
-                  ListTile(
-                    leading: const Icon(Icons.logout_outlined, color: Colors.red),
-                    title: const Text('Logout', style: TextStyle(color: Colors.red)),
-                    onTap: () async {
-                      final confirm = await showDialog<bool>(
-                        context: context,
-                        builder: (context) => AlertDialog(
-                          title: const Text('Logout'),
-                          content: const Text('Are you sure you want to logout?'),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(context, false),
-                              child: const Text('Cancel'),
+                          const SizedBox(width: 12),
+                          const Expanded(
+                            child: Text(
+                              'Metricorex',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 21,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.2,
+                              ),
                             ),
-                            TextButton(
-                              onPressed: () => Navigator.pop(context, true),
-                              child: const Text('Logout'),
+                          ),
+                          IconButton(
+                            tooltip: 'Close menu',
+                            icon: Icon(
+                              Icons.close_rounded,
+                              color: Colors.white.withValues(alpha: 0.85),
+                              size: 20,
                             ),
-                          ],
-                        ),
-                      );
-                      if (confirm == true) {
-                        await authNotifier.logout();
-                        if (context.mounted) {
-                          context.go('/login');
-                        }
-                      }
-                    },
-                  ),
-                ],
+                            onPressed: () =>
+                                Navigator.of(context).maybePop(),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(2),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.55),
+                                width: 1.5,
+                              ),
+                            ),
+                            child: AvatarWithInitials(
+                              name: nameCandidate.isEmpty
+                                  ? 'Me'
+                                  : nameCandidate,
+                              imageUrl:
+                                  profile.avatarUrl ?? authState.avatarUrl,
+                              radius: 19,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  nameCandidate.isEmpty
+                                      ? 'Welcome'
+                                      : nameCandidate,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                if (email.isNotEmpty)
+                                  Text(
+                                    email,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color:
+                                          Colors.white.withValues(alpha: 0.78),
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  );
+                }),
               ),
-            ),
-          ],
+              // ---- Navigation body ----
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(12, 14, 12, 8),
+                  children: [
+                    const _DrawerSectionLabel('Workspace'),
+                    _DrawerTile(
+                      icon: Icons.view_kanban_outlined,
+                      title: 'Board',
+                      colors: colors,
+                      onTap: () async {
+                        context.go('/main/board');
+                      },
+                    ),
+                    _DrawerTile(
+                      icon: Icons.lightbulb_outline,
+                      title: 'Ideas',
+                      colors: colors,
+                      onTap: () async {
+                        context.push('/main/ideas');
+                      },
+                    ),
+                    _DrawerTile(
+                      icon: Icons.archive_outlined,
+                      title: 'Backlog',
+                      colors: colors,
+                      onTap: () async {
+                        context.push('/main/backlog');
+                      },
+                    ),
+                    _DrawerTile(
+                      icon: Icons.people_outline,
+                      title: 'Team',
+                      colors: colors,
+                      onTap: () async {
+                        context.push('/main/team');
+                      },
+                    ),
+                    _DrawerTile(
+                      icon: Icons.leaderboard_outlined,
+                      title: 'Rankings',
+                      colors: colors,
+                      onTap: () async {
+                        context.push('/main/ranking');
+                      },
+                    ),
+                    const _DrawerSectionLabel('Finance'),
+                    _DrawerTile(
+                      icon: Icons.account_balance_wallet_outlined,
+                      title: 'Wallet',
+                      colors: colors,
+                      onTap: () async {
+                        await _onItemTapped(5);
+                      },
+                    ),
+                    _DrawerTile(
+                      icon: Icons.payments_outlined,
+                      title: 'Payroll',
+                      colors: colors,
+                      onTap: () async {
+                        await _onItemTapped(6);
+                      },
+                    ),
+                    _DrawerTile(
+                      icon: Icons.swap_horiz_outlined,
+                      title: 'Transfers',
+                      colors: colors,
+                      onTap: () async {
+                        context.push('/main/transfers');
+                      },
+                    ),
+                    const _DrawerSectionLabel('Account'),
+                    _DrawerTile(
+                      icon: Icons.person_outline,
+                      title: 'Profile',
+                      colors: colors,
+                      onTap: () async {
+                        context.push('/main/profile');
+                      },
+                    ),
+                    _DrawerTile(
+                      icon: Icons.credit_card_outlined,
+                      title: 'Subscription',
+                      colors: colors,
+                      onTap: () async {
+                        context.push('/main/subscription');
+                      },
+                    ),
+                    _DrawerTile(
+                      icon: Icons.local_offer_outlined,
+                      title: 'Pricing',
+                      colors: colors,
+                      onTap: () async {
+                        context.push('/main/fees');
+                      },
+                    ),
+                    _DrawerTile(
+                      icon: Icons.receipt_long_outlined,
+                      title: 'Activity Logs',
+                      colors: colors,
+                      onTap: () async {
+                        context.push('/main/activity-logs');
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                    // Theme toggle — themed row (works in light & dark).
+                    Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 4),
+                      decoration: BoxDecoration(
+                        color: colors.surface,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: colors.border),
+                      ),
+                      child: ListTile(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        leading: Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF7C3AED).withValues(alpha: 0.10),
+                            borderRadius: BorderRadius.circular(11),
+                          ),
+                          child: Icon(
+                            themeState.mode == ThemeMode.dark
+                                ? Icons.dark_mode_outlined
+                                : Icons.light_mode_outlined,
+                            size: 19,
+                            color: const Color(0xFF7C3AED),
+                          ),
+                        ),
+                        title: Text(
+                          'Dark Mode',
+                          style: TextStyle(
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.w600,
+                            color: colors.text,
+                          ),
+                        ),
+                        trailing: themeState.isLoading
+                            ? const SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2),
+                              )
+                            : Switch(
+                                value: themeState.mode == ThemeMode.dark,
+                                onChanged: (value) {
+                                  ref.read(themeProvider.notifier).toggleTheme(
+                                        value
+                                            ? ThemeMode.dark
+                                            : ThemeMode.light,
+                                      );
+                                },
+                              ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _DrawerTile(
+                      icon: Icons.logout_outlined,
+                      title: 'Logout',
+                      colors: colors,
+                      danger: true,
+                      closeOnTap: false,
+                      onTap: () async {
+                        final confirm = await showDialog<bool>(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            title: const Text('Logout'),
+                            content: const Text(
+                                'Are you sure you want to logout?'),
+                            actions: [
+                              TextButton(
+                                onPressed: () =>
+                                    Navigator.pop(context, false),
+                                child: const Text('Cancel'),
+                              ),
+                              TextButton(
+                                onPressed: () =>
+                                    Navigator.pop(context, true),
+                                child: const Text('Logout'),
+                              ),
+                            ],
+                          ),
+                        );
+                        if (confirm == true) {
+                          await authNotifier.logout();
+                          if (context.mounted) {
+                            context.go('/login');
+                          }
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    Center(
+                      child: Text(
+                        'Metricorex v1.0.0',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: colors.textSecondary.withValues(alpha: 0.7),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
       body: _pages[_selectedIndex],
@@ -815,6 +991,106 @@ class _KycGateStatus {
       ninVerified: user?['ninStatus'] == 'verified' ||
           user?['nin_status'] == 'verified' ||
           root['nin_verified'] == true,
+    );
+  }
+}
+
+/// Section label used inside the navigation drawer.
+class _DrawerSectionLabel extends StatelessWidget {
+  final String label;
+  const _DrawerSectionLabel(this.label);
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppTheme.colors;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 14, 14, 6),
+      child: Text(
+        label.toUpperCase(),
+        style: TextStyle(
+          fontSize: 10.5,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 1.1,
+          color: colors.textSecondary.withValues(alpha: 0.75),
+        ),
+      ),
+    );
+  }
+}
+
+/// Navigation tile used inside the drawer: tinted icon container + label +
+/// chevron, full-width tap target. Closes the drawer BEFORE running the
+/// action so the destination never renders behind an open drawer.
+class _DrawerTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final ThemeColors colors;
+  final Future<void> Function() onTap;
+  final bool danger;
+
+  /// When false the drawer is NOT closed before [onTap] — used by actions
+  /// that open their own dialog first (e.g. the logout confirmation) so the
+  /// tap context stays mounted.
+  final bool closeOnTap;
+
+  const _DrawerTile({
+    required this.icon,
+    required this.title,
+    required this.colors,
+    required this.onTap,
+    this.danger = false,
+    this.closeOnTap = true,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final tint = danger ? colors.error : colors.primary;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () async {
+            if (closeOnTap) {
+              Navigator.of(context).pop(); // close the drawer first
+            }
+            await onTap();
+          },
+          child: Padding(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: tint.withValues(alpha: 0.09),
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                  child: Icon(icon, size: 19, color: tint),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: danger ? FontWeight.w600 : FontWeight.w600,
+                      color: danger ? colors.error : colors.text,
+                    ),
+                  ),
+                ),
+                Icon(Icons.chevron_right_rounded,
+                    size: 18, color: colors.textSecondary),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

@@ -160,16 +160,23 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Animated logo.
+                  // Animated logo — the SQUARE white shield mark. The wide
+                  // wordmark (Logo-white.png, 1024x273) is NOT usable here:
+                  // BoxFit.cover inside a square crops it to a blank sliver.
                   FadeTransition(
                     opacity: _logoOpacity,
                     child: ScaleTransition(
                       scale: _logoScale,
                       child: Container(
-                        width: 116,
-                        height: 116,
+                        width: 122,
+                        height: 122,
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(30),
+                          color: Colors.white.withValues(alpha: 0.10),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.22),
+                            width: 1.2,
+                          ),
                           boxShadow: [
                             BoxShadow(
                               color: Colors.black.withValues(alpha: 0.28),
@@ -178,11 +185,11 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                             ),
                           ],
                         ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(30),
+                        child: Padding(
+                          padding: const EdgeInsets.all(14),
                           child: Image.asset(
-                            'assets/images/Logo-white.png',
-                            fit: BoxFit.cover,
+                            'assets/images/logo-mark-white.png',
+                            fit: BoxFit.contain,
                           ),
                         ),
                       ),
