@@ -6,10 +6,13 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../services/mediasoup_room_service.dart';
 import '../services/calling/calling_engine.dart';
 import '../services/calling/livekit_engine.dart';
+import '../services/captions_service.dart';
 import '../services/socket_service.dart';
-import '../services/api.dart' show StorageService;
+import '../services/api.dart' show ApiService, StorageService;
 import '../utils/app_feedback.dart';
 import '../utils/logger.dart';
+import '../widgets/captions_overlay.dart';
+import 'meeting_notes_screen.dart';
 
 class VideoCallScreen extends StatefulWidget {
   final String roomId;
@@ -141,6 +144,15 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   bool _isConnecting = true;
   bool _isSwitchingScreenShare = false;
   String _connectionLabel = 'Connecting...';
+
+  // Live captions (provider-agnostic — they ride the app's own socket
+  // connection, so they behave identically for every media provider).
+  final CaptionsController _captions = CaptionsController();
+  bool _showCaptions = false;
+
+  // AI meeting notes: notified while a meeting room is open when the backend
+  // finishes generating notes for THIS meeting.
+  void Function(dynamic)? _previousNotesHandler;
   String _resolvedUserId = '';
   String _resolvedUserName = 'User';
   bool _isCallHost = false;
@@ -178,6 +190,13 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   bool _showJoinRetry = false;
   bool _mediaConnected = false;
 
+  // Media connect resilience: when the secondary-provider engine fails to
+  // connect, we refresh credentials ONCE via `POST /rtc/token` and retry —
+  // possibly switching engines if the backend hands back default-provider
+  // credentials. Max 1 automatic retry per join flow.
+  bool _liveKitRefreshAttempted = false;
+  bool _mediaFailed = false;
+
   // Live duration tracking: elapsed since joining + plan cap remaining.
   Timer? _elapsedTicker;
   int _elapsedSeconds = 0;
@@ -189,6 +208,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     super.initState();
     _isVideoEnabled = widget.enableVideo;
     _isCallHost = widget.isHost;
+    _captions.attach(_socket, roomId: widget.roomId);
     _elapsedTicker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       setState(() => _elapsedSeconds += 1);
@@ -249,6 +269,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _cancelJoinWatchdog();
     _joinReEmitted = false;
     _mediaConnected = false;
+    _mediaFailed = false;
     if (mounted && _showJoinRetry) {
       setState(() => _showJoinRetry = false);
     }
@@ -369,6 +390,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     if (!mounted) return;
     setState(() {
       _showJoinRetry = false;
+      _mediaFailed = false;
       _isConnecting = true;
       _connectionLabel = 'Reconnecting…';
     });
@@ -391,6 +413,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   /// (credentials absent, degraded, legacy backend) keeps the socket
   /// MediaSoup flow below untouched.
   Future<void> _startMediaSession() async {
+    // Each new join flow gets one automatic credential-refresh retry.
+    _liveKitRefreshAttempted = false;
     if (_isLiveKit) {
       await _startLiveKitSession();
     } else {
@@ -398,74 +422,146 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     }
   }
 
-  bool get _isLiveKit {
-    final calling = _effectiveCalling;
+  static bool _mapIsLiveKit(Map<String, dynamic>? calling) {
     if (calling == null) return false;
     return calling['provider']?.toString() == 'livekit' &&
         (calling['token']?.toString() ?? '').isNotEmpty &&
         (calling['serverUrl']?.toString() ?? '').isNotEmpty;
   }
 
+  bool get _isLiveKit => _mapIsLiveKit(_effectiveCalling);
+
   Future<void> _startLiveKitSession() async {
     try {
-      final session = CallingSession.fromMap(
-        _effectiveCalling,
-        roomId: widget.roomId,
-        roomType: widget.isMeeting ? 'meeting' : 'call',
-        identity: _resolvedUserId,
-        displayName: _resolvedUserName,
-        isHost: _isCallHost,
-        audioStartEnabled: true,
-        videoStartEnabled: widget.enableVideo,
-      );
-      if (session.fallback) {
-        Logger.log('Calling provider degraded: ${session.fallbackReason}');
-      }
-
-      final engine = LiveKitEngine();
-      engine.onConnectionStateChanged = (state) {
-        if (!mounted) return;
-        setState(() => _connectionLabel = state);
-        if (state.toLowerCase() == 'connected') {
-          _onMediaConnected();
-        }
-      };
-      engine.onRemoteStream = _addRemoteStream;
-      engine.onRemoteStreamRemoved = _removeRemoteStream;
-      engine.onLocalStreamReady = (stream) {
-        if (!mounted) return;
-        setState(() => _localRenderer.srcObject = stream);
-      };
-      engine.onScreenShareStarted = (stream) {
-        if (!mounted) return;
-        setState(() => _screenRenderer.srcObject = stream);
-      };
-      engine.onScreenShareStopped = () {
-        if (!mounted) return;
-        setState(() => _screenRenderer.srcObject = null);
-      };
-
-      _engine = engine;
-      await engine.connect(session);
-      if (!mounted) return;
-      final localStream = engine.localStream;
-      setState(() {
-        if (localStream != null) _localRenderer.srcObject = localStream;
-        _isConnecting = false;
-        _connectionLabel = 'Connected';
-      });
-      _onMediaConnected();
+      await _connectLiveKit(_effectiveCalling);
     } catch (e) {
-      Logger.error('Error joining room: $e');
-      if (!mounted) return;
+      if (!mounted || _hasLeft) return;
+      // Media connect failed — mint fresh credentials ONCE and retry. The
+      // backend health-checks its media servers, so the refresh may return a
+      // re-minted token for the same provider (stale/expired credentials) or
+      // credentials for the default provider (secondary provider down).
+      if (_liveKitRefreshAttempted) {
+        _surfaceMediaFailure(e);
+        return;
+      }
+      _liveKitRefreshAttempted = true;
+      Logger.error('Media connect failed, refreshing credentials once: $e');
+      final refreshed = await _refreshCallingCredentials();
+      if (!mounted || _hasLeft) return;
+      if (refreshed == null) {
+        _surfaceMediaFailure(e);
+        return;
+      }
       setState(() {
-        _isConnecting = false;
-        _connectionLabel = 'Unable to connect media';
+        _effectiveCalling = refreshed;
+        _connectionLabel = 'Reconnecting…';
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Unable to connect media: $e')),
-      );
+      if (_mapIsLiveKit(refreshed)) {
+        // Same provider again — retry once with the re-minted credentials.
+        try {
+          await _connectLiveKit(refreshed);
+        } catch (retryError) {
+          _surfaceMediaFailure(retryError);
+        }
+      } else {
+        // Default-provider credentials — switch engines (the CallingEngine
+        // abstraction already supports both providers on this screen).
+        try {
+          await _startMediasoupSession();
+        } catch (retryError) {
+          _surfaceMediaFailure(retryError);
+        }
+      }
     }
+  }
+
+  /// Builds the engine for the given credentials, wires its callbacks and
+  /// connects to the room.
+  Future<void> _connectLiveKit(Map<String, dynamic>? calling) async {
+    final session = CallingSession.fromMap(
+      calling,
+      roomId: widget.roomId,
+      roomType: widget.isMeeting ? 'meeting' : 'call',
+      identity: _resolvedUserId,
+      displayName: _resolvedUserName,
+      isHost: _isCallHost,
+      audioStartEnabled: true,
+      videoStartEnabled: widget.enableVideo,
+    );
+    if (session.fallback) {
+      Logger.log('Calling provider degraded: ${session.fallbackReason}');
+    }
+
+    final engine = LiveKitEngine();
+    engine.onConnectionStateChanged = (state) {
+      if (!mounted) return;
+      setState(() => _connectionLabel = state);
+      if (state.toLowerCase() == 'connected') {
+        _onMediaConnected();
+      }
+    };
+    engine.onRemoteStream = _addRemoteStream;
+    engine.onRemoteStreamRemoved = _removeRemoteStream;
+    engine.onLocalStreamReady = (stream) {
+      if (!mounted) return;
+      setState(() => _localRenderer.srcObject = stream);
+    };
+    engine.onScreenShareStarted = (stream) {
+      if (!mounted) return;
+      setState(() => _screenRenderer.srcObject = stream);
+    };
+    engine.onScreenShareStopped = () {
+      if (!mounted) return;
+      setState(() => _screenRenderer.srcObject = null);
+    };
+
+    _engine = engine;
+    await engine.connect(session);
+    if (!mounted) return;
+    final localStream = engine.localStream;
+    setState(() {
+      if (localStream != null) _localRenderer.srcObject = localStream;
+      _isConnecting = false;
+      _connectionLabel = 'Connected';
+    });
+    _onMediaConnected();
+  }
+
+  /// One-shot credential refresh (`POST /rtc/token` through the API client).
+  /// Returns the refreshed credentials map, or null on any failure.
+  Future<Map<String, dynamic>?> _refreshCallingCredentials() async {
+    try {
+      final response = await ApiService().refreshRtcToken(
+        roomType: widget.isMeeting ? 'meeting' : 'call',
+        roomId: widget.roomId,
+      );
+      if (response.data['success'] != true) return null;
+      final data = response.data['data'];
+      final credentials = data is Map ? data['credentials'] : null;
+      return credentials is Map ? Map<String, dynamic>.from(credentials) : null;
+    } catch (e) {
+      Logger.error('Error refreshing media credentials: $e');
+      return null;
+    }
+  }
+
+  /// Friendly terminal failure: drop the connecting overlay, surface the
+  /// retry banner (with a "Retry" action) and a clear message. The room is
+  /// never wiped silently — the user can always attempt the join again.
+  void _surfaceMediaFailure(Object error) {
+    Logger.error('Error joining room: $error');
+    if (!mounted) return;
+    setState(() {
+      _isConnecting = false;
+      _showJoinRetry = true;
+      _mediaFailed = true;
+      _connectionLabel = 'Unable to connect media';
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Could not connect to the room media. Please try again.'),
+      ),
+    );
   }
 
   /// The normal mediasoup start sequence (device load → transports →
@@ -706,6 +802,24 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _previousDurationActiveHandler = _socket.onCallDurationActive;
     _previousCountdownWarnHandler = _socket.onCallCountdownWarning;
     _previousMultiDeviceHandler = _socket.onCallMultiDevice;
+    _previousNotesHandler = _socket.onMeetingNotesUpdated;
+
+    // AI meeting notes became ready while we are in the room → subtle
+    // snackbar that opens the notes view on top of the call screen.
+    _socket.onMeetingNotesUpdated = (data) {
+      _previousNotesHandler?.call(data);
+      if (!widget.isMeeting || !mounted || data is! Map) return;
+      final payload = Map<String, dynamic>.from(data);
+      if (payload['meetingId']?.toString() != widget.roomId) return;
+      if (payload['notes'] is! Map) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 6),
+          content: const Text('Meeting notes are ready'),
+          action: SnackBarAction(label: 'View', onPressed: _openMeetingNotes),
+        ),
+      );
+    };
 
     // Server-verified echo-risk alert (same account on multiple devices).
     // Shows a persistent in-room banner — the user must know WHY they hear
@@ -836,6 +950,17 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     return id != null && id.toString() == widget.roomId;
   }
 
+  /// Opens the AI notes view for the meeting room on top of the call screen.
+  void _openMeetingNotes() {
+    if (!mounted) return;
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => MeetingNotesScreen(
+        meetingId: widget.roomId,
+        meetingTitle: widget.title,
+      ),
+    ));
+  }
+
   Future<void> _removeRemoteStream(String consumerId) async {
     _RemoteTile? tile;
     for (final t in _remoteTiles) {
@@ -870,6 +995,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   }
 
   Future<void> _cleanup() async {
+    _captions.detach();
+    _captions.dispose();
     _socket.onMeetingChatMessage = _previousChatHandler;
     _socket.onScreenShareStarted = _previousScreenStartHandler;
     _socket.onScreenShareStopped = _previousScreenStopHandler;
@@ -881,6 +1008,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _socket.onCallDurationActive = _previousDurationActiveHandler;
     _socket.onCallMultiDevice = _previousMultiDeviceHandler;
     _socket.onCallCountdownWarning = _previousCountdownWarnHandler;
+    _socket.onMeetingNotesUpdated = _previousNotesHandler;
     _socket.onWaitingRoomAdmitted = _previousWaitingAdmittedHandler;
     _socket.onWaitingRoomDenied = _previousWaitingDeniedHandler;
     _waitingHintTimer?.cancel();
@@ -1148,6 +1276,10 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
             ),
             if (_showChat) _buildChatPanel(),
             if (_showJoinRetry && !_isWaitingForAdmission) _buildJoinRetryBanner(),
+            // Live captions overlay — bottom of the room, above the control
+            // dock. Only rendered while the user toggled captions on.
+            if (_showCaptions && !_isWaitingForAdmission)
+              CaptionsOverlay(controller: _captions),
             // Bottom control bar — SafeArea(bottom) guarantees the hang-up
             // button is NEVER clipped by gesture bars / home indicators, and
             // the Wrap layout keeps every control reachable down to 320dp.
@@ -1686,19 +1818,34 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
           ),
           child: Row(
             children: [
-              const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
+              // Spinner while the join is still in progress; a warning icon
+              // once the media connection has definitively failed.
+              if (!_mediaFailed)
+                const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Color(0xFFFBBF24),
+                  ),
+                )
+              else
+                const Icon(
+                  Icons.wifi_off_rounded,
+                  size: 18,
                   color: Color(0xFFFBBF24),
                 ),
-              ),
               const SizedBox(width: 10),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'Still connecting to the call…',
-                  style: TextStyle(color: Color(0xFFFDE68A), fontSize: 13, fontWeight: FontWeight.w600),
+                  _mediaFailed
+                      ? 'Having trouble connecting to the room'
+                      : 'Still connecting to the call…',
+                  style: const TextStyle(
+                    color: Color(0xFFFDE68A),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
               TextButton(
@@ -1775,6 +1922,11 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                 active: _showChat,
                 onPressed: () => setState(() => _showChat = !_showChat),
               ),
+            _dockButton(
+              icon: _showCaptions ? Icons.closed_caption : Icons.closed_caption_off,
+              active: _showCaptions,
+              onPressed: () => setState(() => _showCaptions = !_showCaptions),
+            ),
             _dockButton(
               icon: _isRecording ? Icons.fiber_manual_record : Icons.radio_button_unchecked,
               active: _isRecording,
