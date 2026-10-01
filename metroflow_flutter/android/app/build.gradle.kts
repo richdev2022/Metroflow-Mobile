@@ -56,6 +56,8 @@ dependencies {
     // Matches the requirement of flutter_local_notifications (see
     // https://pub.dev/packages/flutter_local_notifications#4-android-setup)
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+    // Facebook-style launcher badge (unread count on the app icon).
+    implementation("me.leolin:ShortcutBadger:1.1.22@aar")
 }
 
 flutter {

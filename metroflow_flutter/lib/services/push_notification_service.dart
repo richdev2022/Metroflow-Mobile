@@ -13,6 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/app_feedback.dart';
 import '../utils/logger.dart';
 import 'api.dart';
+import 'app_badge_service.dart';
 
 /// ---------------------------------------------------------------------------
 /// Metroflow push notifications (FCM).
@@ -116,6 +117,11 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         body: (data['message'] ?? '').toString(),
         conversationId: (data['conversation_id'] ?? data['conversationId'] ?? '').toString(),
         payload: Map<String, dynamic>.from(data),
+      );
+      // Launcher badge (Facebook-style) — use the server-computed unread
+      // count when present, otherwise tick the local counter.
+      await AppBadgeService.instance.addUnread(
+        exact: int.tryParse((data['badge'] ?? '').toString()),
       );
       return;
     }
@@ -435,16 +441,20 @@ class PushNotificationService {
       switch (type) {
         case 'incoming_call':
           final alreadyRinging = foregroundCallGuard?.call() ?? false;
-          showCallNotification(
-            callerName: (data['caller_name'] ?? data['callerName'] ?? data['callerId'] ?? 'Incoming call').toString(),
-            callType: (data['call_type'] ?? data['callType'] ?? 'video').toString(),
-            payload: Map<String, dynamic>.from(data),
-          );
-          if (!alreadyRinging) {
-            // The socket path did NOT deliver call:incoming (process was
-            // half-dead / push-only delivery): mirror it by presenting the
-            // same global incoming-call overlay the tap handler uses, then
-            // ring. incomingCallHook is assigned from main.dart.
+          if (alreadyRinging) {
+            // The in-app incoming-call overlay is already ringing (socket
+            // path): surface the tray banner as well so a swipe-down still
+            // shows the call.
+            showCallNotification(
+              callerName: (data['caller_name'] ?? data['callerName'] ?? data['callerId'] ?? 'Incoming call').toString(),
+              callType: (data['call_type'] ?? data['callType'] ?? 'video').toString(),
+              payload: Map<String, dynamic>.from(data),
+            );
+          } else {
+            // Push-only delivery: present the global overlay + ring INSTEAD
+            // of a tray notification. The old order (post the notification,
+            // then _presentIncomingCall cancelled it right away) is exactly
+            // the "I hear the ring but nothing shows in the tray" bug.
             _presentIncomingCall(Map<String, dynamic>.from(data));
             AppFeedback.startRingtone();
           }
@@ -464,6 +474,10 @@ class PushNotificationService {
             body: (data['message'] ?? '').toString(),
             conversationId: (data['conversation_id'] ?? data['conversationId'] ?? '').toString(),
             payload: Map<String, dynamic>.from(data),
+          );
+          // Launcher badge (Facebook-style) — see the background handler.
+          AppBadgeService.instance.addUnread(
+            exact: int.tryParse((data['badge'] ?? '').toString()),
           );
           break;
         default:

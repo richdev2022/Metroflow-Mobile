@@ -36,6 +36,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     super.initState();
     _loadConversations();
     _loadTeamMembers();
+    // Opening the chat hub means the user is catching up — clear the
+    // Facebook-style launcher badge (per-conversation dots stay in-app).
+    AppBadgeService.instance.clear();
     _conversationCreatedHandler = (data) {
       if (!mounted) return;
       if (data is! Map) return;
