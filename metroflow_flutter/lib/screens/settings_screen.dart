@@ -17,6 +17,7 @@ import '../utils/app_timezone.dart';
 import '../utils/app_toast.dart';
 import '../utils/timezone_data.dart';
 import '../widgets/avatar_with_initials.dart';
+import '../widgets/app_tour.dart';
 
 const _businessIndustries = [
   'Technology',
@@ -1152,6 +1153,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       onTap: () => context.go('/forgot-password'),
                     ),
                     _sectionTitle('Support'),
+                    _settingItem(
+                      icon: Icons.tour_outlined,
+                      title: 'Take the App Tour',
+                      subtitle: 'Replay the guided walkthrough of key features',
+                      onTap: () => showAppTour(context),
+                    ),
                     _settingItem(
                       icon: Icons.help_outline,
                       title: 'Help Center',
