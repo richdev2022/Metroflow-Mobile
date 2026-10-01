@@ -37,24 +37,28 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Select Xcode 16.4+ (Firebase iOS SDK needs the Swift 6.1 toolchain)
+      - name: Select Xcode 26+ (iOS 26 SDK + Swift 6.1 toolchain)
         run: |
           echo "Default Xcode:"
           xcodebuild -version
           echo "Available Xcodes on image:"
           ls -d /Applications/Xcode*.app 2>/dev/null || true
           XCODE_APP=""
-          # Prefer 16.4 (known good with Flutter 3.44 + Firebase iOS SDK 12).
-          # Fall back to newer 26.x when 16.4 is pruned from the image.
-          for v in 16.4 26.4 26.3 26.2 26.1 26.0 16.3; do
+          # Xcode 26.x is REQUIRED here:
+          #  - device_info_plus 12.x calls NSProcessInfo.isiOSAppOnVision,
+          #    which only exists in the iOS 26 SDK (Xcode 26).
+          #  - the Firebase iOS SDK resolved by SwiftPM needs the Swift 6.1
+          #    toolchain (Xcode 26 ships Swift 6.2, fully compatible).
+          # Fall back to 16.4/16.3 only if 26.x is ever missing.
+          for v in 26.4 26.3 26.2 26.1 26.0 16.4 16.3; do
             if [ -d "/Applications/Xcode_${v}.app" ]; then
               XCODE_APP="/Applications/Xcode_${v}.app"
               break
             fi
           done
           if [ -z "$XCODE_APP" ]; then
-            echo "::error::No Xcode >= 16.3 found on the runner image — the Firebase iOS SDK requires the Swift 6.1 toolchain."
-            exit 1
+            # Last resort: the image's default Xcode.
+            XCODE_APP="/Applications/Xcode.app"
           fi
           echo "Selecting $XCODE_APP"
           sudo xcode-select -s "$XCODE_APP"
