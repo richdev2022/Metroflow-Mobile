@@ -25,6 +25,7 @@ import '../widgets/emoji_sticker_gif_panel.dart';
 import 'video_call_screen.dart';
 import '../utils/logger.dart';
 import '../widgets/avatar_with_initials.dart';
+import '../widgets/styled_text.dart';
 import '../widgets/user_profile_sheet.dart';
 
 class ChatDetailScreen extends ConsumerStatefulWidget {
@@ -1853,9 +1854,9 @@ class _MessageBubble extends StatelessWidget {
               ),
             if (message.replyTo != null) _quoteBlock(colors),
             if (media == null)
-              Text(
+              StyledText(
                 message.content,
-                style: TextStyle(
+                baseStyle: TextStyle(
                   color: isMe ? Colors.white : colors.text,
                   fontSize: 14.5,
                   height: 1.35,
@@ -1865,9 +1866,9 @@ class _MessageBubble extends StatelessWidget {
               media,
               if (showCaption) ...[
                 const SizedBox(height: 4),
-                Text(
+                StyledText(
                   caption,
-                  style: TextStyle(
+                  baseStyle: TextStyle(
                     color: isMe ? Colors.white : colors.text,
                     fontSize: 13.5,
                     height: 1.3,

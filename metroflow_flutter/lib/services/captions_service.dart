@@ -80,6 +80,11 @@ class CaptionsController extends ChangeNotifier {
 
   final List<CaptionsEntry> _entries = [];
   final Map<String, String> _openUtterances = {}; // speakerId → utterance key
+  // Meeting rooms can deliver `caption:updated` TWICE per segment (the relay
+  // targets both room:{id} and meeting:{id}, and a meeting socket sits in
+  // both). Track recently-closed finals so a duplicate final is dropped
+  // instead of appended as a second row.
+  final Map<String, DateTime> _recentFinals = {};
   int _utteranceCounter = 0;
   Timer? _pruneTimer;
   String? _roomId;
@@ -121,6 +126,24 @@ class CaptionsController extends ChangeNotifier {
 
   String _nextKey() => 'cap-${_utteranceCounter++}';
 
+  /// True when an identical final from this speaker was closed very recently
+  /// (relay double-delivery echo). Window is short — 3s — so genuine repeats
+  /// of the same words still render.
+  bool _isDuplicateFinal(CaptionSegment segment) {
+    final key = '${segment.speakerId}|${segment.text}';
+    final seen = _recentFinals[key];
+    if (seen != null && DateTime.now().difference(seen).inMilliseconds < 3000) {
+      return true;
+    }
+    _recentFinals[key] = DateTime.now();
+    if (_recentFinals.length > 64) {
+      _recentFinals.removeWhere(
+        (_, ts) => DateTime.now().difference(ts).inMilliseconds >= 3000,
+      );
+    }
+    return false;
+  }
+
   void _handleCaption(dynamic data) {
     // Preserve whatever handler was installed before us (global pattern).
     _previousHandler?.call(data);
@@ -133,6 +156,11 @@ class CaptionsController extends ChangeNotifier {
 
     final openKey = _openUtterances[segment.speakerId];
     if (segment.isFinal) {
+      // Drop relay double-delivery echoes (same speaker + text within 3s).
+      if (_isDuplicateFinal(segment)) {
+        _openUtterances.remove(segment.speakerId);
+        return;
+      }
       // A final segment completes the open utterance (if any) — replace it in
       // place under the same key, then close the utterance.
       _openUtterances.remove(segment.speakerId);
