@@ -4,6 +4,9 @@ import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
+// speech_to_text 7.x does NOT re-export SpeechRecognitionResult from the
+// main library (only ListenMode/SpeechListenOptions are) — import it directly.
+import 'package:speech_to_text/speech_recognition_result.dart';
 
 import '../services/audio_route_service.dart';
 import '../services/mediasoup_room_service.dart';
@@ -1329,10 +1332,12 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     if (_captionBroadcastActive) return;
     try {
       if (!_sttInitialized) {
+        // NOTE (speech_to_text 7.x): initialize() takes NO onResult — the
+        // result listener belongs on listen(). Passing it here is a
+        // compile-time error and silently dropped callbacks at runtime.
         _sttInitialized = await _stt.initialize(
-          onResult: _onSttResult,
           onError: (error) {
-            AppLogger.log('Captions STT error: $error');
+            Logger.log('Captions STT error: $error');
             _captionBroadcastActive = false;
           },
           onStatus: (status) {
@@ -1344,7 +1349,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
           },
         );
         if (!_sttInitialized) {
-          AppLogger.log('Captions STT unavailable on this device — receive-only');
+          Logger.log('Captions STT unavailable on this device — receive-only');
           return;
         }
       }
@@ -1352,7 +1357,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       await _listenOnce();
     } catch (e) {
       // WebRTC owns the mic on some builds — degrade to receive-only captions.
-      AppLogger.log('Captions STT failed to start: $e');
+      Logger.log('Captions STT failed to start: $e');
       _captionBroadcastActive = false;
     }
   }
@@ -1361,13 +1366,14 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     if (!_captionBroadcastActive || !_sttInitialized) return;
     try {
       await _stt.listen(
+        onResult: _onSttResult,
         listenMode: stt.ListenMode.dictation,
         partialResults: true,
         cancelOnError: false,
         localeId: Platform.localeName.split('_').first,
       );
     } catch (e) {
-      AppLogger.log('Captions STT listen failed: $e');
+      Logger.log('Captions STT listen failed: $e');
     }
   }
 
@@ -1389,7 +1395,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     } catch (_) {}
   }
 
-  void _onSttResult(stt.SpeechResult result) {
+  void _onSttResult(SpeechRecognitionResult result) {
     final text = result.recognizedWords.trim();
     if (text.isEmpty || !_captionBroadcastActive) return;
     _socket.emitCaptionSegment({
