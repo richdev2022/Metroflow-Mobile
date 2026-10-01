@@ -57,21 +57,56 @@ platform :ios do
     ].join(" ")
   end
 
+  # Ensures the bundle ID is registered and the "Metricorex" app record exists
+  # on App Store Connect — using ONLY the ASC API key (the token set by
+  # `app_store_connect_api_key` above authorizes every Spaceship::ConnectAPI
+  # call). We deliberately avoid the `produce` action: it hard-requires an
+  # Apple-ID `username` session ("No value found for 'username'" on CI), which
+  # this pipeline intentionally doesn't use.
+  # Idempotent: both steps are no-ops once the bundle ID / app record exist.
+  def ensure_app_record!
+    UI.message("Ensuring bundle ID #{APP_IDENTIFIER} is registered on App Store Connect…")
+    unless Spaceship::ConnectAPI::BundleId.find(APP_IDENTIFIER)
+      Spaceship::ConnectAPI::BundleId.create(
+        name: APP_NAME,
+        platform: Spaceship::ConnectAPI::BundleIdPlatform.map("ios"),
+        identifier: APP_IDENTIFIER
+      )
+      UI.success("Bundle ID #{APP_IDENTIFIER} registered.")
+    end
+
+    UI.message("Ensuring App Store Connect app record for #{APP_IDENTIFIER}…")
+    if Spaceship::ConnectAPI::App.find(APP_IDENTIFIER)
+      UI.success("App record already exists — nothing to do.")
+      return
+    end
+
+    Spaceship::ConnectAPI::App.create(
+      name: APP_NAME,
+      version_string: "1.0.0",
+      sku: APP_IDENTIFIER,
+      primary_locale: "en-US",
+      bundle_id: APP_IDENTIFIER,
+      platforms: [Spaceship::ConnectAPI::BundleIdPlatform.map("ios")],
+      company_name: "Metricorex"
+    )
+
+    # App Store Connect lists newly created apps asynchronously — poll briefly.
+    tries = 0
+    while Spaceship::ConnectAPI::App.find(APP_IDENTIFIER).nil?
+      tries += 1
+      UI.crash!("App record not visible on App Store Connect after 2 minutes") if tries > 8
+      UI.message("Waiting for the new app record to appear on App Store Connect…")
+      sleep(15)
+    end
+    UI.success("App record for #{APP_IDENTIFIER} is ready.")
+  end
+
   # ------------------------------------------------------------------ lanes
   desc "Create the Metricorex app record on App Store Connect (idempotent)"
   lane :create_app do
     asc_api_key!
-    produce(
-      app_identifier: APP_IDENTIFIER,
-      app_name: APP_NAME,
-      app_version: "1.0.0",
-      sku: APP_IDENTIFIER,
-      platform: "ios",
-      language: "English (U.S.)",
-      company_name: "Metricorex",
-      skip_itc: false,      # create the App Store Connect app record
-      skip_devcenter: false # register the bundle ID on the developer portal
-    )
+    ensure_app_record!
   end
 
   desc "Build the iOS app and upload it to TestFlight"
@@ -80,13 +115,7 @@ platform :ios do
 
     # Idempotent: a no-op once the app record exists (first CI run creates
     # "Metricorex" on the developer account automatically).
-    produce(
-      app_identifier: APP_IDENTIFIER,
-      app_name: APP_NAME,
-      app_version: "1.0.0",
-      sku: APP_IDENTIFIER,
-      platform: "ios"
-    )
+    ensure_app_record!
 
     setup_ci
 
