@@ -10,6 +10,12 @@
 
 default_platform(:ios)
 
+# gym runs `xcodebuild -showBuildSettings` to sniff project settings; on this
+# project (Flutter + SwiftPM + CocoaPods) that command takes >30s on CI and the
+# 3s default times out after 4 retries. Give it a real budget.
+ENV["FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT"] ||= "60"
+ENV["FASTLANE_XCODEBUILD_SETTINGS_RETRIES"] ||= "5"
+
 APP_IDENTIFIER = "com.metricorex.app"
 APP_NAME = "Metricorex"
 

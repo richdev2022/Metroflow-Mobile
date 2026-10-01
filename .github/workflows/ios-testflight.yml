@@ -122,6 +122,10 @@ jobs:
 
       - name: Create app (first run) + build, sign & upload to TestFlight
         working-directory: metroflow_flutter/ios
+        env:
+          # gym's `xcodebuild -showBuildSettings` needs >3s on this project.
+          FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT: "60"
+          FASTLANE_XCODEBUILD_SETTINGS_RETRIES: "5"
         run: bundle exec fastlane beta
 
       - name: Upload IPA artifact (backup copy)
