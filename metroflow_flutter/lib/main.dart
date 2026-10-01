@@ -10,6 +10,7 @@ import 'theme/app_theme.dart';
 import 'providers/theme_provider.dart';
 import 'providers/auth_provider.dart';
 import 'services/api.dart';
+import 'services/app_badge_service.dart';
 import 'services/biometrics.dart';
 import 'services/push_notification_service.dart';
 import 'services/socket_service.dart';
@@ -198,6 +199,8 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     // its build); token registration happens post-login via the auth
     // listener below and inside the service itself.
     unawaited(PushNotificationService.instance.initialize());
+    // Restore the persisted launcher-badge count (cold start).
+    unawaited(AppBadgeService.instance.initialize());
   }
 
   /// Launcher badge = unread chats + unread notifications. Refreshed

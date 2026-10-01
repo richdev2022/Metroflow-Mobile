@@ -1,6 +1,7 @@
-import 'package:app_badge_plus/app_badge_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../services/app_badge_service.dart';
 
 /// Global unread-chat count shown as a badge on the bottom-nav Chat tab.
 /// - Incremented on `chat:new-message-notification` socket pushes
@@ -38,15 +39,17 @@ final meetingsUnreadProvider =
     NotifierProvider<MeetingsUnreadNotifier, int>(MeetingsUnreadNotifier.new);
 
 /// ---------------------------------------------------------------------------
-/// Launcher-icon badge (WhatsApp-style app icon count).
+/// Launcher-icon badge (Facebook-style app icon count).
 ///
 /// Total = unread chats (chatUnreadProvider) + unread notifications
 /// (notificationsProvider.unreadCount). main.dart listens to both providers
-/// and calls [update]; the badge is also refreshed on app resume and cleared
-/// when the user signs out.
+/// and calls [update]; push handlers set the exact server-computed total;
+/// the badge is also refreshed on app resume and cleared on sign-out.
 ///
-/// Everything is wrapped in try/catch: launchers/platforms that don't support
-/// badges must never crash the app (app_badge_plus is a no-op there anyway).
+/// Delegates to [AppBadgeService] (MethodChannel -> ShortcutBadger) which
+/// covers more launchers (Samsung, Xiaomi, Oppo/OnePlus, Huawei...) than the
+/// previous app_badge_plus implementation and persists the counter so a
+/// cold start restores it. Every call is best-effort.
 /// ---------------------------------------------------------------------------
 class LauncherBadge {
   LauncherBadge._();
@@ -54,12 +57,17 @@ class LauncherBadge {
   static Future<void> update(int count) async {
     try {
       final total = count < 0 ? 0 : count;
-      // app_badge_plus 1.x: there is no removeBadge — clearing = 0.
-      await AppBadgePlus.updateBadge(total);
+      await AppBadgeService.instance.addUnread(exact: total);
     } catch (e) {
       debugPrint('LauncherBadge.update failed (unsupported launcher?): $e');
     }
   }
 
-  static Future<void> clear() => update(0);
+  static Future<void> clear() async {
+    try {
+      await AppBadgeService.instance.clear();
+    } catch (e) {
+      debugPrint('LauncherBadge.clear failed: $e');
+    }
+  }
 }
