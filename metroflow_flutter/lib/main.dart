@@ -45,6 +45,7 @@ import 'screens/transfer_success_screen.dart';
 import 'screens/create_task_screen.dart';
 import 'screens/task_detail_screen.dart';
 import 'screens/ideas_screen.dart';
+import 'screens/calendar_screen.dart';
 import 'screens/idea_detail_screen.dart';
 import 'screens/backlog_screen.dart';
 import 'screens/profile_screen.dart';
@@ -376,6 +377,10 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
             GoRoute(
               path: 'ideas',
               builder: (context, state) => const IdeasScreen(),
+            ),
+            GoRoute(
+              path: 'calendar',
+              builder: (context, state) => const CalendarScreen(),
             ),
             GoRoute(
               path: 'idea-detail',
