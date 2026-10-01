@@ -86,6 +86,10 @@ const String _kCallRingtoneResource = 'call_ringtone';
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   try {
     debugPrint('FCM background message: ${message.messageId}');
+    // The background handler runs in its OWN isolate — flutter_local_notifications
+    // must be initialized HERE before any show/cancel can work (the main
+    // isolate's initialization does not carry over).
+    await PushNotificationService.ensureBackgroundInitialized();
     // Only CALL pushes need the WhatsApp-style full-screen treatment while the
     // app is closed/backgrounded — chat messages land as normal notifications
     // posted by FCM itself (notification payloads) or here for data-only sends.
@@ -102,12 +106,18 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     if (type == 'missed_call') {
       // Missed-call push: an ordinary heads-up on the "general" channel —
       // the user must NOT get a full-screen ring for a call already gone.
+      // Also clear the still-showing full-screen incoming-call notification
+      // (the caller gave up / the call was answered elsewhere).
       final caller = (data['caller_name'] ?? data['callerName'] ?? data['callerId'] ?? '').toString();
       final callType = (data['call_type'] ?? data['callType'] ?? 'audio').toString();
+      await PushNotificationService.cancelCallNotification();
       await PushNotificationService.showGeneralNotification(
         title: 'Missed ${callType == 'video' ? 'video' : 'audio'} call',
         body: caller.isEmpty ? 'You missed a call' : 'Missed call from $caller',
         payload: Map<String, dynamic>.from(data),
+      );
+      await AppBadgeService.instance.addUnread(
+        exact: int.tryParse((data['badge'] ?? '').toString()),
       );
       return;
     }
@@ -125,14 +135,15 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       );
       return;
     }
-    // Generic data-only push (no `notification` block) — surface it so it is
-    // not silently lost while the app is closed.
-    if (message.notification == null && data.isNotEmpty) {
+    // Generic data-only push — surface it so it is not silently lost while
+    // the app is closed, and count it on the launcher badge.
+    if (data.isNotEmpty) {
       await PushNotificationService.showGeneralNotification(
         title: (data['title'] ?? 'Metricorex').toString(),
         body: (data['body'] ?? '').toString(),
         payload: Map<String, dynamic>.from(data),
       );
+      await AppBadgeService.instance.addUnread();
     }
   } catch (e) {
     // A crash in the background isolate must never bubble to the OS.
@@ -156,6 +167,10 @@ class PushNotificationService {
   /// delivered `call:incoming` (callProvider is ringing) we skip the second
   /// ring to avoid overlapping audio. Wired from main.dart.
   bool Function()? foregroundCallGuard;
+
+  /// Hook that clears the in-app ringing overlay (callProvider) when a
+  /// missed-call / ended push proves the call is gone. Wired from main.dart.
+  void Function()? dismissIncomingCallHook;
 
   SharedPreferences? _prefs;
   StreamSubscription<String>? _tokenRefreshSub;
@@ -198,11 +213,19 @@ class PushNotificationService {
 
       // 3. Permissions — FCM is the single permission authority (the local
       //    notifications plugin is initialised with request*Permission:false).
+      // NOTE: criticalAlert MUST stay false unless the app has been granted
+      // Apple's "critical alerts" entitlement (a special request form; most
+      // apps never get it). Requesting it without the entitlement makes
+      // UNUserNotificationCenter.requestAuthorization fail on iOS, which
+      // kills the ENTIRE permission prompt -> no notifications at all.
+      // Incoming calls already ring via the "calls" channel (Android) and
+      // the local-notification ring path (iOS), so regular alert+sound is
+      // sufficient here.
       final settings = await FirebaseMessaging.instance.requestPermission(
         alert: true,
         badge: true,
         sound: true,
-        criticalAlert: true, // iOS: ring on locked devices (entitlement gated)
+        criticalAlert: false,
         announcement: false,
         carPlay: false,
         provisional: false,
@@ -265,32 +288,6 @@ class PushNotificationService {
       final androidPlugin =
           _localNotifications.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
       if (androidPlugin != null) {
-        // "calls": max importance + looping ringtone + alarm audio usage so it
-        // rings while the device is locked.
-        const callChannel = AndroidNotificationChannel(
-          kPushCallChannelId,
-          'Incoming calls',
-          description: 'Rings for incoming Metroflow calls even when the app is closed.',
-          importance: Importance.max,
-          playSound: true,
-          sound: RawResourceAndroidNotificationSound(_kCallRingtoneResource),
-          enableVibration: true,
-          audioAttributesUsage: AudioAttributesUsage.alarm,
-          showBadge: true,
-        );
-        // "general": default chat/notification sound.
-        const generalChannel = AndroidNotificationChannel(
-          kPushGeneralChannelId,
-          'General notifications',
-          description: 'Messages, alerts and account updates.',
-          importance: Importance.high,
-          playSound: true,
-          enableVibration: true,
-          showBadge: true,
-        );
-        await androidPlugin.createNotificationChannel(callChannel);
-        await androidPlugin.createNotificationChannel(generalChannel);
-
         // Android 13+ runtime permission (POST_NOTIFICATIONS). Firebase's
         // requestPermission also covers this; belt & braces, silently ignored
         // on older APIs.
@@ -299,6 +296,7 @@ class PushNotificationService {
         } catch (_) {}
       }
     }
+    await _ensureAndroidChannels();
   }
 
   AndroidNotificationDetails _androidDetails({
@@ -402,6 +400,65 @@ class PushNotificationService {
     }
   }
 
+  /// Initializes the local-notification plugin inside the BACKGROUND isolate.
+  /// flutter_local_notifications requires initialize() per isolate; without
+  /// this, show/cancel from firebaseMessagingBackgroundHandler silently fail
+  /// (which is exactly why data-only pushes previously showed nothing).
+  static Future<void> ensureBackgroundInitialized() async {
+    try {
+      const androidInit = AndroidInitializationSettings('ic_notification');
+      const darwinInit = DarwinInitializationSettings(
+        requestAlertPermission: false,
+        requestSoundPermission: false,
+        requestBadgePermission: false,
+        requestCriticalPermission: false,
+      );
+      await _instance._localNotifications.initialize(
+        const InitializationSettings(android: androidInit, iOS: darwinInit),
+      );
+      await _ensureAndroidChannels();
+    } catch (e) {
+      debugPrint('ensureBackgroundInitialized failed: $e');
+    }
+  }
+
+  /// Creates the "calls" + "general" notification channels if missing.
+  /// Split out so BOTH the main isolate and the background isolate guarantee
+  /// a fresh install's first background push lands in an existing channel.
+  static Future<void> _ensureAndroidChannels() async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    try {
+      final androidPlugin = _instance._localNotifications
+          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+      if (androidPlugin == null) return;
+      // "calls": max importance + looping ringtone + alarm audio usage so it
+      // rings while the device is locked.
+      const callChannel = AndroidNotificationChannel(
+        kPushCallChannelId,
+        'Incoming calls',
+        description: 'Rings for incoming Metroflow calls even when the app is closed.',
+        importance: Importance.max,
+        playSound: true,
+        sound: RawResourceAndroidNotificationSound(_kCallRingtoneResource),
+        enableVibration: true,
+        audioAttributesUsage: AudioAttributesUsage.alarm,
+        showBadge: true,
+      );
+      // "general": default chat/notification sound.
+      const generalChannel = AndroidNotificationChannel(
+        kPushGeneralChannelId,
+        'General notifications',
+        description: 'Messages, alerts and account updates.',
+        importance: Importance.high,
+        playSound: true,
+        enableVibration: true,
+        showBadge: true,
+      );
+      await androidPlugin.createNotificationChannel(callChannel);
+      await androidPlugin.createNotificationChannel(generalChannel);
+    } catch (_) {}
+  }
+
   /// JSON-encode the payload for the notification tap channel (data payloads
   /// from FCM are already flat string maps; encoding keeps it lossless).
   static String? _encodePayload(Map<String, dynamic> data) {
@@ -462,10 +519,18 @@ class PushNotificationService {
         case 'missed_call':
           final caller = (data['caller_name'] ?? data['callerName'] ?? data['callerId'] ?? '').toString();
           final callType = (data['call_type'] ?? data['callType'] ?? 'audio').toString();
+          // The call is gone — stop any in-app ring and clear the ringing
+          // overlay + the full-screen call notification.
+          AppFeedback.stopRingtone();
+          dismissIncomingCallHook?.call();
+          unawaited(cancelCallNotification());
           showGeneralNotification(
             title: 'Missed ${callType == 'video' ? 'video' : 'audio'} call',
             body: caller.isEmpty ? 'You missed a call' : 'Missed call from $caller',
             payload: Map<String, dynamic>.from(data),
+          );
+          AppBadgeService.instance.addUnread(
+            exact: int.tryParse((data['badge'] ?? '').toString()),
           );
           break;
         case 'chat_message':
@@ -483,9 +548,13 @@ class PushNotificationService {
         default:
           if (message.notification != null) return; // FCM already displayed it
           showGeneralNotification(
-            title: message.notification?.title ?? 'Metricorex',
-            body: message.notification?.body ?? '',
+            title: message.notification?.title ?? (data['title'] ?? 'Metricorex'),
+            body: message.notification?.body ?? (data['body'] ?? ''),
             payload: Map<String, dynamic>.from(data),
+          );
+          // Count it on the launcher badge too.
+          AppBadgeService.instance.addUnread(
+            exact: int.tryParse((data['badge'] ?? '').toString()),
           );
       }
     } catch (e) {
@@ -664,9 +733,11 @@ class PushNotificationService {
   }
 
   /// Cancel the persistent incoming-call notification (call answered/ended).
-  Future<void> cancelCallNotification() async {
+  /// Static so the background isolate (firebaseMessagingBackgroundHandler)
+  /// can use it via [PushNotificationService.cancelCallNotification].
+  static Future<void> cancelCallNotification() async {
     try {
-      await _localNotifications.cancel(_kCallNotificationId);
+      await _instance._localNotifications.cancel(_kCallNotificationId);
     } catch (_) {}
   }
 

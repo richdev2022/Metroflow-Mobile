@@ -160,9 +160,11 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Animated logo — the SQUARE white shield mark. The wide
-                  // wordmark (Logo-white.png, 1024x273) is NOT usable here:
-                  // BoxFit.cover inside a square crops it to a blank sliver.
+                  // Animated logo — the OFFICIAL Metricorex mark (blue→violet
+                  // "M" app icon) on a solid white card so it pops against
+                  // the gradient. NOTE: assets/images/logo-mark-white.png is
+                  // a solid white SQUARE (a bad export), which rendered as the
+                  // infamous "white box" — never use it here.
                   FadeTransition(
                     opacity: _logoOpacity,
                     child: ScaleTransition(
@@ -172,9 +174,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                         height: 122,
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(30),
-                          color: Colors.white.withValues(alpha: 0.10),
+                          color: Colors.white,
                           border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.22),
+                            color: Colors.white.withValues(alpha: 0.55),
                             width: 1.2,
                           ),
                           boxShadow: [
@@ -186,9 +188,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                           ],
                         ),
                         child: Padding(
-                          padding: const EdgeInsets.all(14),
+                          padding: const EdgeInsets.all(12),
                           child: Image.asset(
-                            'assets/images/logo-mark-white.png',
+                            'assets/images/logo.png',
                             fit: BoxFit.contain,
                           ),
                         ),

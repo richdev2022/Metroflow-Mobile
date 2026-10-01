@@ -1,0 +1,8 @@
+# App Store Connect / Apple Developer Portal identifiers used by fastlane.
+#
+# The App Store Connect API key is NOT stored here — it is provided at
+# runtime via ENV (set by CI secrets or a local .env), see Fastfile#asc_api_key
+# and docs/TESTFLIGHT_SETUP.md.
+
+app_identifier("com.metricorex.app") # The bundle identifier of the app
+# apple_id(ENV["APPLE_ID"]) # not needed — API key auth is used everywhere

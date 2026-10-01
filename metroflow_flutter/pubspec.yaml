@@ -57,8 +57,10 @@ dependencies:
   firebase_core: ^3.15.2
   firebase_messaging: ^15.2.10
   flutter_local_notifications: ^18.0.1
-  # Launcher badge (flutter_app_badger is discontinued & Dart-2-only; this is
-  # the maintained Dart-3 equivalent with the same iOS/Android coverage).
+  # Launcher badge — iOS uses app_badge_plus (flutter_app_badger is
+  # discontinued & Dart-2-only); Android goes through the native
+  # ShortcutBadger MethodChannel in MainActivity.kt instead.
+  app_badge_plus: ^1.2.0
   # Runtime permission prompts (notifications/camera/mic/photos primer sheet).
   permission_handler: ^11.3.1
   mediasoup_client_flutter:
