@@ -326,13 +326,24 @@ class _MeetingsScreenState extends ConsumerState<MeetingsScreen> {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 16, 24, 4),
-              child: Text(
-                'Meetings',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w800,
-                  color: colors.text,
-                ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Meetings',
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w800,
+                        color: colors.text,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Calendar',
+                    onPressed: () => context.push('/main/calendar'),
+                    icon: Icon(Icons.calendar_month_outlined, color: colors.primary),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 12),
@@ -746,6 +757,15 @@ class _MeetingDialogState extends State<_MeetingDialog> {
   String _selectedTimezone = 'UTC';
   String _searchTimezone = '';
   final List<String> _selectedAttendeeIds = [];
+  // Google-style guest participants: emails that do not belong to a team member
+  final List<String> _guestEmails = [];
+  final _guestEmailController = TextEditingController();
+  // Recurrence (new meetings only)
+  String _frequency = 'NONE'; // NONE | DAILY | WEEKLY | MONTHLY | YEARLY | CUSTOM
+  int _recurrenceInterval = 1;
+  final Set<int> _customDays = {};
+  DateTime? _recurrenceEndDate;
+  static const _weekdayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   bool _isInstant = false;
   bool _waitingRoomEnabled = false;
   bool _recordingEnabled = false;
@@ -779,7 +799,29 @@ class _MeetingDialogState extends State<_MeetingDialog> {
     _passwordController.dispose();
     _maxParticipantsController.dispose();
     _timezoneSearchController.dispose();
+    _guestEmailController.dispose();
     super.dispose();
+  }
+
+  /// Typed email → team member lookup: members join by ID, everyone else is a guest.
+  void _addGuestFromInput() {
+    final value = _guestEmailController.text.trim().toLowerCase();
+    if (value.isEmpty) return;
+    final emailPattern = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
+    final member = widget.teamMembers.any((m) => m.email.toLowerCase() == value);
+    if (member) {
+      final match = widget.teamMembers.firstWhere((m) => m.email.toLowerCase() == value);
+      if (!_selectedAttendeeIds.contains(match.id)) {
+        setState(() => _selectedAttendeeIds.add(match.id));
+      }
+    } else if (emailPattern.hasMatch(value) && !_guestEmails.contains(value)) {
+      setState(() => _guestEmails.add(value));
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a valid email address')),
+      );
+    }
+    _guestEmailController.clear();
   }
 
   List<Map<String, String>> get _filteredTimezones {
@@ -853,6 +895,21 @@ class _MeetingDialogState extends State<_MeetingDialog> {
         'recordingEnabled': _recordingEnabled,
         'screenSharingEnabled': _screenSharingEnabled,
         'attendeeIds': _selectedAttendeeIds,
+        if (widget.meeting == null && _guestEmails.isNotEmpty) 'guestEmails': _guestEmails,
+        if (widget.meeting == null && !_isInstant && _frequency != 'NONE')
+          'recurrence': {
+            'frequency': _frequency,
+            'interval': _recurrenceInterval,
+            if (_frequency == 'CUSTOM' && _customDays.isNotEmpty)
+              'customDays': _customDays.toList(),
+            if (_recurrenceEndDate != null)
+              'endDate': DateTime(
+                _recurrenceEndDate!.year,
+                _recurrenceEndDate!.month,
+                _recurrenceEndDate!.day,
+                23, 59, 59,
+              ).toUtc().toIso8601String(),
+          },
       };
       final response = widget.meeting == null
           ? await _api.createMeeting(data)
@@ -1052,6 +1109,121 @@ class _MeetingDialogState extends State<_MeetingDialog> {
                   ),
                   obscureText: true,
                 ),
+                // Google-style recurrence (new scheduled meetings only)
+                if (widget.meeting == null && !_isInstant) ...[
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<String>(
+                    value: _frequency,
+                    decoration: const InputDecoration(
+                      labelText: 'Repeat',
+                      prefixIcon: Icon(Icons.repeat),
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 'NONE', child: Text('Does not repeat')),
+                      DropdownMenuItem(value: 'DAILY', child: Text('Daily')),
+                      DropdownMenuItem(value: 'WEEKLY', child: Text('Weekly')),
+                      DropdownMenuItem(value: 'MONTHLY', child: Text('Monthly')),
+                      DropdownMenuItem(value: 'YEARLY', child: Text('Yearly')),
+                      DropdownMenuItem(value: 'CUSTOM', child: Text('Custom…')),
+                    ],
+                    onChanged: (value) {
+                      setState(() => _frequency = value ?? 'NONE');
+                    },
+                  ),
+                  if (_frequency != 'NONE') ...[
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        const Text('Every'),
+                        const SizedBox(width: 12),
+                        SizedBox(
+                          width: 70,
+                          child: TextFormField(
+                            initialValue: '$_recurrenceInterval',
+                            keyboardType: TextInputType.number,
+                            textAlign: TextAlign.center,
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                            ),
+                            onChanged: (value) {
+                              final parsed = int.tryParse(value);
+                              if (parsed != null && parsed >= 1) {
+                                _recurrenceInterval = parsed > 365 ? 365 : parsed;
+                              }
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(_frequency == 'DAILY'
+                            ? 'days'
+                            : _frequency == 'WEEKLY' || _frequency == 'CUSTOM'
+                                ? 'weeks'
+                                : _frequency == 'MONTHLY'
+                                    ? 'months'
+                                    : 'years'),
+                      ],
+                    ),
+                  ],
+                  if (_frequency == 'CUSTOM') ...[
+                    const SizedBox(height: 12),
+                    const Text('Repeat on', style: TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 6,
+                      children: List.generate(7, (idx) {
+                        final selected = _customDays.contains(idx);
+                        return ChoiceChip(
+                          label: Text(_weekdayLabels[idx]),
+                          selected: selected,
+                          selectedColor: AppColors.primary,
+                          labelStyle: TextStyle(
+                            color: selected ? Colors.white : null,
+                            fontSize: 12,
+                          ),
+                          onSelected: (checked) {
+                            setState(() {
+                              if (checked) {
+                                _customDays.add(idx);
+                              } else {
+                                _customDays.remove(idx);
+                              }
+                            });
+                          },
+                        );
+                      }),
+                    ),
+                  ],
+                  if (_frequency != 'NONE') ...[
+                    const SizedBox(height: 12),
+                    InkWell(
+                      onTap: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: _recurrenceEndDate ?? _startDate.add(const Duration(days: 30)),
+                          firstDate: _startDate,
+                          lastDate: DateTime.now().add(const Duration(days: 365)),
+                        );
+                        if (picked != null) {
+                          setState(() => _recurrenceEndDate = picked);
+                        }
+                      },
+                      child: InputDecorator(
+                        decoration: const InputDecoration(
+                          labelText: 'Repeat until (optional)',
+                          border: OutlineInputBorder(),
+                          suffixIcon: Icon(Icons.calendar_month),
+                          isDense: true,
+                        ),
+                        child: Text(
+                          _recurrenceEndDate == null
+                              ? 'No end date'
+                              : DateFormat.yMMMd().format(_recurrenceEndDate!),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
                 const SizedBox(height: 16),
                 TextFormField(
                   controller: _maxParticipantsController,
@@ -1097,6 +1269,44 @@ class _MeetingDialogState extends State<_MeetingDialog> {
                 ),
                 const SizedBox(height: 16),
                 const Text('Attendees', style: TextStyle(fontWeight: FontWeight.w500)),
+                const SizedBox(height: 8),
+                // Guest emails — team members are auto-resolved to their name
+                TextField(
+                  controller: _guestEmailController,
+                  decoration: const InputDecoration(
+                    labelText: 'Add participants by email',
+                    hintText: 'name@company.com — press Done',
+                    prefixIcon: Icon(Icons.alternate_email),
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  keyboardType: TextInputType.emailAddress,
+                  onSubmitted: (_) => _addGuestFromInput(),
+                ),
+                if (_guestEmails.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: _guestEmails
+                          .map(
+                            (email) => InputChip(
+                              label: Text(email, style: const TextStyle(fontSize: 12)),
+                              avatar: const Icon(Icons.person_add_alt_1, size: 14),
+                              onDeleted: () {
+                                setState(() => _guestEmails.remove(email));
+                              },
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  ),
+                const SizedBox(height: 8),
+                Text(
+                  'Team members appear with their name · anyone else joins by email as a guest',
+                  style: TextStyle(fontSize: 11, color: AppTheme.colors.textSecondary),
+                ),
                 const SizedBox(height: 8),
                 SizedBox(
                   height: 150,

@@ -991,10 +991,12 @@ class ApiService {
   }
 
   // Meetings API
-  Future<Response> getMeetings({int page = 1, int limit = 10}) async {
+  Future<Response> getMeetings({int page = 1, int limit = 10, String? from, String? to}) async {
     return await _dio.get('/meetings', queryParameters: {
       'page': page,
       'limit': limit,
+      if (from != null) 'from': from,
+      if (to != null) 'to': to,
     });
   }
 
