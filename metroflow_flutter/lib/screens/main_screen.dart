@@ -510,6 +510,14 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       },
                     ),
                     _DrawerTile(
+                      icon: Icons.calendar_month_outlined,
+                      title: 'Calendar',
+                      colors: colors,
+                      onTap: () async {
+                        context.push('/main/calendar');
+                      },
+                    ),
+                    _DrawerTile(
                       icon: Icons.lightbulb_outline,
                       title: 'Ideas',
                       colors: colors,
