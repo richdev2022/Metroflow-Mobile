@@ -158,37 +158,81 @@ class AuthBrandHeader extends StatelessWidget {
     final colors = AppTheme.colors;
     return Column(
       children: [
-        Container(
-          width: logoSize,
-          height: logoSize,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(logoSize * 0.28),
-            boxShadow: [
-              BoxShadow(
-                color: colors.primary.withValues(alpha: 0.22),
-                offset: const Offset(0, 10),
-                blurRadius: 24,
+        // Logo inside a glowing halo — layered rings give the mark a
+        // floating, 3D feel that matches the web landing page.
+        SizedBox(
+          width: logoSize + 44,
+          height: logoSize + 44,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Container(
+                width: logoSize + 44,
+                height: logoSize + 44,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [
+                      colors.primary.withValues(alpha: 0.14),
+                      colors.primary.withValues(alpha: 0.0),
+                    ],
+                  ),
+                ),
+              ),
+              Container(
+                width: logoSize + 20,
+                height: logoSize + 20,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: colors.primary.withValues(alpha: 0.18),
+                    width: 1.4,
+                  ),
+                ),
+              ),
+              Container(
+                width: logoSize,
+                height: logoSize,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(logoSize * 0.28),
+                  color: colors.surface,
+                  boxShadow: [
+                    BoxShadow(
+                      color: colors.primary.withValues(alpha: 0.30),
+                      offset: const Offset(0, 12),
+                      blurRadius: 30,
+                    ),
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.08),
+                      offset: const Offset(0, 4),
+                      blurRadius: 10,
+                    ),
+                  ],
+                ),
+                child: Padding(
+                  padding: EdgeInsets.all(logoSize * 0.06),
+                  child: Image.asset(
+                    'assets/images/logo-mark.png',
+                    fit: BoxFit.contain,
+                  ),
+                ),
               ),
             ],
           ),
-          // Square shield mark with BoxFit.contain — the wide wordmark
-          // (logo.png, 1024x273) is cropped to a sliver by BoxFit.cover.
-          child: Padding(
-            padding: EdgeInsets.all(logoSize * 0.06),
-            child: Image.asset(
-              'assets/images/logo-mark.png',
-              fit: BoxFit.contain,
-            ),
-          ),
         ),
         const SizedBox(height: 18),
-        Text(
-          'Metricorex',
-          style: TextStyle(
-            fontSize: 24,
-            fontWeight: FontWeight.w800,
-            letterSpacing: 0.4,
-            color: colors.primary,
+        ShaderMask(
+          shaderCallback: (bounds) => BrandSplashGradient.buttonGradient.createShader(
+            Rect.fromLTWH(0, 0, bounds.width, bounds.height),
+          ),
+          child: Text(
+            'Metricorex',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.4,
+              color: Colors.white,
+            ),
           ),
         ),
         const SizedBox(height: 10),
@@ -253,40 +297,80 @@ class AuthTextField extends StatelessWidget {
   });
 
   @override
+  State<AuthTextField> createState() => _AuthTextFieldState();
+}
+
+class _AuthTextFieldState extends State<AuthTextField> {
+  final FocusNode _focus = FocusNode();
+  bool _focused = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _focus.addListener(() {
+      if (mounted) setState(() => _focused = _focus.hasFocus);
+    });
+  }
+
+  @override
+  void dispose() {
+    _focus.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final colors = AppTheme.colors;
-    return Container(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
       padding: const EdgeInsets.symmetric(horizontal: 6),
       decoration: BoxDecoration(
         color: colors.surface,
-        border: Border.all(color: colors.border, width: 1.4),
+        border: Border.all(
+          color: _focused ? colors.primary : colors.border,
+          width: _focused ? 1.8 : 1.4,
+        ),
         borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          if (_focused)
+            BoxShadow(
+              color: colors.primary.withValues(alpha: 0.14),
+              offset: const Offset(0, 4),
+              blurRadius: 16,
+            ),
+        ],
       ),
       child: Row(
         children: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Icon(icon, color: colors.textSecondary, size: 21),
+            child: Icon(
+              widget.icon,
+              color: _focused ? colors.primary : colors.textSecondary,
+              size: 21,
+            ),
           ),
           Expanded(
             child: TextField(
-              controller: controller,
-              obscureText: obscure,
-              keyboardType: keyboardType,
-              textInputAction: textInputAction,
-              onSubmitted: onSubmitted,
-              onChanged: onChanged,
-              maxLength: maxLength,
-              textAlign: textAlign,
-              autofocus: autofocus,
+              controller: widget.controller,
+              focusNode: _focus,
+              obscureText: widget.obscure,
+              keyboardType: widget.keyboardType,
+              textInputAction: widget.textInputAction,
+              onSubmitted: widget.onSubmitted,
+              onChanged: widget.onChanged,
+              maxLength: widget.maxLength,
+              textAlign: widget.textAlign,
+              autofocus: widget.autofocus,
               autocorrect: false,
-              enableSuggestions: keyboardType != TextInputType.number,
-              style: style ?? TextStyle(color: colors.text, fontSize: 15.5),
+              enableSuggestions: widget.keyboardType != TextInputType.number,
+              style: widget.style ?? TextStyle(color: colors.text, fontSize: 15.5),
               decoration: InputDecoration(
-                hintText: hint,
+                hintText: widget.hint,
                 hintStyle: TextStyle(color: colors.textSecondary, fontSize: 15),
                 border: InputBorder.none,
-                counterText: counterText,
+                counterText: widget.counterText,
                 isDense: true,
                 contentPadding: const EdgeInsets.symmetric(vertical: 17),
               ),
@@ -317,26 +401,60 @@ class AuthPasswordField extends StatefulWidget {
 
 class _AuthPasswordFieldState extends State<AuthPasswordField> {
   bool _visible = false;
+  final FocusNode _focus = FocusNode();
+  bool _focused = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _focus.addListener(() {
+      if (mounted) setState(() => _focused = _focus.hasFocus);
+    });
+  }
+
+  @override
+  void dispose() {
+    _focus.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final colors = AppTheme.colors;
-    return Container(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
       padding: const EdgeInsets.symmetric(horizontal: 6),
       decoration: BoxDecoration(
         color: colors.surface,
-        border: Border.all(color: colors.border, width: 1.4),
+        border: Border.all(
+          color: _focused ? colors.primary : colors.border,
+          width: _focused ? 1.8 : 1.4,
+        ),
         borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          if (_focused)
+            BoxShadow(
+              color: colors.primary.withValues(alpha: 0.14),
+              offset: const Offset(0, 4),
+              blurRadius: 16,
+            ),
+        ],
       ),
       child: Row(
         children: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Icon(Icons.lock_outline_rounded, color: colors.textSecondary, size: 21),
+            child: Icon(
+              Icons.lock_outline_rounded,
+              color: _focused ? colors.primary : colors.textSecondary,
+              size: 21,
+            ),
           ),
           Expanded(
             child: TextField(
               controller: widget.controller,
+              focusNode: _focus,
               obscureText: !_visible,
               textInputAction: TextInputAction.done,
               onSubmitted: widget.onSubmitted,
@@ -367,8 +485,9 @@ class _AuthPasswordFieldState extends State<AuthPasswordField> {
   }
 }
 
-/// Prominent full-width gradient CTA with a loading spinner state.
-class AuthGradientButton extends StatelessWidget {
+/// Prominent full-width gradient CTA with a loading spinner state and a
+/// springy press-down animation.
+class AuthGradientButton extends StatefulWidget {
   final String label;
   final VoidCallback? onPressed;
   final bool loading;
@@ -383,54 +502,91 @@ class AuthGradientButton extends StatelessWidget {
   });
 
   @override
+  State<AuthGradientButton> createState() => _AuthGradientButtonState();
+}
+
+class _AuthGradientButtonState extends State<AuthGradientButton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _press;
+  late final Animation<double> _scale;
+
+  @override
+  void initState() {
+    super.initState();
+    _press = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 110),
+      reverseDuration: const Duration(milliseconds: 160),
+    );
+    _scale = Tween<double>(begin: 1.0, end: 0.975).animate(
+      CurvedAnimation(parent: _press, curve: Curves.easeOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _press.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final colors = AppTheme.colors;
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        gradient: BrandSplashGradient.buttonGradient,
-        boxShadow: [
-          BoxShadow(
-            color: colors.primary.withValues(alpha: 0.30),
-            offset: const Offset(0, 8),
-            blurRadius: 18,
+    final loading = widget.loading;
+    return GestureDetector(
+      onTapDown: loading ? null : (_) => _press.forward(),
+      onTapUp: (_) => _press.reverse(),
+      onTapCancel: () => _press.reverse(),
+      child: ScaleTransition(
+        scale: _scale,
+        child: Container(
+          width: double.infinity,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            gradient: BrandSplashGradient.buttonGradient,
+            boxShadow: [
+              BoxShadow(
+                color: colors.primary.withValues(alpha: 0.34),
+                offset: const Offset(0, 10),
+                blurRadius: 22,
+              ),
+            ],
           ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(16),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: loading ? null : onPressed,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 17),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                if (loading)
-                  const SizedBox(
-                    height: 22,
-                    width: 22,
-                    child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.4),
-                  )
-                else ...[
-                  if (icon != null) ...[
-                    Icon(icon, color: Colors.white, size: 20),
-                    const SizedBox(width: 8),
+          child: Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(16),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: loading ? null : widget.onPressed,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 17),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (loading)
+                      const SizedBox(
+                        height: 22,
+                        width: 22,
+                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.4),
+                      )
+                    else ...[
+                      if (widget.icon != null) ...[
+                        Icon(widget.icon, color: Colors.white, size: 20),
+                        const SizedBox(width: 8),
+                      ],
+                      Text(
+                        widget.label,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16.5,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                    ],
                   ],
-                  Text(
-                    label,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16.5,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.2,
-                    ),
-                  ),
-                ],
-              ],
+                ),
+              ),
             ),
           ),
         ),
