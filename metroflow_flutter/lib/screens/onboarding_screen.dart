@@ -5,12 +5,16 @@ import 'package:go_router/go_router.dart';
 import '../providers/auth_provider.dart';
 import '../theme/app_theme.dart';
 
-/// Revamped onboarding: a single, coherent 4-slide flow.
+/// Revamped onboarding: a coherent 5-slide flow with real imagery.
 ///
 /// 1. All your work in one place — tasks, projects, team
 /// 2. Meet, call & chat — video meetings, calls, team chat
 /// 3. Payroll & money moves — salaries, transfers, wallet & virtual accounts
-/// 4. Built for growing businesses — KYC, security, insights
+/// 4. Meet MetricAi — your AI business copilot
+/// 5. Built for growing businesses — KYC, security, insights
+///
+/// Real photos (from the website's brand library) sit inside layered 3D
+/// cards; every slide gradient stays inside the indigo→violet brand family.
 ///
 /// "Seen" is persisted exactly like before: `completeOnboarding()` on the
 /// auth provider, then route to /login (Skip) or /register (Sign Up).
@@ -28,7 +32,7 @@ class OnboardingScreen extends ConsumerStatefulWidget {
 class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   PageController? _pageController;
   int _currentPage = 0;
-  static const int _pageCount = 4;
+  static const int _pageCount = 5;
 
   @override
   void initState() {
@@ -240,6 +244,8 @@ class _SlideData {
   final String title;
   final String subtitle;
   final List<(IconData, String)> bullets;
+  /// Real brand photography (site poster library) shown in the 3D card.
+  final String? photo;
 
   const _SlideData({
     required this.icon,
@@ -248,14 +254,18 @@ class _SlideData {
     required this.title,
     required this.subtitle,
     required this.bullets,
+    this.photo,
   });
 }
 
+// Gradients stay inside the Metricorex indigo→violet family so the whole
+// flow reads as one brand (the old cyan/pink/green mix felt off-brand).
 const List<_SlideData> _slides = [
   _SlideData(
     icon: Icons.grid_view_rounded,
-    gradient: [Color(0xFF2563EB), Color(0xFF7C3AED)],
+    gradient: [Color(0xFF2563EB), Color(0xFF4F46E5)],
     miniIcons: [Icons.checklist_rounded, Icons.folder_shared_rounded, Icons.groups_rounded],
+    photo: 'assets/images/onboarding/work.jpg',
     title: 'All your work in one place',
     subtitle:
         'Stop juggling five different tools. Organize tasks, projects and your whole team in a single workspace.',
@@ -267,8 +277,9 @@ const List<_SlideData> _slides = [
   ),
   _SlideData(
     icon: Icons.video_chat_rounded,
-    gradient: [Color(0xFF0891B2), Color(0xFF2563EB)],
+    gradient: [Color(0xFF4F46E5), Color(0xFF7C3AED)],
     miniIcons: [Icons.videocam_rounded, Icons.call_rounded, Icons.chat_rounded],
+    photo: 'assets/images/onboarding/meet.jpg',
     title: 'Meet, call & chat',
     subtitle:
         'Video meetings, quick calls and team chat — with your work right there in the conversation.',
@@ -280,8 +291,9 @@ const List<_SlideData> _slides = [
   ),
   _SlideData(
     icon: Icons.account_balance_wallet_rounded,
-    gradient: [Color(0xFF7C3AED), Color(0xFFDB2777)],
+    gradient: [Color(0xFF7C3AED), Color(0xFF2563EB)],
     miniIcons: [Icons.payments_rounded, Icons.swap_horiz_rounded, Icons.account_balance_rounded],
+    photo: 'assets/images/onboarding/money.jpg',
     title: 'Payroll & money moves',
     subtitle:
         'Run payroll in seconds, send local & international transfers and manage business wallets in one place.',
@@ -292,9 +304,24 @@ const List<_SlideData> _slides = [
     ],
   ),
   _SlideData(
+    icon: Icons.auto_awesome_rounded,
+    gradient: [Color(0xFF2563EB), Color(0xFF7C3AED)],
+    miniIcons: [Icons.chat_bubble_rounded, Icons.bolt_rounded, Icons.summarize_rounded],
+    photo: 'assets/images/onboarding/ai.jpg',
+    title: 'Meet MetricAi',
+    subtitle:
+        'Your AI business copilot. Draft ideas, summarise meetings into action items and get instant answers about your business.',
+    bullets: [
+      (Icons.summarize_rounded, 'Meeting notes & summaries'),
+      (Icons.bolt_rounded, 'Instant business insights'),
+      (Icons.chat_bubble_rounded, 'Ask anything, get answers'),
+    ],
+  ),
+  _SlideData(
     icon: Icons.shield_rounded,
-    gradient: [Color(0xFF2563EB), Color(0xFF059669)],
+    gradient: [Color(0xFF4F46E5), Color(0xFF2563EB)],
     miniIcons: [Icons.verified_user_rounded, Icons.insights_rounded, Icons.lock_rounded],
+    photo: 'assets/images/onboarding/growth.jpg',
     title: 'Built for growing businesses',
     subtitle:
         'KYC-verified payments, bank-grade security and insight into how your team performs — ready as you scale.',
@@ -433,7 +460,9 @@ class _SlidePage extends StatelessWidget {
   }
 }
 
-/// Big gradient tile with the slide icon + floating mini chips.
+/// Layered 3D photo card: real brand photography inside a rounded frame with
+/// a gradient wash, floating glass chips on top for depth, and a soft
+/// two-layer shadow that lifts the whole card off the background.
 class _IllustrationBlock extends StatelessWidget {
   final _SlideData page;
 
@@ -441,19 +470,39 @@ class _IllustrationBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 216,
+    return SizedBox(
+      width: 300,
       height: 216,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          // Main gradient tile.
+          // Back glow plate (3D depth).
+          Positioned(
+            left: 26,
+            right: 26,
+            top: 34,
+            bottom: 2,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(36),
+                gradient: LinearGradient(
+                  colors: [
+                    page.gradient.first.withValues(alpha: 0.22),
+                    page.gradient.last.withValues(alpha: 0.05),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+            ),
+          ),
+          // Main photo card.
           Container(
-            width: 176,
-            height: 176,
-            margin: const EdgeInsets.all(20),
+            width: 260,
+            height: 184,
+            margin: const EdgeInsets.only(left: 20, right: 20, top: 10),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(44),
+              borderRadius: BorderRadius.circular(30),
               gradient: LinearGradient(
                 colors: page.gradient,
                 begin: Alignment.topLeft,
@@ -461,32 +510,92 @@ class _IllustrationBlock extends StatelessWidget {
               ),
               boxShadow: [
                 BoxShadow(
-                  color: page.gradient.last.withValues(alpha: 0.35),
-                  blurRadius: 30,
-                  offset: const Offset(0, 14),
+                  color: page.gradient.last.withValues(alpha: 0.38),
+                  blurRadius: 34,
+                  offset: const Offset(0, 18),
+                ),
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.10),
+                  blurRadius: 12,
+                  offset: const Offset(0, 6),
                 ),
               ],
             ),
-            child: Icon(page.icon, size: 76, color: Colors.white),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(30),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (page.photo != null)
+                    Image.asset(
+                      page.photo!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Icon(
+                        page.icon,
+                        size: 72,
+                        color: Colors.white,
+                      ),
+                    )
+                  else
+                    Icon(page.icon, size: 72, color: Colors.white),
+                  // Brand gradient wash keeps photos consistent + readable.
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          page.gradient.first.withValues(alpha: 0.25),
+                          Colors.transparent,
+                          page.gradient.last.withValues(alpha: 0.45),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        stops: const [0.0, 0.45, 1.0],
+                      ),
+                    ),
+                  ),
+                  // Slide icon badge in the corner.
+                  Positioned(
+                    right: 14,
+                    top: 14,
+                    child: Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.92),
+                        borderRadius: BorderRadius.circular(14),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.18),
+                            blurRadius: 12,
+                            offset: const Offset(0, 5),
+                          ),
+                        ],
+                      ),
+                      child: Icon(page.icon, size: 22, color: page.gradient.first),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
-          // Floating mini chips.
+          // Floating glass chips (depth + dynamic feel).
           _MiniChip(
             icon: page.miniIcons[0],
             colors: page.gradient,
             right: 0,
-            top: 12,
+            top: 6,
           ),
           _MiniChip(
             icon: page.miniIcons[1],
             colors: page.gradient,
             left: 0,
-            top: 84,
+            top: 88,
           ),
           _MiniChip(
             icon: page.miniIcons[2],
             colors: page.gradient,
-            right: 14,
-            bottom: 4,
+            right: 22,
+            bottom: -6,
           ),
         ],
       ),
