@@ -108,8 +108,11 @@ class SocketService {
         .enableAutoConnect()
         .enableReconnection() // Enable auto reconnection
         .setReconnectionDelay(1000) // Initial delay
-        .setReconnectionDelayMax(5000) // Max delay
-        .setReconnectionAttempts(5); // Max attempts
+        // Back off up to 30s (was capped at 5s/5 attempts — after which the
+        // socket silently died and `call:incoming` stopped arriving until the
+        // next login, i.e. calls only rang while sitting in the app).
+        .setReconnectionDelayMax(30000)
+        .setReconnectionAttempts(100000); // effectively always retry
 
     if (_authToken != null && _authToken!.isNotEmpty) {
       optionsBuilder.setAuth({'token': _authToken});
