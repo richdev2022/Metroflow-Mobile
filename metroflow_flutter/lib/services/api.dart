@@ -99,6 +99,12 @@ class ApiService {
 
   static String extractErrorMessage(dynamic error) {
     if (error is DioException) {
+      final status = error.response?.statusCode;
+      // Proxy body-size limit (nginx client_max_body_size): the request never
+      // reached the API, so there is no JSON error message to extract.
+      if (status == 413) {
+        return 'File too large for the server (upload limit). Try a smaller file.';
+      }
       final responseData = error.response?.data;
       final msg = extractResponseMessage(responseData);
       if (msg != null) return msg;
