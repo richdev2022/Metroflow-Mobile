@@ -440,6 +440,9 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
           'accountNumber': recipient.recipientAccount,
           'accountName': recipient.recipientName,
           'amount': double.tryParse(recipient.amount) ?? 0,
+          // Explicit currency from the funding wallet — backend defaults to
+          // NGN and would reject a USD wallet with a currency mismatch.
+          'currency': wallet['currency'] ?? 'NGN',
           'remark': recipient.remark,
           'otp': _otp,
           'pin': _pin,
@@ -479,6 +482,9 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
               'bankCode': r.recipientBank.trim(),
               'accountNumber': r.recipientAccount.trim(),
               'accountName': r.recipientName.trim(),
+              // Explicit currency from the funding wallet (backend guard
+              // rejects items whose currency differs from the source wallet).
+              'currency': wallet['currency'] ?? 'NGN',
               'remark': r.remark,
             };
           }).toList();
