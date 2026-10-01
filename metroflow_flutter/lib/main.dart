@@ -196,6 +196,15 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         return false;
       }
     };
+    // A missed-call / call-ended push proves the call is gone — stop the
+    // in-app ring and clear the Accept/Decline overlay.
+    PushNotificationService.instance.dismissIncomingCallHook = () {
+      try {
+        ref.read(callProvider.notifier).clearIncomingCall();
+      } catch (e) {
+        Logger.error('dismissIncomingCallHook failed: $e');
+      }
+    };
     // Initialize after auth bootstrap (authProvider.checkAuth kicks off in
     // its build); token registration happens post-login via the auth
     // listener below and inside the service itself.
@@ -558,6 +567,22 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
           // Less than 5 minutes - reset idle timer and stay logged in
           if (updatedAuthState.isAuthenticated) {
             authNotifier.resetIdleTimer();
+            // The OS may have silently killed the socket while backgrounded —
+            // reconnect on resume so `call:incoming` reaches us on ANY route
+            // (calls used to ring only while sitting on the chat screen).
+            try {
+              final socket = SocketService();
+              if (!socket.isConnected &&
+                  updatedAuthState.userId != null &&
+                  updatedAuthState.isAuthenticated) {
+                socket.connect(
+                  updatedAuthState.userId!,
+                  updatedAuthState.businessId ?? '',
+                );
+              }
+            } catch (e) {
+              Logger.error('Socket resume reconnect failed: $e');
+            }
           }
         }
         

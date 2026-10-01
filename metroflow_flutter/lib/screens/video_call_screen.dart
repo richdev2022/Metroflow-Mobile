@@ -951,7 +951,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                   ],
                   const SizedBox(height: 34),
                   OutlinedButton.icon(
-                    onPressed: _leave,
+                    onPressed: _confirmLeave,
                     icon: const Icon(Icons.call_end, size: 18),
                     label: const Text('Cancel & leave'),
                     style: OutlinedButton.styleFrom(
@@ -1428,7 +1428,116 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _chatController.clear();
   }
 
-  Future<void> _leave() async {
+  /// Interactive hang-up (the red end-call button / PiP close). The HOST gets
+  /// a choice: end the call for EVERYONE, or leave quietly and keep it running
+  /// for the remaining participants. Everyone else leaves directly.
+  Future<void> _confirmLeave() async {
+    if (_hasLeft) return;
+    // Waiting-room users were never admitted (and meetings have their own
+    // end flow) — leave directly without the choice sheet.
+    if (widget.isMeeting || _isWaitingForAdmission || !_isCallHost) {
+      await _leave();
+      return;
+    }
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: const Color(0xFF101731),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Leave this call?',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'You are the host — choose what happens to the call.',
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 13.5),
+              ),
+              const SizedBox(height: 18),
+              // End for everyone (previous default behaviour).
+              Material(
+                color: const Color(0xFFEF4444),
+                borderRadius: BorderRadius.circular(14),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: () => Navigator.of(sheetContext).pop('everyone'),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 15, horizontal: 16),
+                    child: Row(
+                      children: [
+                        Icon(Icons.cancel_presentation_rounded, color: Colors.white, size: 22),
+                        SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'End call for everyone',
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              // Leave quietly — the call keeps going for the others.
+              Material(
+                color: Colors.white.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(14),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: () => Navigator.of(sheetContext).pop('me'),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 16),
+                    child: Row(
+                      children: [
+                        Icon(Icons.exit_to_app_rounded, color: Colors.white.withValues(alpha: 0.85), size: 22),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'Leave for me only (call continues)',
+                            style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontWeight: FontWeight.w600, fontSize: 15),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              TextButton(
+                onPressed: () => Navigator.of(sheetContext).pop(null),
+                child: Text(
+                  'Cancel',
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.55)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (choice == 'everyone') {
+      await _leave(endForEveryone: true);
+    } else if (choice == 'me') {
+      await _leave(endForEveryone: false);
+    }
+    // null (cancelled) -> stay on the call.
+  }
+
+  Future<void> _leave({bool? endForEveryone}) async {
     if (_hasLeft) return;
     _hasLeft = true;
 
@@ -1460,12 +1569,15 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
           'userId': _resolvedUserId,
           'userName': _resolvedUserName,
         });
-        // End the call for everyone ONLY when it makes sense: 1:1 calls or the
-        // host leaving. In group calls a single participant leaving must not
-        // kill the call for everybody else — and someone leaving from the
-        // waiting room was never in the call at all.
+        // End the call for everyone ONLY when it makes sense: the host's
+        // explicit choice (end-call sheet), a non-host in a 1:1 call (nothing
+        // left to keep the room alive for), or any auto-leave path (legacy
+        // behaviour). In group calls a participant leaving via "leave for me
+        // only" must not kill the call for everybody else — and someone
+        // leaving from the waiting room was never in the call at all.
         final isOneToOne = !widget.isGroupCall;
-        if (!wasWaitingInRoom && (_isCallHost || isOneToOne)) {
+        final shouldEndForAll = endForEveryone ?? (_isCallHost || isOneToOne);
+        if (!wasWaitingInRoom && shouldEndForAll) {
           _socket.emitCallEnd({'callId': widget.roomId});
         }
       }
@@ -1702,7 +1814,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
           children: [
             _roundIconButton(
               icon: Icons.close_rounded,
-              onTap: _leave,
+              onTap: _confirmLeave,
             ),
             const SizedBox(width: 10),
             Expanded(
@@ -2395,7 +2507,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
           shape: const CircleBorder(),
         ),
         icon: const Icon(Icons.call_end, size: 26),
-        onPressed: _leave,
+        onPressed: _confirmLeave,
       ),
     );
   }
