@@ -227,7 +227,7 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
   // -- Attach-at-creation helpers ---------------------------------------------
 
   static const int _maxUploadFiles = 10;
-  static const int _maxUploadBytes = 50 * 1024 * 1024; // 50MB per file
+  static const int _maxUploadBytes = 100 * 1024 * 1024; // 100MB per file
 
   /// Pull the new task's id out of POST /tasks' response. Tolerates both
   /// `{ data: { task: { id } } }` and `{ data: { id } }` shapes.
@@ -254,7 +254,7 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
     final oversized = result.files.where((f) => f.size > _maxUploadBytes).length;
     if (oversized > 0) {
       Fluttertoast.showToast(
-          msg: '$oversized file(s) exceed the 50 MB limit and will be skipped');
+          msg: '$oversized file(s) exceed the 100 MB limit and will be skipped');
     }
     final valid = result.files
         .where((f) => f.size <= _maxUploadBytes && f.size >= 0)

@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import '../services/audio_route_service.dart';
 import '../services/mediasoup_room_service.dart';
@@ -150,6 +152,14 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   // connection, so they behave identically for every media provider).
   final CaptionsController _captions = CaptionsController();
   bool _showCaptions = false;
+  // On-device speech recognition so THIS device broadcasts captions to the
+  // room (web↔mobile + mobile↔web). Best-effort: some Android builds cannot
+  // open a second AudioRecord while WebRTC owns the mic — in that case we
+  // silently degrade to receive-only captions.
+  final stt.SpeechToText _stt = stt.SpeechToText();
+  bool _sttInitialized = false;
+  bool _captionBroadcastActive = false;
+  bool _sttRestartPending = false;
 
   // Real audio-level active speakers (LiveKit engine). Empty when nobody is
   // speaking or the engine doesn't report levels (MediaSoup → legacy glow).
@@ -235,6 +245,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
   @override
   void dispose() {
+    _stopCaptionBroadcast();
     unawaited(_cleanup());
     _chatController.dispose();
     super.dispose();
@@ -1299,6 +1310,102 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     setState(() => _isRecording = !_isRecording);
   }
 
+  // -------------------------------------------------------------------------
+  // Live captions — display (receive) + broadcast (on-device speech-to-text).
+  // The backend relays `caption:segment` to everyone in the room and persists
+  // finals into the transcript, feeding AI notes; identical behaviour to web.
+  // -------------------------------------------------------------------------
+  Future<void> _toggleCaptions() async {
+    final next = !_showCaptions;
+    setState(() => _showCaptions = next);
+    if (next) {
+      await _startCaptionBroadcast();
+    } else {
+      _stopCaptionBroadcast();
+    }
+  }
+
+  Future<void> _startCaptionBroadcast() async {
+    if (_captionBroadcastActive) return;
+    try {
+      if (!_sttInitialized) {
+        _sttInitialized = await _stt.initialize(
+          onResult: _onSttResult,
+          onError: (error) {
+            AppLogger.log('Captions STT error: $error');
+            _captionBroadcastActive = false;
+          },
+          onStatus: (status) {
+            // Android/iOS end a listen session after each utterance — restart
+            // while captions remain on so recognition is continuous.
+            if (status == 'done' || status == 'notListening') {
+              _scheduleSttRestart();
+            }
+          },
+        );
+        if (!_sttInitialized) {
+          AppLogger.log('Captions STT unavailable on this device — receive-only');
+          return;
+        }
+      }
+      _captionBroadcastActive = true;
+      await _listenOnce();
+    } catch (e) {
+      // WebRTC owns the mic on some builds — degrade to receive-only captions.
+      AppLogger.log('Captions STT failed to start: $e');
+      _captionBroadcastActive = false;
+    }
+  }
+
+  Future<void> _listenOnce() async {
+    if (!_captionBroadcastActive || !_sttInitialized) return;
+    try {
+      await _stt.listen(
+        listenMode: stt.ListenMode.dictation,
+        partialResults: true,
+        cancelOnError: false,
+        localeId: Platform.localeName.split('_').first,
+      );
+    } catch (e) {
+      AppLogger.log('Captions STT listen failed: $e');
+    }
+  }
+
+  void _scheduleSttRestart() {
+    if (!_captionBroadcastActive || !_showCaptions || _sttRestartPending) return;
+    _sttRestartPending = true;
+    Future.delayed(const Duration(milliseconds: 250), () async {
+      _sttRestartPending = false;
+      if (_captionBroadcastActive && _showCaptions) {
+        await _listenOnce();
+      }
+    });
+  }
+
+  void _stopCaptionBroadcast() {
+    _captionBroadcastActive = false;
+    try {
+      _stt.stop();
+    } catch (_) {}
+  }
+
+  void _onSttResult(stt.SpeechResult result) {
+    final text = result.recognizedWords.trim();
+    if (text.isEmpty || !_captionBroadcastActive) return;
+    _socket.emitCaptionSegment({
+      'roomId': widget.roomId,
+      'roomType': widget.isMeeting ? 'meeting' : 'call',
+      'speakerName': _resolvedUserName,
+      'text': text.length > 600 ? text.substring(0, 600) : text,
+      'isFinal': result.finalResult,
+      'language': Platform.localeName.split('_').first,
+    });
+    if (result.finalResult) {
+      // Session ended with this utterance — keep the loop alive.
+      _scheduleSttRestart();
+    }
+  }
+
   void _sendChatMessage() {
     final message = _chatController.text.trim();
     if (message.isEmpty) return;
@@ -2228,7 +2335,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
             _dockButton(
               icon: _showCaptions ? Icons.closed_caption : Icons.closed_caption_off,
               active: _showCaptions,
-              onPressed: () => setState(() => _showCaptions = !_showCaptions),
+              onPressed: _toggleCaptions,
             ),
             _dockButton(
               icon: _isRecording ? Icons.fiber_manual_record : Icons.radio_button_unchecked,

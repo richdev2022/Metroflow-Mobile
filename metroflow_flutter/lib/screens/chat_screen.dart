@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../services/api.dart';
+import '../services/app_badge_service.dart';
 import '../services/socket_service.dart';
 import '../models/conversation.dart';
 import '../models/user.dart';
