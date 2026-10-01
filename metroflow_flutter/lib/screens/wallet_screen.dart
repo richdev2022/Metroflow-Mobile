@@ -26,6 +26,9 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   bool isVirtualAccountLoading = false;
   Map<String, dynamic> kycStatus = {'ninVerified': false, 'bvnVerified': false};
   Map<String, dynamic> wallets = {};
+  /// Invited members must never see the business wallet — only owner/admin
+  /// roles get the business wallet card (mirrors the backend flag).
+  bool canManageBusinessWallet = false;
   List<Bank> banks = [];
   String bankSearchQuery = '';
   String selectedWalletType = 'user';
@@ -369,6 +372,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
       if (mounted) {
         setState(() {
           wallets = response.data ?? {};
+          canManageBusinessWallet = response.data?['canManageBusinessWallet'] == true;
         });
       }
     } catch (e) {
@@ -1598,8 +1602,10 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                                 style: TextStyle(fontSize: 16, color: colors.textSecondary, height: 1.5)),
                             const SizedBox(height: 24),
                             _buildAccountTypeOption('Personal', 'Personal Wallet', colors),
-                            const SizedBox(height: 12),
-                            _buildAccountTypeOption('Business', 'Business Wallet', colors),
+                            if (canManageBusinessWallet) ...[
+                              const SizedBox(height: 12),
+                              _buildAccountTypeOption('Business', 'Business Wallet', colors),
+                            ],
                             const SizedBox(height: 32),
                             SizedBox(
                               width: double.infinity,
@@ -1926,7 +1932,8 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                       child: const SizedBox.shrink(),
                     ),
                     _buildWalletCard(wallets['user_wallet'], 'Personal Wallet', 'user'),
-                    _buildWalletCard(wallets['business_wallet'], 'Business Wallet', 'business'),
+                    if (canManageBusinessWallet)
+                      _buildWalletCard(wallets['business_wallet'], 'Business Wallet', 'business'),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: Row(
