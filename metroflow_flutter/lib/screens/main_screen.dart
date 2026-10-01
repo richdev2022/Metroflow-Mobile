@@ -395,19 +395,28 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       Row(
                         children: [
                           Container(
-                            width: 46,
-                            height: 46,
-                            padding: const EdgeInsets.all(4),
+                            width: 48,
+                            height: 48,
+                            padding: const EdgeInsets.all(6),
                             decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.14),
+                              color: Colors.white,
                               borderRadius: BorderRadius.circular(13),
                               border: Border.all(
-                                color: Colors.white.withValues(alpha: 0.25),
+                                color: Colors.white.withValues(alpha: 0.9),
                                 width: 1,
                               ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.18),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 3),
+                                ),
+                              ],
                             ),
                             child: Image.asset(
-                              'assets/images/logo-mark-white.png',
+                              // Official BLUE shield mark on white — exactly
+                              // the brand treatment used on the website.
+                              'assets/images/logo-mark.png',
                               fit: BoxFit.contain,
                             ),
                           ),
