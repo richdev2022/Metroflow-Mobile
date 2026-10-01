@@ -99,6 +99,12 @@ class ApiService {
 
   static String extractErrorMessage(dynamic error) {
     if (error is DioException) {
+      final status = error.response?.statusCode;
+      // Proxy body-size limit (nginx client_max_body_size): the request never
+      // reached the API, so there is no JSON error message to extract.
+      if (status == 413) {
+        return 'File too large for the server (upload limit). Try a smaller file.';
+      }
       final responseData = error.response?.data;
       final msg = extractResponseMessage(responseData);
       if (msg != null) return msg;
@@ -1783,6 +1789,18 @@ class StorageService {
   Future<void> setHasSeenOnboarding(bool seen) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('hasSeenOnboarding', seen);
+  }
+
+  /// Whether the guided app tour (lib/widgets/app_tour.dart) has already been
+  /// completed or skipped on this device.
+  Future<void> setHasSeenAppTour(bool seen) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('hasSeenAppTour', seen);
+  }
+
+  Future<bool> getHasSeenAppTour() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('hasSeenAppTour') ?? false;
   }
 
   Future<bool> getHasSeenOnboarding() async {

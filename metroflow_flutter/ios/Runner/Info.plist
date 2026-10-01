@@ -55,6 +55,8 @@
         <string>Metricorex uses the camera for video calls and meetings.</string>
         <key>NSMicrophoneUsageDescription</key>
         <string>Metricorex uses the microphone for audio calls, video calls, and meetings.</string>
+        <key>NSSpeechRecognitionUsageDescription</key>
+        <string>Metricorex uses on-device speech recognition to generate live captions during calls and meetings.</string>
         <key>NSPhotoLibraryUsageDescription</key>
         <string>Metricorex uses your photo library for avatars and chat attachments.</string>
         <key>NSPhotoLibraryAddUsageDescription</key>

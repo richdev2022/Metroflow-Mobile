@@ -7,6 +7,7 @@ import '../models/task.dart';
 import '../providers/auth_provider.dart';
 import '../providers/user_profile_provider.dart';
 import '../utils/app_timezone.dart';
+import '../widgets/app_tour.dart';
 import '../widgets/avatar_with_initials.dart';
 import '../widgets/modern_ui.dart';
 
@@ -28,9 +29,18 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   List<dynamic> _allTasks = [];
   bool _isLoading = true;
 
+  // Anchors for the guided app tour (lib/widgets/app_tour.dart) — the tour
+  // spotlights these regions on first launch.
+  final GlobalKey _tourHeroKey = GlobalKey(debugLabel: 'tour-hero');
+  final GlobalKey _tourQuickActionsKey = GlobalKey(debugLabel: 'tour-quick-actions');
+  final GlobalKey _tourTasksKey = GlobalKey(debugLabel: 'tour-tasks');
+
   @override
   void initState() {
     super.initState();
+    AppTourAnchors.register('dashboard-hero', _tourHeroKey);
+    AppTourAnchors.register('dashboard-quick-actions', _tourQuickActionsKey);
+    AppTourAnchors.register('dashboard-tasks', _tourTasksKey);
     _fetchData();
     // Warm the shared user profile (name/avatar) from the local cache and,
     // best-effort, from the server — used by the greeting + avatar chip.
@@ -225,6 +235,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
 
               // ---------- My Tasks preview ----------
               Padding(
+                key: _tourTasksKey,
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -295,6 +306,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     int overdueCount,
   ) {
     return Container(
+      key: _tourHeroKey,
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
@@ -446,6 +458,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     ];
 
     return Padding(
+      key: _tourQuickActionsKey,
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

@@ -230,7 +230,7 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
   // -- Task attachments -------------------------------------------------------
 
   static const int _maxAttachmentFiles = 10;
-  static const int _maxAttachmentBytes = 50 * 1024 * 1024; // 50MB per file
+  static const int _maxAttachmentBytes = 100 * 1024 * 1024; // 100MB per file
 
   Future<void> _handleAddFiles() async {
     if (_isUploadingAttachments || _task == null) return;
@@ -247,7 +247,7 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
     final oversized = result.files.where((f) => f.size > _maxAttachmentBytes).length;
     if (oversized > 0) {
       AppToast.show(
-          '$oversized file(s) exceed the 50 MB limit and will be skipped',
+          '$oversized file(s) exceed the 100 MB limit and will be skipped',
           type: AppToastType.warning);
     }
     files.removeWhere((f) => f.size > _maxAttachmentBytes);

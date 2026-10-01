@@ -41,6 +41,9 @@ dependencies:
   socket_io_client: ^2.0.3+1
   timezone: ^0.9.4
   flutter_webrtc: ^1.5.2
+  # On-device speech recognition so mobile can BROADCAST live captions
+  # (web↔web and web↔mobile) instead of only receiving them.
+  speech_to_text: ^7.0.0
   audioplayers: ^6.1.0
   record: ^7.1.1
   google_sign_in: ^6.2.1

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../services/api.dart';
 
@@ -14,6 +15,38 @@ import '../utils/timezone_data.dart';
 import '../widgets/modern_ui.dart';
 import 'meeting_notes_screen.dart';
 import 'video_call_screen.dart';
+
+/// Public entry so other screens (Calendar) can open the meeting creator
+/// pre-filled with a day — e.g. tapping an empty calendar date.
+Future<void> showMeetingCreator(
+  BuildContext context, {
+  DateTime? initialDate,
+  Function(Meeting)? onSaved,
+}) async {
+  final api = ApiService();
+  List<User> teamMembers = [];
+  try {
+    final response = await api.getTeam();
+    if (response.data['success'] == true) {
+      final data = response.data['data'] is List ? response.data['data'] as List : <dynamic>[];
+      teamMembers = data
+          .whereType<Map>()
+          .map((json) => User.fromJson(Map<String, dynamic>.from(json)))
+          .toList();
+    }
+  } catch (_) {
+    // The dialog still works without the roster (email-only invites).
+  }
+  if (!context.mounted) return;
+  showDialog(
+    context: context,
+    builder: (context) => _MeetingDialog(
+      teamMembers: teamMembers,
+      initialDate: initialDate,
+      onSaved: (m) => onSaved?.call(m),
+    ),
+  );
+}
 
 class MeetingsScreen extends ConsumerStatefulWidget {
   const MeetingsScreen({super.key});
@@ -134,12 +167,13 @@ class _MeetingsScreenState extends ConsumerState<MeetingsScreen> {
     }
   }
 
-  Future<void> _showCreateMeetingDialog([Meeting? meeting]) async {
+  Future<void> _showCreateMeetingDialog([Meeting? meeting, DateTime? initialDate]) async {
     showDialog(
       context: context,
       builder: (context) => _MeetingDialog(
         teamMembers: _teamMembers,
         meeting: meeting,
+        initialDate: initialDate,
         onSaved: (updatedMeeting) {
           setState(() {
             _upsertMeeting(updatedMeeting);
@@ -714,11 +748,14 @@ class _MeetingCard extends StatelessWidget {
 class _MeetingDialog extends StatefulWidget {
   final List<User> teamMembers;
   final Meeting? meeting;
+  /** Pre-fill the start time (e.g. a tapped empty calendar day). */
+  final DateTime? initialDate;
   final Function(Meeting) onSaved;
 
   const _MeetingDialog({
     required this.teamMembers,
     this.meeting,
+    this.initialDate,
     required this.onSaved,
   });
 
@@ -789,6 +826,18 @@ class _MeetingDialogState extends State<_MeetingDialog> {
       _recordingEnabled = widget.meeting!.recordingEnabled;
       _screenSharingEnabled = widget.meeting!.screenSharingEnabled;
       _selectedAttendeeIds.addAll(widget.meeting!.attendees.map((a) => a.userId));
+    } else if (widget.initialDate != null) {
+      // Pre-fill from a tapped calendar day: 09:00 (next full hour for today).
+      final d = widget.initialDate!;
+      final now = DateTime.now();
+      final DateTime start;
+      if (d.year == now.year && d.month == now.month && d.day == now.day) {
+        start = DateTime(d.year, d.month, d.day, now.hour < 23 ? now.hour + 1 : 23);
+      } else {
+        start = DateTime(d.year, d.month, d.day, 9);
+      }
+      _startDate = start;
+      _endDate = start.add(const Duration(hours: 1));
     }
   }
 

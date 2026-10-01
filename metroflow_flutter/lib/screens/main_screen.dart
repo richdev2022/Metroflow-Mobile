@@ -10,6 +10,7 @@ import '../providers/badge_provider.dart';
 import '../providers/user_profile_provider.dart';
 import '../services/api.dart';
 import '../utils/app_toast.dart';
+import '../widgets/app_tour.dart';
 import '../widgets/avatar_with_initials.dart';
 import 'dashboard_screen.dart';
 import 'tasks_screen.dart';
@@ -75,8 +76,19 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       if (mounted) {
         ref.read(userProfileProvider.notifier).hydrate();
       }
+      // First-run guided tour — anchored to dashboard regions registered by
+      // DashboardScreen; skipped silently when already seen.
+      if (mounted && !_tourPrompted) {
+        _tourPrompted = true;
+        Future<void>.delayed(const Duration(milliseconds: 600), () {
+          if (mounted) maybeShowAppTour(context);
+        });
+      }
     });
   }
+
+  // Ensures the tour prompt fires once per MainScreen lifetime.
+  bool _tourPrompted = false;
 
   Future<void> _onItemTapped(int index) async {
     if ((index == 5 || index == 6) && !await _canAccessWalletOrPayroll()) {
