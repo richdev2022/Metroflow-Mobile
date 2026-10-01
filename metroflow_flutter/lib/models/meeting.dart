@@ -69,6 +69,9 @@ class Meeting {
   final DateTime createdAt;
   final DateTime updatedAt;
   final List<MeetingAttendee> attendees;
+  /// Raw recurrence rule JSON string (series meetings only) — e.g.
+  /// '{"frequency":"WEEKLY","interval":1}'. Empty for one-off meetings.
+  final String recurrenceRule;
   // Backward compatibility fields
   final String meetingUrl;
 
@@ -94,6 +97,7 @@ class Meeting {
     required this.createdAt,
     required this.updatedAt,
     required this.attendees,
+    this.recurrenceRule = '',
     this.meetingUrl = '',
   });
 
@@ -125,6 +129,7 @@ class Meeting {
           .whereType<Map>()
           .map((e) => MeetingAttendee.fromJson(Map<String, dynamic>.from(e)))
           .toList(),
+      recurrenceRule: (json['recurrenceRule'] ?? json['recurrence_rule'] ?? '').toString(),
       meetingUrl: (json['meetingUrl'] ?? json['meeting_url'] ?? '').toString(),
     );
   }
@@ -152,6 +157,7 @@ class Meeting {
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
       'attendees': attendees.map((e) => e.toJson()).toList(),
+      'recurrenceRule': recurrenceRule,
       'meetingUrl': meetingUrl,
     };
   }
