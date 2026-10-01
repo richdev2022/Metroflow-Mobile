@@ -1791,6 +1791,18 @@ class StorageService {
     await prefs.setBool('hasSeenOnboarding', seen);
   }
 
+  /// Whether the guided app tour (lib/widgets/app_tour.dart) has already been
+  /// completed or skipped on this device.
+  Future<void> setHasSeenAppTour(bool seen) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('hasSeenAppTour', seen);
+  }
+
+  Future<bool> getHasSeenAppTour() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('hasSeenAppTour') ?? false;
+  }
+
   Future<bool> getHasSeenOnboarding() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool('hasSeenOnboarding') ?? false;
