@@ -264,7 +264,7 @@ class AuthBrandHeader extends StatelessWidget {
 }
 
 /// Rounded, icon-led input field used across the auth screens.
-class AuthTextField extends StatelessWidget {
+class AuthTextField extends StatefulWidget {
   final TextEditingController controller;
   final String hint;
   final IconData icon;
