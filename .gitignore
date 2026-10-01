@@ -42,3 +42,10 @@ app.*.map.json
 /Metricorex_flutter/android/app/debug
 /Metricorex_flutter/android/app/profile
 /Metricorex_flutter/android/app/release
+
+# Fastlane (iOS TestFlight pipeline)
+**/fastlane/report.xml
+**/fastlane/Preview.html
+**/fastlane/test_output/
+**/ios/build/
+*.p8

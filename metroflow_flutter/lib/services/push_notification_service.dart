@@ -198,11 +198,19 @@ class PushNotificationService {
 
       // 3. Permissions — FCM is the single permission authority (the local
       //    notifications plugin is initialised with request*Permission:false).
+      // NOTE: criticalAlert MUST stay false unless the app has been granted
+      // Apple's "critical alerts" entitlement (a special request form; most
+      // apps never get it). Requesting it without the entitlement makes
+      // UNUserNotificationCenter.requestAuthorization fail on iOS, which
+      // kills the ENTIRE permission prompt -> no notifications at all.
+      // Incoming calls already ring via the "calls" channel (Android) and
+      // the local-notification ring path (iOS), so regular alert+sound is
+      // sufficient here.
       final settings = await FirebaseMessaging.instance.requestPermission(
         alert: true,
         badge: true,
         sound: true,
-        criticalAlert: true, // iOS: ring on locked devices (entitlement gated)
+        criticalAlert: false,
         announcement: false,
         carPlay: false,
         provisional: false,

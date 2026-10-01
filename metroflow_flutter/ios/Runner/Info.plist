@@ -7,7 +7,7 @@
         <key>CFBundleDevelopmentRegion</key>
         <string>$(DEVELOPMENT_LANGUAGE)</string>
         <key>CFBundleDisplayName</key>
-        <string>Metricorex Flutter</string>
+        <string>Metricorex</string>
         <key>CFBundleExecutable</key>
         <string>$(EXECUTABLE_NAME)</string>
         <key>CFBundleIdentifier</key>
@@ -15,7 +15,7 @@
         <key>CFBundleInfoDictionaryVersion</key>
         <string>6.0</string>
         <key>CFBundleName</key>
-        <string>Metricorex_flutter</string>
+        <string>Metricorex</string>
         <key>CFBundlePackageType</key>
         <string>APPL</string>
         <key>CFBundleShortVersionString</key>
@@ -26,6 +26,14 @@
         <string>$(FLUTTER_BUILD_NUMBER)</string>
         <key>LSRequiresIPhoneOS</key>
         <true/>
+        <!-- Let the Firebase iOS SDK swizzle APNs registration so
+             firebase_messaging receives the device/APNs token automatically. -->
+        <key>FirebaseAppDelegateProxyEnabled</key>
+        <true/>
+        <!-- Answers the App Store export-compliance question for builds that
+             only use standard/HTTPS encryption — avoids a manual TestFlight step. -->
+        <key>ITSAppUsesNonExemptEncryption</key>
+        <false/>
         <key>UIApplicationSceneManifest</key>
         <dict>
                 <key>UIApplicationSupportsMultipleScenes</key>
