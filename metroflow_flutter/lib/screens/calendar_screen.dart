@@ -4,7 +4,6 @@ import '../models/meeting.dart';
 import '../services/api.dart';
 import '../utils/logger.dart';
 import '../theme/app_theme.dart';
-import '../widgets/modern_ui.dart';
 import 'meetings_screen.dart' show showMeetingCreator;
 import 'video_call_screen.dart';
 
@@ -120,6 +119,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
           isMeeting: true,
           userName: userName,
           calling: callingRaw is Map ? Map<String, dynamic>.from(callingRaw) : null,
+          onLeave: () {
+            // Back from the room — refresh meeting status/attendance.
+            _load();
+          },
         );
       }
     } catch (e) {
@@ -271,11 +274,16 @@ class _CalendarScreenState extends State<CalendarScreen> {
                           return InkWell(
                             borderRadius: BorderRadius.circular(10),
                             onTap: () {
-                              // One appointment → open (join) it straight away;
+                              // One live/upcoming appointment → open (join) it;
                               // empty day → prompt the meeting creator for it;
-                              // several → focus the day panel listing them all.
-                              if (dayMeetings.length == 1 && dayMeetings.first.status != 'cancelled') {
-                                _joinMeeting(dayMeetings.first);
+                              // several (or finished/cancelled) → focus the day
+                              // panel listing them all.
+                              final solo = dayMeetings.length == 1 ? dayMeetings.first : null;
+                              final joinable = solo != null &&
+                                  solo.status != 'cancelled' &&
+                                  solo.status != 'completed';
+                              if (joinable) {
+                                _joinMeeting(solo);
                               } else if (dayMeetings.isEmpty) {
                                 showMeetingCreator(
                                   context,
