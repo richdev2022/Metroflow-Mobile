@@ -115,7 +115,7 @@ class BiometricService {
 
   static Future<BiometricResult> authenticate([String promptMessage = 'Authenticate to continue']) async {
     if (kIsWeb) {
-      return BiometricResult(
+      return const BiometricResult(
         success: false,
         error: 'Biometric authentication is not available on web',
       );
@@ -134,7 +134,7 @@ class BiometricService {
       // low-end devices — biometricOnly stays false.
       final canAuth = await BiometricService.canAuthenticate();
       if (!canAuth) {
-        return BiometricResult(
+        return const BiometricResult(
           success: false,
           error: 'Biometric authentication is not available on this device',
         );
@@ -152,9 +152,9 @@ class BiometricService {
       debugPrint('Biometric result: $result');
 
       if (result) {
-        return BiometricResult(success: true);
+        return const BiometricResult(success: true);
       } else {
-        return BiometricResult(
+        return const BiometricResult(
           success: false,
           error: 'Authentication canceled or failed',
         );
@@ -165,27 +165,27 @@ class BiometricService {
       
       // Handle specific errors
       if (codeString.contains('NotAvailable')) {
-        return BiometricResult(
+        return const BiometricResult(
           success: false,
           error: 'Biometric authentication is not available on this device',
         );
       } else if (codeString.contains('NotEnrolled')) {
-        return BiometricResult(
+        return const BiometricResult(
           success: false,
           error: 'Please set up biometrics in your device settings first',
         );
       } else if (codeString.contains('LockedOut')) {
-        return BiometricResult(
+        return const BiometricResult(
           success: false,
           error: 'Biometric authentication is temporarily locked. Please try again later.',
         );
       } else if (codeString.contains('PermanentlyLockedOut')) {
-        return BiometricResult(
+        return const BiometricResult(
           success: false,
           error: 'Biometric authentication is permanently locked. Please use your device password.',
         );
       } else if (codeString.contains('UserCanceled')) {
-        return BiometricResult(
+        return const BiometricResult(
           success: false,
           error: 'Authentication was canceled',
         );
@@ -201,7 +201,7 @@ class BiometricService {
       );
     } catch (e) {
       debugPrint('Biometric authentication generic error: $e');
-      return BiometricResult(
+      return const BiometricResult(
         success: false,
         error: 'An unexpected error occurred during authentication',
       );
@@ -249,7 +249,7 @@ class BiometricService {
       if (!isAvailable) {
         debugPrint('Biometrics unavailable or not enrolled');
         await StorageService().setBiometricsEnabled(false);
-        return BiometricResult(
+        return const BiometricResult(
           success: false,
           error: 'Please set up fingerprint or face recognition in your device settings first.',
         );
@@ -260,14 +260,14 @@ class BiometricService {
       if (authResult.success) {
         await StorageService().setBiometricsEnabled(true);
         debugPrint('Biometrics enabled successfully');
-        return BiometricResult(success: true);
+        return const BiometricResult(success: true);
       }
       
       debugPrint('Biometric authentication failed during enable: ${authResult.error}');
       return authResult;
     } catch (e) {
       debugPrint('Failed to enable biometrics: $e');
-      return BiometricResult(success: false, error: 'Failed to enable biometric login');
+      return const BiometricResult(success: false, error: 'Failed to enable biometric login');
     }
   }
 

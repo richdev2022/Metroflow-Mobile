@@ -530,19 +530,19 @@ class SkeletonCard extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       child: SizedBox(
         height: height - 32,
-        child: Row(
+        child: const Row(
           children: [
-            const ShimmerBox(
+            ShimmerBox(
               width: 46,
               height: 46,
               radius: 23,
             ),
-            const SizedBox(width: 14),
+            SizedBox(width: 14),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.center,
-                children: const [
+                children: [
                   ShimmerBox(
                     width: double.infinity,
                     height: 14,

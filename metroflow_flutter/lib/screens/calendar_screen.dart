@@ -297,14 +297,14 @@ class _CalendarScreenState extends State<CalendarScreen> {
                             child: Container(
                               decoration: BoxDecoration(
                                 color: selected
-                                    ? colors.primary.withOpacity(0.10)
+                                    ? colors.primary.withValues(alpha: 0.10)
                                     : colors.surface,
                                 borderRadius: BorderRadius.circular(10),
                                 border: Border.all(
                                   color: selected
                                       ? colors.primary
                                       : today
-                                          ? colors.primary.withOpacity(0.5)
+                                          ? colors.primary.withValues(alpha: 0.5)
                                           : colors.border,
                                   width: selected || today ? 1.4 : 1,
                                 ),
@@ -337,10 +337,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
                                           padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
                                           decoration: BoxDecoration(
                                             color: m.status == 'cancelled'
-                                                ? AppColors.error.withOpacity(0.15)
+                                                ? AppColors.error.withValues(alpha: 0.15)
                                                 : m.status == 'ongoing'
-                                                    ? AppColors.success.withOpacity(0.18)
-                                                    : colors.primary.withOpacity(0.15),
+                                                    ? AppColors.success.withValues(alpha: 0.18)
+                                                    : colors.primary.withValues(alpha: 0.15),
                                             borderRadius: BorderRadius.circular(3),
                                           ),
                                           child: Text(
@@ -437,10 +437,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
                                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                                         decoration: BoxDecoration(
                                           color: meeting.status == 'ongoing'
-                                              ? AppColors.success.withOpacity(0.15)
+                                              ? AppColors.success.withValues(alpha: 0.15)
                                               : meeting.status == 'cancelled'
-                                                  ? AppColors.error.withOpacity(0.12)
-                                                  : colors.primary.withOpacity(0.12),
+                                                  ? AppColors.error.withValues(alpha: 0.12)
+                                                  : colors.primary.withValues(alpha: 0.12),
                                           borderRadius: BorderRadius.circular(999),
                                         ),
                                         child: Text(

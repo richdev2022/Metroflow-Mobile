@@ -526,7 +526,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
           AuthScreenShell(
             children: [
               const SizedBox(height: 6),
-              AuthBrandHeader(
+              const AuthBrandHeader(
                 title: 'Create your workspace',
                 subtitle: 'Join Metricorex and run your business in one place.',
               ),

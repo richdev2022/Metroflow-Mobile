@@ -303,7 +303,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             onBack: null,
             children: [
               const SizedBox(height: 6),
-              AuthBrandHeader(
+              const AuthBrandHeader(
                 title: 'Welcome back',
                 subtitle: 'Sign in to keep your business moving.',
               ),
@@ -512,7 +512,7 @@ class _BiometricButton extends StatelessWidget {
                 width: 20,
                 child: CircularProgressIndicator(color: colors.primary, strokeWidth: 2),
               )
-            : Icon(Icons.fingerprint_outlined, size: 22),
+            : const Icon(Icons.fingerprint_outlined, size: 22),
         label: Text(
           enabled ? 'Sign in with Biometrics' : 'Biometrics not enabled',
           style: TextStyle(

@@ -113,11 +113,11 @@ class AudioRouteService {
         // WebRTC on mobile exposes the BT SCO headset on the INPUT side;
         // outputs may also carry it on some OEMs — scan both.
         if (kind != 'audioinput' && kind != 'audiooutput') continue;
-        final label = '${device.label}'.trim();
+        final label = device.label.trim();
         if (label.isEmpty || label == 'null') continue;
         if (_looksLikeBluetooth(label)) {
           found.add(AudioOutputDevice(
-            id: '${device.deviceId}',
+            id: device.deviceId,
             label: label,
             isBluetooth: true,
           ));
