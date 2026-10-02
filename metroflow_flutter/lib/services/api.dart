@@ -610,7 +610,10 @@ class ApiService {
   }
 
   // ---- Recurring Billing (customer subscriptions — business revenue feature)
-  Future<Response> getSubscriptionPlans() async {
+  // NOTE: named getRecurring* — getSubscriptionPlans() already exists below
+  // for the PLATFORM plan purchase flow (/subscription/plans). Two methods
+  // with the same name in one class is a Dart compile error.
+  Future<Response> getRecurringPlans() async {
     return await _dio.get('/recurring/plans');
   }
 
@@ -642,7 +645,7 @@ class ApiService {
     return await _dio.post('/recurring/subscribers/$id/reactivate');
   }
 
-  Future<Response> getSubscriptionCharges() async {
+  Future<Response> getRecurringCharges() async {
     return await _dio.get('/recurring/charges');
   }
 

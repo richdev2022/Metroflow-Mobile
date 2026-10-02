@@ -61,9 +61,9 @@ class _RecurringScreenState extends State<RecurringScreen>
     setState(() => _isLoading = true);
     try {
       final results = await Future.wait([
-        _api.getSubscriptionPlans(),
+        _api.getRecurringPlans(),
         _api.getSubscribers(),
-        _api.getSubscriptionCharges(),
+        _api.getRecurringCharges(),
       ]);
       if (!mounted) return;
       final p = results[0].data;

@@ -89,7 +89,7 @@ List<TourStep> buildDefaultTourSteps() => [
         icon: Icons.bolt_rounded,
         title: 'Quick actions',
         body:
-            'Send money, fund your wallet, run payroll and share payment links right from here \u{2014} one tap, no digging through menus.',
+            'Create tasks, start meetings, raise invoices, share payment links and add products \u{2014} work and money, one tap away.',
       ),
       TourStep(
         anchorKey: AppTourAnchors.get('dashboard-tasks'),
@@ -100,15 +100,15 @@ List<TourStep> buildDefaultTourSteps() => [
       ),
       const TourStep(
         icon: Icons.menu_rounded,
-        title: 'Everything lives in the menu',
+        title: 'Everything lives in More',
         body:
-            'Tap the \u{2630} menu (top-left) for the full toolbox: Chat, Calls, Meetings, Board, Backlog, Ideas, Calendar, Ranking and more.',
+            'Tap More in the bottom bar (or the \u{2630} menu) for the full toolbox \u{2014} grouped into Work & Team, Money, Get Paid, MetricAi and App so nothing gets lost.',
       ),
       const TourStep(
         icon: Icons.account_balance_wallet_rounded,
         title: 'Wallet & transfers',
         body:
-            'Fund your wallet, manage virtual accounts, send single or bulk transfers and download receipts \u{2014} all under Finance in the menu.',
+            'Your balance sits right on the home screen. Fund your wallet, manage virtual accounts, send single or bulk transfers and run payroll \u{2014} all under Money.',
       ),
       const TourStep(
         icon: Icons.smart_toy_rounded,

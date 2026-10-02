@@ -44,6 +44,8 @@
 - ✅ Theme Switching (Light/Dark/System)
 - ✅ Biometrics (Fingerprint/FaceID)
 - ✅ **5-slide onboarding** summarising the full business feature set (work, meetings, money, get-paid, MetricAi & security)
+- ✅ **Grouped navigation** — the More sheet and drawer share one taxonomy (Work & Team · Money · Get Paid · MetricAi · App) so 20+ destinations stay scannable; Wallet/Payroll keep their KYC gate
+- ✅ **Home = the whole suite** — hero with wallet balance strip + Fund shortcut, work+money quick actions, a "Get Paid" hub (Payment Links / Invoices / Storefront / Subscriptions with live counts) and a money row (Transfers / Payroll / Fund)
 
 ### Project Structure
 ```
