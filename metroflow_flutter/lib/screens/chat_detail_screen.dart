@@ -74,16 +74,34 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   // lastSeenAt when no socket event has arrived yet.
   DateTime? _peerLastSeenAt;
   String? _peerPresenceStatus;
+  // Read receipts (Teams-style double tick): the latest instant a PEER read
+  // this conversation. Seeded from the conversation participants, refreshed
+  // from the messages payload (`data.participants[].lastReadAt`) and live
+  // `conversation:read` / `chat:conversation-read` socket events. Own
+  // messages created at/below this instant render ✔✔.
+  DateTime? _peerLastReadAt;
+  /// userId → lastReadAt captured from the messages payload / conversation
+  /// participants. Recomputed against [_currentUserId] once that resolves
+  /// (both loaders race at initState time).
+  List<MapEntry<String, DateTime?>> _participantReadEntries = const [];
   late final void Function(dynamic) _messageCreatedHandler;
   late final void Function(dynamic) _messageUpdatedHandler;
   late final void Function(dynamic) _presenceHandler;
   late final void Function(dynamic) _typingHandler;
   late final void Function(dynamic) _stopTypingHandler;
+  late final void Function(dynamic) _conversationReadHandler;
 
   @override
   void initState() {
     super.initState();
     ChatDetailScreen.activeConversationId = widget.conversation.id;
+    // Seed the read receipt from the conversation object (its enriched
+    // participants already expose lastReadAt) — refreshed by the loaders.
+    _participantReadEntries = widget.conversation.participants
+        .where((p) => p.userId.isNotEmpty)
+        .map((p) => MapEntry(p.userId, p.lastReadAt))
+        .toList();
+    _refreshPeerLastRead();
     _loadCurrentUser();
     _loadMessages();
     _checkGifsConfigured();
@@ -173,6 +191,33 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       setState(() => _peerTypingName = null);
     };
     _socket.onChatStopTyping = _stopTypingHandler;
+
+    // Read receipts: `conversation:read`
+    // { conversationId, userId, lastReadAt } and the newer
+    // `chat:conversation-read` { conversationId, userId, readAt }. Only a
+    // PEER's read instant advances the double tick.
+    _conversationReadHandler = (data) {
+      try {
+        if (!mounted || data is! Map) return;
+        final payload = Map<String, dynamic>.from(data);
+        final cid = (payload['conversationId'] ?? payload['conversation_id'] ?? '').toString();
+        if (cid.isEmpty || cid != widget.conversation.id) return;
+        final userId = (payload['userId'] ?? payload['user_id'] ?? '').toString();
+        if (userId.isNotEmpty && userId == _currentUserId) return;
+        final at = _parseReadInstant(payload['readAt'] ??
+            payload['lastReadAt'] ??
+            payload['read_at'] ??
+            payload['last_read_at']);
+        if (at == null) return;
+        final current = _peerLastReadAt;
+        if (current != null && !at.isAfter(current)) return;
+        setState(() => _peerLastReadAt = at);
+      } catch (e) {
+        Logger.error('conversation read handler failed: $e');
+      }
+    };
+    _socket.onConversationRead = _conversationReadHandler;
+    _socket.onChatConversationRead = _conversationReadHandler;
   }
 
   void _upsertMessage(Message message) {
@@ -325,11 +370,42 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     }
   }
 
+  /// Parses a read-receipt instant (ISO string or epoch) as UTC so the
+  /// comparison with message.createdAt never flips on local offsets/DST.
+  DateTime? _parseReadInstant(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is DateTime) return raw.toUtc();
+    if (raw is num && raw > 0) {
+      final ms = raw >= 100000000000 ? raw.toInt() : (raw.toInt() * 1000);
+      return DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true);
+    }
+    final s = raw.toString();
+    if (s.isEmpty) return null;
+    return DateTime.tryParse(s)?.toUtc();
+  }
+
+  /// Recomputes [_peerLastReadAt] = MAX non-null lastReadAt among
+  /// participants whose userId != my user id. Monotonic: never lowers a
+  /// value already delivered by a live socket event.
+  void _refreshPeerLastRead() {
+    var latest = _peerLastReadAt;
+    final myId = _currentUserId;
+    for (final entry in _participantReadEntries) {
+      if (myId != null && myId.isNotEmpty && entry.key == myId) continue;
+      final at = entry.value;
+      if (at != null && (latest == null || at.isAfter(latest))) latest = at;
+    }
+    _peerLastReadAt = latest;
+  }
+
   Future<void> _loadCurrentUser() async {
     final userId = await _storage.getUserId();
     if (mounted) {
       setState(() {
         _currentUserId = userId;
+        // _currentUserId may have arrived after the participants payload —
+        // recompute which entries count as "peers" now.
+        _refreshPeerLastRead();
       });
     }
   }
@@ -355,11 +431,31 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
             : responseData is List
                 ? responseData
                 : <dynamic>[];
+        // Read receipts: the messages payload also carries
+        // `participants: [{ userId, userName?, lastReadAt }]` — capture each
+        // member's lastReadAt for the double-tick indicator.
+        final readEntries = responseData is Map && responseData['participants'] is List
+            ? (responseData['participants'] as List)
+                .whereType<Map>()
+                .map((raw) {
+                  final map = Map<String, dynamic>.from(raw);
+                  final uid = (map['userId'] ?? map['user_id'] ?? '').toString();
+                  final at = _parseReadInstant(map['lastReadAt'] ??
+                      map['last_read_at'] ??
+                      map['readAt'] ??
+                      map['read_at']);
+                  return MapEntry(uid, at);
+                })
+                .where((entry) => entry.key.isNotEmpty)
+                .toList()
+            : _participantReadEntries;
         setState(() {
           _messages = data
               .whereType<Map>()
               .map((json) => Message.fromJson(Map<String, dynamic>.from(json)))
               .toList();
+          _participantReadEntries = readEntries;
+          _refreshPeerLastRead();
         });
         Future.delayed(const Duration(milliseconds: 100), _scrollToBottom);
       }
@@ -1111,6 +1207,12 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     if (_socket.onChatStopTyping == _stopTypingHandler) {
       _socket.onChatStopTyping = null;
     }
+    if (_socket.onConversationRead == _conversationReadHandler) {
+      _socket.onConversationRead = null;
+    }
+    if (_socket.onChatConversationRead == _conversationReadHandler) {
+      _socket.onChatConversationRead = null;
+    }
     _typingDebounce?.cancel();
     _typingStopTimer?.cancel();
     _recordTimer?.cancel();
@@ -1309,6 +1411,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                                       !isDirect && showHeader,
                                   colors: colors,
                                   participantNames: nameMap,
+                                  peerReadAt: _peerLastReadAt,
                                 ),
                               ),
                             ],
@@ -1568,13 +1671,27 @@ class _MessageBubble extends StatelessWidget {
   /// participants) for the call-log summary sheet.
   final Map<String, String> participantNames;
 
+  /// Latest instant a peer read the conversation (read receipts). Null when
+  /// unknown — own bubbles then show a single sent tick.
+  final DateTime? peerReadAt;
+
   const _MessageBubble({
     required this.message,
     required this.isMe,
     required this.showSenderName,
     required this.colors,
     this.participantNames = const {},
+    this.peerReadAt,
   });
+
+  /// Teams-style read state for OWN messages: the message was created at or
+  /// before the peer's latest lastReadAt. Compared in UTC — createdAt is UTC
+  /// and lastReadAt is parsed toUtc — so DST/local offsets can't flip it.
+  bool get _isReadByPeer {
+    final read = peerReadAt;
+    if (read == null) return false;
+    return !message.createdAt.toUtc().isAfter(read.toUtc());
+  }
 
   /// Resolved presentation kind. Prefers the explicit messageType from the
   /// batch-3 backend, falls back to attachmentType (tolerating legacy raw
@@ -1877,13 +1994,30 @@ class _MessageBubble extends StatelessWidget {
               ],
             ],
             const SizedBox(height: 3),
-            Text(
-              '${DateFormat.Hm().format(message.createdAt.toLocal())}'
-              '${message.editedAt != null ? ' · edited' : ''}',
-              style: TextStyle(
-                fontSize: 10,
-                color: isMe ? Colors.white70 : colors.textSecondary,
-              ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Read receipt (own messages only; pending uploads keep their
+                // spinner look — they never reach this branch anyway).
+                if (isMe) ...[
+                  Icon(
+                    _isReadByPeer ? Icons.done_all : Icons.done,
+                    size: _isReadByPeer ? 14 : 13,
+                    color: _isReadByPeer
+                        ? const Color(0xFF7DD3FC)
+                        : (isMe ? Colors.white70 : colors.textSecondary),
+                  ),
+                  const SizedBox(width: 3),
+                ],
+                Text(
+                  '${DateFormat.Hm().format(message.createdAt.toLocal())}'
+                  '${message.editedAt != null ? ' · edited' : ''}',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: isMe ? Colors.white70 : colors.textSecondary,
+                  ),
+                ),
+              ],
             ),
           ],
         ),

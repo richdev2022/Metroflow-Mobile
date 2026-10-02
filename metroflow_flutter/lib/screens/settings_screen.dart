@@ -20,6 +20,7 @@ import '../utils/app_toast.dart';
 import '../utils/timezone_data.dart';
 import '../widgets/avatar_with_initials.dart';
 import '../widgets/app_tour.dart';
+import '../widgets/pin_input_boxes.dart';
 
 const _businessIndustries = [
   'Technology',
@@ -1654,15 +1655,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _fieldLabel('Enter 4-digit PIN'),
-            TextField(
-              controller: _pinController,
-              decoration: const InputDecoration(hintText: 'PIN'),
-              keyboardType: TextInputType.number,
-              maxLength: 4,
-              obscureText: true,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 24),
-            ),
+            PinInputBoxes(controller: _pinController),
             const SizedBox(height: 24),
             ElevatedButton(
               onPressed: _isSaving ? null : _handleCreatePin,
@@ -1707,15 +1700,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
             const SizedBox(height: 16),
             _fieldLabel('Enter new 4-digit PIN'),
-            TextField(
-              controller: _newPinController,
-              decoration: const InputDecoration(hintText: 'New PIN'),
-              keyboardType: TextInputType.number,
-              maxLength: 4,
-              obscureText: true,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 24),
-            ),
+            PinInputBoxes(controller: _newPinController),
             const SizedBox(height: 24),
             ElevatedButton(
               onPressed: _isSaving ? null : _handleUpdatePin,

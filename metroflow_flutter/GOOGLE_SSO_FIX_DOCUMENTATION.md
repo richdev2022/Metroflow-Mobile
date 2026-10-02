@@ -55,3 +55,88 @@ client in Firebase project "metricorex" (268045301442), put its ID in
   If you still see DEVELOPER_ERROR the SHA-1/package is not registered in the
   client-ID's project (step 2 above).
 - iOS: build and run; the account picker opens; no crash on tap.
+
+---
+
+# iOS Access blocked fix (Feb 2026)
+
+## The bug
+
+On iOS, tapping "Sign in with Google" opened the browser but Google returned:
+
+> **Access blocked: This app's request is invalid**
+> Error 400: `invalid_request` — *Custom scheme URIs are not allowed for
+> 'WEB' client type.*
+
+**Root cause:** `GIDClientID` in `ios/Runner/Info.plist` was set to the
+**Web-type** OAuth client
+(`438902996656-dbmnffpr8vufvso2o10esspalvl9c25c…`). A Web client is only
+allowed to redirect to `https://` URIs; `google_sign_in` on iOS redirects
+into the app via the custom scheme
+`com.googleusercontent.apps.<client-id>`, so Google rejects the request
+before the consent screen. The Web client is still REQUIRED — but only as
+`serverClientId` in `lib/services/google_auth_service.dart` (that is what
+makes Google issue the ID token on Android/Web).
+
+## The fix (build settings)
+
+`Info.plist` now references build settings instead of hard-coded values:
+
+```xml
+<key>GIDClientID</key>
+<string>$(GOOGLE_IOS_CLIENT_ID)</string>
+...
+<key>CFBundleURLSchemes</key>
+<array>
+  <string>$(GOOGLE_IOS_URL_SCHEME)</string>
+</array>
+```
+
+- **NEW `ios/Flutter/GoogleSignIn.xcconfig`** holds the defaults:
+  - `GOOGLE_IOS_CLIENT_ID` — the **iOS-type** client ID
+  - `GOOGLE_IOS_URL_SCHEME` — that client ID reversed, with
+    `.apps.googleusercontent.com` stripped
+    (`com.googleusercontent.apps.<id-without-suffix>`)
+- `ios/Flutter/Debug.xcconfig` and `Release.xcconfig` include it
+  (`#include "GoogleSignIn.xcconfig"`), so both build configurations inherit
+  the settings.
+- `lib/services/google_auth_service.dart` keeps `serverClientId` = WEB
+  client (unchanged flow logic) and maps the "Access blocked /
+  invalid_request / Custom scheme" error to a clear support message.
+
+## GCP console steps (cannot be done from code)
+
+1. Open https://console.cloud.google.com/apis/credentials and select the
+   project that owns the `438902996656-…` Web client (same project!).
+2. **Create credentials → OAuth client ID → iOS**:
+   - Bundle ID: `com.metricorex.app` (must match the app's
+     `PRODUCT_BUNDLE_IDENTIFIER` — verified in
+     `ios/Runner.xcodeproj/project.pbxproj`).
+3. Copy the new client ID and paste it into
+   `ios/Flutter/GoogleSignIn.xcconfig` (`GOOGLE_IOS_CLIENT_ID`), and set
+   `GOOGLE_IOS_URL_SCHEME` to the reversed value:
+   `com.googleusercontent.apps.<new-client-id-without-.apps.googleusercontent.com>`.
+
+## CI (ios-testflight workflow)
+
+Two repository **secrets** drive the build settings (they override the
+xcconfig defaults via xcodebuild environment build-setting overrides, and
+are only exported when non-empty):
+
+| Secret | Value |
+| --- | --- |
+| `GOOGLE_IOS_CLIENT_ID` | the iOS-type client ID (step 2 above) |
+| `GOOGLE_IOS_URL_SCHEME` | `com.googleusercontent.apps.<client-id-without-suffix>` |
+
+Both the *Build Flutter iOS* step and the *fastlane beta* step in
+`.github/workflows/ios-testflight.yml` receive them. Until the secrets and
+the GCP client exist, the committed xcconfig defaults ship the old (Web)
+ID — Google sign-in on iOS keeps returning "Access blocked" and the app now
+shows a clear configuration-mismatch message instead of a raw Google error.
+
+## Verifying (iOS)
+
+1. Add the GCP iOS client + the two secrets.
+2. Run the iOS TestFlight workflow (or `flutter build ios` locally).
+3. Sign in with Google → consent screen opens, redirect returns into the
+   app, ID token is exchanged by `POST /auth/google`.

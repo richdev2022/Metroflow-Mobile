@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../theme/app_theme.dart';
 import '../../services/api.dart';
+import '../../widgets/pin_input_boxes.dart';
 
 /// Bills Hub — daily-use revenue feature. Pay airtime, data, TV, electricity
 /// and betting top-ups straight from any wallet. Every payment is
@@ -485,18 +486,9 @@ class _BillsScreenState extends State<BillsScreen> {
                     const Text('Transaction PIN',
                         style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                     const SizedBox(height: 6),
-                    TextField(
+                    PinInputBoxes(
                       controller: pinCtrl,
-                      obscureText: true,
-                      keyboardType: TextInputType.number,
-                      maxLength: 6,
-                      decoration: InputDecoration(
-                        hintText: '••••',
-                        counterText: '',
-                        prefixIcon: const Icon(Icons.lock_outline_rounded, size: 18),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                      ),
+                      boxSize: 46,
                     ),
                     const SizedBox(height: 18),
                     SizedBox(

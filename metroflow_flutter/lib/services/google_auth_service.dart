@@ -94,6 +94,18 @@ class GoogleAuthService {
   String _mapError(Object error) {
     final raw = error.toString().toLowerCase();
 
+    // iOS configuration mismatch: Google refuses consent for WEB-type
+    // clients with custom-scheme redirects ("Access blocked ... Error 400:
+    // invalid_request — Custom scheme URIs are not allowed for 'WEB' client
+    // type"). Means GIDClientID is (still) a WEB client — the app must ship
+    // with an iOS-type client injected via GOOGLE_IOS_CLIENT_ID.
+    if (raw.contains('access blocked') ||
+        raw.contains('invalid_request') ||
+        raw.contains('custom scheme')) {
+      return 'Google sign-in is blocked by the app configuration (Google iOS '
+          'client mismatch). Please update the app or contact support.';
+    }
+
     // Devices without (or with broken) Google Play services — ApiException 10
     // is DEVELOPER_ERROR (also raised when the app isn't registered with the
     // right SHA-1/package name), 17 is API_NOT_CONNECTED.

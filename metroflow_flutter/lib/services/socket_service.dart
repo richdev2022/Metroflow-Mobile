@@ -59,6 +59,12 @@ class SocketService {
   void Function(dynamic)? onMeetingChatMessage;
   void Function(dynamic)? onNotificationNew;
   void Function(dynamic)? onConversationRead;
+  /// Read-receipt rebroadcast for the Teams-style double tick. Two events
+  /// carry the same fact (the newer one is fired in addition so old clients
+  /// keep working):
+  /// - `conversation:read`    { conversationId, userId, lastReadAt }
+  /// - `chat:conversation-read` { conversationId, userId, readAt }
+  void Function(dynamic)? onChatConversationRead;
   void Function(dynamic)? onChatTyping;
   void Function(dynamic)? onChatStopTyping;
   void Function(dynamic)? onChatNewMessageNotification;
@@ -306,6 +312,12 @@ class SocketService {
 
     _socket?.on('conversation:read', (data) {
       if (onConversationRead != null) onConversationRead!(data);
+    });
+
+    // Newer read-receipt rebroadcast (same payload shape, `readAt` instead of
+    // `lastReadAt`). Old backends simply never fire it.
+    _socket?.on('chat:conversation-read', (data) {
+      if (onChatConversationRead != null) onChatConversationRead!(data);
     });
 
     _socket?.on('chat:typing', (data) {
