@@ -432,7 +432,7 @@ class _StoreScreenState extends State<StoreScreen>
             tooltip: 'Copy store link',
             icon: const Icon(Icons.link_outlined),
             onPressed: () async {
-              final businessId = await _api.getBusinessId();
+              final businessId = await StorageService().getBusinessId();
               final url =
                   'https://app.metricorex.com/store/public/${businessId ?? ''}';
               await Clipboard.setData(ClipboardData(text: url));

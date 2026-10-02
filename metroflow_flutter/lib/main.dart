@@ -51,6 +51,7 @@ import 'screens/backlog_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/team_screen.dart';
+import 'screens/team_roles_screen.dart';
 import 'screens/ranking_screen.dart';
 import 'screens/subscription_screen.dart';
 import 'screens/transaction_detail_screen.dart';
@@ -415,6 +416,10 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
             GoRoute(
               path: 'team',
               builder: (context, state) => const TeamScreen(),
+            ),
+            GoRoute(
+              path: 'team-roles',
+              builder: (context, state) => const TeamRolesScreen(),
             ),
             GoRoute(
               path: 'ranking',

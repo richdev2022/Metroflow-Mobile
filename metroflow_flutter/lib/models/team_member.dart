@@ -17,6 +17,11 @@ class TeamMember {
   final String? accountNumber;
   final String? accountName;
 
+  // Roles & Permissions (custom workspace roles)
+  final String? roleId;
+  final String? roleName;
+  final List<String> permissions;
+
   TeamMember({
     required this.id,
     required this.name,
@@ -35,6 +40,9 @@ class TeamMember {
     this.bankCode,
     this.accountNumber,
     this.accountName,
+    this.roleId,
+    this.roleName,
+    this.permissions = const [],
   });
 
   factory TeamMember.fromJson(Map<String, dynamic> json) {
@@ -56,6 +64,11 @@ class TeamMember {
       bankCode: json['bankCode'] as String?,
       accountNumber: json['accountNumber'] as String?,
       accountName: json['accountName'] as String?,
+      roleId: json['roleId'] as String?,
+      roleName: json['roleName'] as String?,
+      permissions: (json['permissions'] as List<dynamic>? ?? const [])
+          .map((p) => p.toString())
+          .toList(),
     );
   }
 
@@ -78,6 +91,9 @@ class TeamMember {
       'bankCode': bankCode,
       'accountNumber': accountNumber,
       'accountName': accountName,
+      'roleId': roleId,
+      'roleName': roleName,
+      'permissions': permissions,
     };
   }
 }

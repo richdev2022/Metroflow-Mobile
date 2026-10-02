@@ -1447,8 +1447,8 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
             ),
-            onSubmitted: (_) =>
-                isEditing ? _submitEdit() : _sendMessage(),
+            // Enter/newline on the keyboard inserts a line break (paragraph);
+            // sending happens via the send button only.
           ),
         ),
         const SizedBox(width: 8),

@@ -563,6 +563,14 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       },
                     ),
                     _DrawerTile(
+                      icon: Icons.shield_outlined,
+                      title: 'Roles & Permissions',
+                      colors: colors,
+                      onTap: () async {
+                        context.push('/main/team-roles');
+                      },
+                    ),
+                    _DrawerTile(
                       icon: Icons.leaderboard_outlined,
                       title: 'Rankings',
                       colors: colors,

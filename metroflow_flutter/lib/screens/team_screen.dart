@@ -17,14 +17,20 @@ class _TeamScreenState extends State<TeamScreen> {
   final _emailController = TextEditingController();
 
   List<TeamMember> _teamMembers = [];
+  // Custom workspace roles loaded from /roles (Role Management)
+  List<Map<String, dynamic>> _roles = [];
+  // Permission catalog from /roles/permissions (pretty names for chips)
+  List<Map<String, dynamic>> _permissionCatalog = [];
   bool _isLoading = true;
   bool _isInviting = false;
   String _inviteRole = 'member';
+  String? _inviteRoleId; // non-null => custom role selected
 
   @override
   void initState() {
     super.initState();
     _fetchTeam();
+    _fetchRoles();
   }
 
   @override
@@ -51,6 +57,43 @@ class _TeamScreenState extends State<TeamScreen> {
     }
   }
 
+  Future<void> _fetchRoles() async {
+    try {
+      final response = await ApiService().getRoles();
+      final data = response.data;
+      if (data['success'] == true && mounted) {
+        setState(() {
+          _roles = (data['data']?['roles'] as List<dynamic>? ?? [])
+              .map((r) => Map<String, dynamic>.from(r as Map<String, dynamic>))
+              .toList();
+        });
+      }
+    } catch (e) {
+      debugPrint('Failed to fetch roles: $e');
+    }
+    try {
+      final response = await ApiService().getRolePermissions();
+      final data = response.data;
+      if (data['success'] == true && mounted) {
+        setState(() {
+          _permissionCatalog =
+              (data['data']?['permissions'] as List<dynamic>? ?? [])
+                  .map((p) => Map<String, dynamic>.from(p as Map<String, dynamic>))
+                  .toList();
+        });
+      }
+    } catch (e) {
+      debugPrint('Failed to fetch permission catalog: $e');
+    }
+  }
+
+  String _permissionLabel(String id) {
+    for (final p in _permissionCatalog) {
+      if (p['id'] == id) return (p['name'] as String?) ?? id;
+    }
+    return id.replaceAll('_', ' ').replaceAll('rtc.', '');
+  }
+
   Future<void> _handleInvite() async {
     final name = _nameController.text.trim();
     final email = _emailController.text.trim();
@@ -64,11 +107,16 @@ class _TeamScreenState extends State<TeamScreen> {
 
     setState(() => _isInviting = true);
     try {
-      await ApiService().inviteMember({
+      final payload = <String, dynamic>{
         'name': name,
         'email': email,
         'role': _inviteRole,
-      });
+      };
+      // Custom workspace role wins over the legacy role when selected.
+      if (_inviteRoleId != null) {
+        payload['roleId'] = _inviteRoleId;
+      }
+      await ApiService().inviteMember(payload);
       Fluttertoast.showToast(msg: 'Invitation sent successfully');
       _nameController.clear();
       _emailController.clear();
@@ -97,9 +145,17 @@ class _TeamScreenState extends State<TeamScreen> {
     }
   }
 
-  Future<void> _handleUpdateRole(TeamMember member, String newRole) async {
+  Future<void> _handleUpdateRole(
+    TeamMember member,
+    String? roleId,
+    String legacyRole,
+  ) async {
     try {
-      await ApiService().updateMemberRole(member.id, newRole);
+      if (roleId != null) {
+        await ApiService().updateMemberRoleById(member.id, roleId);
+      } else {
+        await ApiService().updateMemberRole(member.id, legacyRole);
+      }
       await _fetchTeam();
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
@@ -110,8 +166,80 @@ class _TeamScreenState extends State<TeamScreen> {
     }
   }
 
+  void _showPermissionsSheet(TeamMember member) {
+    final permissions = member.permissions;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        final colors = AppTheme.colors;
+        return Padding(
+          padding: const EdgeInsets.all(24),
+          child: Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: colors.surface,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "${member.name}'s permissions",
+                  style: TextStyle(
+                    color: colors.text,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  member.roleId != null && member.roleName != null
+                      ? 'Custom role · ${member.roleName}'
+                      : 'Default role · ${_titleCase(member.role)}',
+                  style: TextStyle(color: colors.textSecondary, fontSize: 13),
+                ),
+                const SizedBox(height: 16),
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: permissions
+                          .map(
+                            (p) => Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: colors.background,
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: colors.border),
+                              ),
+                              child: Text(
+                                p == '*' ? 'Full access' : _permissionLabel(p),
+                                style: TextStyle(
+                                  color: colors.text,
+                                  fontSize: 12.5,
+                                ),
+                              ),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   void _showRoleModal(TeamMember member) {
     String selectedRole = member.role;
+    String? selectedRoleId = member.roleId;
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -120,6 +248,7 @@ class _TeamScreenState extends State<TeamScreen> {
         return StatefulBuilder(
           builder: (context, setModalState) {
             final colors = AppTheme.colors;
+            final customRoles = _roles;
             return Padding(
               padding: const EdgeInsets.all(24),
               child: Container(
@@ -128,83 +257,172 @@ class _TeamScreenState extends State<TeamScreen> {
                   color: colors.surface,
                   borderRadius: BorderRadius.circular(20),
                 ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'Update Role',
-                          style: TextStyle(
-                            color: colors.text,
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        IconButton(
-                          icon: Icon(Icons.close, color: colors.text),
-                          onPressed: () => Navigator.of(context).pop(),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Select a new role for ${member.name}',
-                      style: TextStyle(
-                        color: colors.textSecondary,
-                        fontSize: 14,
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    ...['admin', 'manager', 'member'].map((role) {
-                      final selected = selectedRole == role;
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(10),
-                          onTap: () {
-                            setModalState(() => selectedRole = role);
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
-                            decoration: BoxDecoration(
-                              color: selected
-                                  ? colors.primary.withValues(alpha: 0.12)
-                                  : colors.background,
-                              border: Border.all(
-                                color: selected ? colors.primary : colors.border,
-                              ),
-                              borderRadius: BorderRadius.circular(10),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'Update Role',
+                            style: TextStyle(
+                              color: colors.text,
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
                             ),
-                            child: Row(
-                              children: [
-                                Icon(_getRoleIcon(role), color: selected ? colors.primary : colors.textSecondary, size: 20),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Text(
-                                    _titleCase(role),
-                                    style: TextStyle(
-                                      color: selected ? colors.primary : colors.text,
-                                      fontWeight: selected ? FontWeight.w500 : FontWeight.normal,
+                          ),
+                          IconButton(
+                            icon: Icon(Icons.close, color: colors.text),
+                            onPressed: () => Navigator.of(context).pop(),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Select a new role for ${member.name}',
+                        style: TextStyle(
+                          color: colors.textSecondary,
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      ...['admin', 'manager', 'member'].map((role) {
+                        final selected =
+                            selectedRoleId == null && selectedRole == role;
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(10),
+                            onTap: () {
+                              setModalState(() {
+                                selectedRole = role;
+                                selectedRoleId = null;
+                              });
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  vertical: 14, horizontal: 16),
+                              decoration: BoxDecoration(
+                                color: selected
+                                    ? colors.primary.withValues(alpha: 0.12)
+                                    : colors.background,
+                                border: Border.all(
+                                  color: selected
+                                      ? colors.primary
+                                      : colors.border,
+                                ),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(_getRoleIcon(role),
+                                      color: selected
+                                          ? colors.primary
+                                          : colors.textSecondary,
+                                      size: 20),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Text(
+                                      _titleCase(role),
+                                      style: TextStyle(
+                                        color: selected
+                                            ? colors.primary
+                                            : colors.text,
+                                        fontWeight: selected
+                                            ? FontWeight.w500
+                                            : FontWeight.normal,
+                                      ),
                                     ),
                                   ),
-                                ),
-                                if (selected)
-                                  Icon(Icons.check_circle, color: colors.primary),
-                              ],
+                                  if (selected)
+                                    Icon(Icons.check_circle,
+                                        color: colors.primary),
+                                ],
+                              ),
                             ),
                           ),
+                        );
+                      }),
+                      if (customRoles.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          'Custom roles',
+                          style: TextStyle(
+                            color: colors.text,
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
-                      );
-                    }),
-                    const SizedBox(height: 24),
-                    ElevatedButton(
-                      onPressed: () => _handleUpdateRole(member, selectedRole),
-                      child: const Text('Update Role'),
-                    ),
-                  ],
+                        const SizedBox(height: 8),
+                        ...customRoles.map((role) {
+                          final roleId = role['id'] as String?;
+                          final roleName = (role['name'] as String?) ?? '';
+                          final selected = selectedRoleId != null &&
+                              selectedRoleId == roleId;
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(10),
+                              onTap: () {
+                                setModalState(() {
+                                  selectedRoleId = roleId;
+                                });
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    vertical: 14, horizontal: 16),
+                                decoration: BoxDecoration(
+                                  color: selected
+                                      ? colors.primary.withValues(alpha: 0.12)
+                                      : colors.background,
+                                  border: Border.all(
+                                    color: selected
+                                        ? colors.primary
+                                        : colors.border,
+                                  ),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.shield_outlined,
+                                        color: selected
+                                            ? colors.primary
+                                            : colors.textSecondary,
+                                        size: 20),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Text(
+                                        roleName,
+                                        style: TextStyle(
+                                          color: selected
+                                              ? colors.primary
+                                              : colors.text,
+                                          fontWeight: selected
+                                              ? FontWeight.w500
+                                              : FontWeight.normal,
+                                        ),
+                                      ),
+                                    ),
+                                    if (selected)
+                                      Icon(Icons.check_circle,
+                                          color: colors.primary),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                      ],
+                      const SizedBox(height: 24),
+                      ElevatedButton(
+                        onPressed: () => _handleUpdateRole(
+                            member, selectedRoleId, selectedRole),
+                        child: const Text('Update Role'),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             );
@@ -286,6 +504,9 @@ class _TeamScreenState extends State<TeamScreen> {
   }
 
   void _showInviteModal() {
+    // Reset the custom-role selection each time the sheet opens.
+    _inviteRoleId = null;
+    _inviteRole = 'member';
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -295,18 +516,23 @@ class _TeamScreenState extends State<TeamScreen> {
           builder: (context, setModalState) {
             final colors = AppTheme.colors;
             final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+            final customRoles = _roles;
             return Padding(
               padding: EdgeInsets.fromLTRB(24, 24, 24, bottomInset + 24),
               child: Container(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.85,
+                ),
                 padding: const EdgeInsets.all(24),
                 decoration: BoxDecoration(
                   color: colors.surface,
                   borderRadius: BorderRadius.circular(20),
                 ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -348,14 +574,18 @@ class _TeamScreenState extends State<TeamScreen> {
                     const SizedBox(height: 8),
                     Row(
                       children: ['admin', 'manager', 'member'].map((role) {
-                        final selected = _inviteRole == role;
+                        final selected =
+                            _inviteRoleId == null && _inviteRole == role;
                         return Expanded(
                           child: Padding(
                             padding: const EdgeInsets.only(right: 8),
                             child: InkWell(
                               borderRadius: BorderRadius.circular(10),
                               onTap: () {
-                                setState(() => _inviteRole = role);
+                                setState(() {
+                                  _inviteRole = role;
+                                  _inviteRoleId = null;
+                                });
                                 setModalState(() {});
                               },
                               child: Container(
@@ -383,6 +613,73 @@ class _TeamScreenState extends State<TeamScreen> {
                         );
                       }).toList(),
                     ),
+                    if (customRoles.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        'Custom roles (defined in Roles & Permissions)',
+                        style: TextStyle(
+                          color: colors.text,
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: customRoles.map((role) {
+                          final roleId = role['id'] as String?;
+                          final roleName = (role['name'] as String?) ?? '';
+                          final selected =
+                              _inviteRoleId != null && _inviteRoleId == roleId;
+                          return InkWell(
+                            borderRadius: BorderRadius.circular(10),
+                            onTap: () {
+                              setState(() => _inviteRoleId = roleId);
+                              setModalState(() {});
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  vertical: 8, horizontal: 12),
+                              decoration: BoxDecoration(
+                                color: selected
+                                    ? colors.primary.withValues(alpha: 0.12)
+                                    : colors.background,
+                                border: Border.all(
+                                  color: selected ? colors.primary : colors.border,
+                                ),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.shield_outlined,
+                                    size: 15,
+                                    color: selected
+                                        ? colors.primary
+                                        : colors.textSecondary,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    roleName,
+                                    style: TextStyle(
+                                      color: selected
+                                          ? colors.primary
+                                          : colors.textSecondary,
+                                      fontWeight: selected
+                                          ? FontWeight.w500
+                                          : FontWeight.normal,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ],
                     const SizedBox(height: 24),
                     ElevatedButton(
                       onPressed: _isInviting ? null : _handleInvite,
@@ -397,7 +694,8 @@ class _TeamScreenState extends State<TeamScreen> {
                             )
                           : const Text('Send Invitation'),
                     ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             );
@@ -443,6 +741,21 @@ class _TeamScreenState extends State<TeamScreen> {
                       ),
                     ),
                   ),
+                  InkWell(
+                    borderRadius: BorderRadius.circular(24),
+                    onTap: () => context.push('/main/team-roles'),
+                    child: Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: colors.background,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: colors.border),
+                      ),
+                      child: Icon(Icons.shield_outlined, color: colors.text),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
                   InkWell(
                     borderRadius: BorderRadius.circular(24),
                     onTap: _showInviteModal,
@@ -589,13 +902,51 @@ class _TeamScreenState extends State<TeamScreen> {
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(_getRoleIcon(member.role), size: 16, color: colors.textSecondary),
+                        Icon(
+                          member.roleId != null && member.roleName != null
+                              ? Icons.shield_outlined
+                              : _getRoleIcon(member.role),
+                          size: 16,
+                          color: member.roleId != null && member.roleName != null
+                              ? colors.primary
+                              : colors.textSecondary,
+                        ),
                         const SizedBox(width: 4),
                         Text(
-                          _titleCase(member.role),
-                          style: TextStyle(color: colors.textSecondary, fontSize: 12),
+                          member.roleId != null && member.roleName != null
+                              ? member.roleName!
+                              : _titleCase(member.role),
+                          style: TextStyle(
+                            color: colors.textSecondary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
                       ],
+                    ),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: () => _showPermissionsSheet(member),
+                      child: Container(
+                        padding:
+                            const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: colors.primary.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Text(
+                          member.permissions.contains('*')
+                              ? 'Full access'
+                              : member.permissions.isEmpty
+                                  ? 'Default permissions'
+                                  : '${member.permissions.length} permission${member.permissions.length == 1 ? '' : 's'}',
+                          style: TextStyle(
+                            color: colors.primary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
                     ),
                     if (joinedDate != null)
                       Text(

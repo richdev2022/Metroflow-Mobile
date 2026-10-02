@@ -59,6 +59,10 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
 
   bool _loadingHistory = false;
   bool _sending = false;
+
+  /// True when the backend confirms this chat is scoped to the calling
+  /// member only (business teammates cannot see it).
+  bool _privateChat = false;
   bool _uploadingImage = false;
   String? _pendingImageUrl;
   File? _pendingImagePreview;
@@ -120,6 +124,8 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
           _helpMode = !_available;
           _planName = data['planName']?.toString();
           _chatModel = data['chatModel']?.toString();
+          // Per-member privacy: each teammate's MetricAi chat is their own.
+          _privateChat = data['privateChat'] == true;
           _checkingStatus = false;
         });
       } else {
@@ -1019,17 +1025,33 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
                   color: colors.text,
                 ),
               ),
-              Text(
-                _helpMode && !_available
-                    ? 'Free help · Metricorex questions'
-                    : _chatModel != null
-                        ? 'Your AI assistant · $_chatModel'
-                        : 'Your AI assistant',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: colors.textSecondary,
+              if (_privateChat && !_helpMode)
+                Row(
+                  children: [
+                    Icon(Icons.lock_outline_rounded,
+                        size: 11, color: colors.textSecondary),
+                    const SizedBox(width: 3),
+                    Text(
+                      "Private to you — teammates can't see this chat",
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                  ],
+                )
+              else
+                Text(
+                  _helpMode && !_available
+                      ? 'Free help · Metricorex questions'
+                      : _chatModel != null
+                          ? 'Your AI assistant · $_chatModel'
+                          : 'Your AI assistant',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: colors.textSecondary,
+                  ),
                 ),
-              ),
             ],
           ),
         ],
@@ -1724,7 +1746,8 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
                   contentPadding: const EdgeInsets.symmetric(
                       horizontal: 18, vertical: 11),
                 ),
-                onSubmitted: (_) => _send(),
+                // Enter on the keyboard inserts a line break (paragraph);
+                // sending happens via the send button only.
               ),
             ),
             const SizedBox(width: 8),
