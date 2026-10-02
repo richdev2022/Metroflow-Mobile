@@ -55,7 +55,9 @@ class _Role {
       id: (json['id'] as String?) ?? '',
       name: (json['name'] as String?) ?? '',
       description: json['description'] as String?,
-      isSystem: json['is_system'] == true,
+      // Defensive: the backend returns snake_case; older payloads may not
+      // carry the flag at all (then it's simply not a system role).
+      isSystem: json['is_system'] == true || json['isSystem'] == true,
       permissions: (json['permissions'] as List<dynamic>? ?? const [])
           .map((p) => p.toString())
           .toList(),
@@ -387,6 +389,29 @@ class _TeamRolesScreenState extends State<TeamRolesScreen> {
                   ),
                 ),
               ),
+              // System/default roles cannot be deleted (backend blocks it);
+              // editing their permissions IS allowed.
+              if (role.isSystem) ...[
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppColors.warning.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: AppColors.warning.withValues(alpha: 0.4)),
+                  ),
+                  child: const Text(
+                    'Default',
+                    style: TextStyle(
+                      color: AppColors.warning,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
@@ -409,13 +434,17 @@ class _TeamRolesScreenState extends State<TeamRolesScreen> {
                 background: colors.background,
                 onTap: () => _openRoleEditor(existing: role),
               ),
-              const SizedBox(width: 8),
-              _actionButton(
-                icon: Icons.delete_outline,
-                color: AppColors.error,
-                background: AppColors.error.withValues(alpha: 0.12),
-                onTap: () => _handleDelete(role),
-              ),
+              // Delete is only offered for custom roles (system roles are
+              // protected server-side too).
+              if (!role.isSystem) ...[
+                const SizedBox(width: 8),
+                _actionButton(
+                  icon: Icons.delete_outline,
+                  color: AppColors.error,
+                  background: AppColors.error.withValues(alpha: 0.12),
+                  onTap: () => _handleDelete(role),
+                ),
+              ],
             ],
           ),
           if (role.description != null && role.description!.isNotEmpty) ...[

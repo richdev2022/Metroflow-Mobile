@@ -17,13 +17,18 @@
         <key>CFBundleName</key>
         <string>Metricorex</string>
         <!-- Google Sign-In (google_sign_in plugin, iOS):
-             GIDClientID is the OAuth *Web* client ID; CFBundleURLTypes must
-             contain the REVERSED client ID so Google's consent flow can
-             redirect back into the app. Missing either key makes the plugin
-             raise a native NSException on sign-in (hard crash — cannot be
-             caught from Dart). -->
+             GIDClientID is the OAuth *iOS-type* client ID, injected via the
+             build setting GOOGLE_IOS_CLIENT_ID (ios/Flutter/GoogleSignIn.xcconfig,
+             overridable through the GOOGLE_IOS_CLIENT_ID CI secret). The
+             CFBundleURLTypes scheme is that client ID REVERSED
+             (GOOGLE_IOS_URL_SCHEME). Google BLOCKS custom-scheme redirects
+             for WEB-type clients (Error 400: "Custom scheme URIs are not
+             allowed for 'WEB' client type") — the WEB client ID stays as
+             serverClientId in lib/services/google_auth_service.dart.
+             Missing either key makes the plugin raise a native NSException
+             on sign-in (hard crash — cannot be caught from Dart). -->
         <key>GIDClientID</key>
-        <string>438902996656-dbmnffpr8vufvso2o10esspalvl9c25c.apps.googleusercontent.com</string>
+        <string>$(GOOGLE_IOS_CLIENT_ID)</string>
         <key>CFBundleURLTypes</key>
         <array>
                 <dict>
@@ -31,7 +36,7 @@
                         <string>Editor</string>
                         <key>CFBundleURLSchemes</key>
                         <array>
-                                <string>com.googleusercontent.apps.438902996656-dbmnffpr8vufvso2o10esspalvl9c25c</string>
+                                <string>$(GOOGLE_IOS_URL_SCHEME)</string>
                         </array>
                 </dict>
         </array>

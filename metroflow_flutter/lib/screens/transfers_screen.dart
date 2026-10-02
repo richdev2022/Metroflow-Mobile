@@ -9,6 +9,7 @@ import '../theme/app_theme.dart';
 import '../services/api.dart';
 import '../models/transfer.dart';
 import '../utils/app_timezone.dart';
+import '../widgets/pin_setup_sheet.dart';
 import 'package:share_plus/share_plus.dart';
 
 class TransfersScreen extends ConsumerStatefulWidget {
@@ -29,11 +30,32 @@ class _TransfersScreenState extends ConsumerState<TransfersScreen> {
   int _page = 1;
   Timer? _searchDebounce;
 
+  /// Transaction PIN gate — auto-prompted at most ONCE per app session
+  /// (shared across instances of this screen; dismissal never loops).
+  static bool _pinPromptShownThisSession = false;
+
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_handleScroll);
     _fetchTransfers(1, refresh: true);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _ensurePinSetup());
+  }
+
+  /// Checks GET /settings/otp-enabled; when no PIN exists yet, shows the
+  /// setup sheet once (silent on failure — never blocks the screen).
+  Future<void> _ensurePinSetup() async {
+    if (_pinPromptShownThisSession) return;
+    _pinPromptShownThisSession = true;
+    try {
+      final response = await ApiService().getOtpEnabled();
+      final data = response.data;
+      final pinCreated = data is Map && data['pinCreated'] == true;
+      if (!mounted || pinCreated) return;
+      await showPinSetupSheet(context);
+    } catch (e) {
+      debugPrint('PIN status check failed: $e');
+    }
   }
 
   @override
@@ -167,6 +189,124 @@ class _TransfersScreenState extends ConsumerState<TransfersScreen> {
 
 
 
+  /// Entry point: choose between the single (individual) transfer flow and
+  /// the bulk transfer flow.
+  void _showNewTransferSheet() {
+    final colors = AppTheme.colors;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => Container(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+        decoration: BoxDecoration(
+          color: colors.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Make New Transfer',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: colors.text,
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Choose how you want to send money',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: colors.textSecondary, fontSize: 13),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: _transferOptionCard(
+                    colors,
+                    icon: Icons.person_rounded,
+                    title: 'Individual Transfer',
+                    subtitle: 'Send to one account',
+                    onTap: () {
+                      Navigator.of(sheetContext).pop();
+                      context.push('/main/single-transfer');
+                    },
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _transferOptionCard(
+                    colors,
+                    icon: Icons.group_rounded,
+                    title: 'Bulk Transfer',
+                    subtitle: 'Send to multiple accounts',
+                    onTap: () {
+                      Navigator.of(sheetContext).pop();
+                      context.push('/main/bulk-transfer');
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _transferOptionCard(
+    ThemeColors colors, {
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 22),
+        decoration: BoxDecoration(
+          color: colors.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: colors.border),
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                color: colors.primaryBg,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: colors.primary, size: 26),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: colors.text,
+                fontSize: 14.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: colors.textSecondary, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = AppTheme.colors;
@@ -199,6 +339,50 @@ class _TransfersScreenState extends ConsumerState<TransfersScreen> {
                     onPressed: _isLoading ? null : _exportToCsv,
                   ),
                 ],
+              ),
+            ),
+            // Prominent entry point: start a new individual or bulk transfer.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+              child: SizedBox(
+                width: double.infinity,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [colors.primary, colors.primaryDark],
+                    ),
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: [
+                      BoxShadow(
+                        color: colors.primary.withValues(alpha: 0.3),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: ElevatedButton.icon(
+                    onPressed: _showNewTransferSheet,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.transparent,
+                      shadowColor: Colors.transparent,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 15),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    icon: const Icon(Icons.add_circle_outline, size: 22),
+                    label: const Text(
+                      'Make New Transfer',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
             Padding(

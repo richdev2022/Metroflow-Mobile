@@ -39,6 +39,7 @@ import 'screens/business_kyc_screen.dart';
 
 import 'screens/fund_wallet_screen.dart';
 import 'screens/bulk_transfer_screen.dart';
+import 'screens/single_transfer_screen.dart';
 import 'screens/transfers_screen.dart';
 import 'screens/transfer_detail_screen.dart';
 import 'screens/transfer_success_screen.dart';
@@ -373,6 +374,11 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
             GoRoute(
               path: 'bulk-transfer',
               builder: (context, state) => const BulkTransferScreen(),
+            ),
+            GoRoute(
+              name: 'single-transfer',
+              path: 'single-transfer',
+              builder: (context, state) => const SingleTransferScreen(),
             ),
             GoRoute(
               path: 'create-task',

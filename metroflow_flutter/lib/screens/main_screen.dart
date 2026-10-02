@@ -9,6 +9,7 @@ import '../providers/notifications_provider.dart';
 import '../providers/badge_provider.dart';
 import '../providers/user_profile_provider.dart';
 import '../services/api.dart';
+import '../services/app_update_service.dart';
 import '../utils/app_toast.dart';
 import '../widgets/app_tour.dart';
 import '../widgets/avatar_with_initials.dart';
@@ -84,6 +85,13 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           if (mounted) maybeShowAppTour(context);
         });
       }
+      // In-app update prompt on app start / session restore (the login flow
+      // triggers its own check 2s after landing; AppUpdateService de-dupes
+      // per session and respects dismissed optional releases). Delayed so
+      // initial dashboard loads and the tour never compete with it.
+      Future<void>.delayed(const Duration(seconds: 4), () {
+        if (mounted) AppUpdateService.instance.checkAndPrompt(source: 'startup');
+      });
     });
   }
 

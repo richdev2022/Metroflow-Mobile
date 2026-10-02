@@ -34,6 +34,12 @@ String get webAppOrigin {
   return '${uri.scheme}://$webHost${uri.hasPort ? ':${uri.port}' : ''}';
 }
 
+/// Base URL of the API (…/api). Exported for the app-update checker
+/// (AppUpdateService), which calls the unauthenticated
+/// /public/app-updates/check endpoint through its own short-timeout Dio
+/// instance instead of ApiService's auth/plan-gate interceptors.
+String get apiBaseUrl => _apiBaseUrl;
+
 // Global key to access navigator context
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -115,23 +121,21 @@ class ApiService {
   }
 
   Future<void> _handleSessionExpired() async {
-    // Use auth notifier to logout properly and disable biometrics
+    // Session expiry logs the user out but must NEVER touch the biometric
+    // enrollment: the `biometricsEnabled` flag and the per-device token stay
+    // on the device so the next password/Google sign-in silently re-enrolls.
+    // Enrollment is revoked ONLY by an explicit user action
+    // (Settings → disable biometrics → logout(disableBiometrics: true)).
     if (authNotifierInstance != null) {
-      await authNotifierInstance!.logout(disableBiometrics: true);
+      await authNotifierInstance!.logout();
     } else {
-      // Fallback if notifier isn't available yet
+      // Fallback if notifier isn't available yet — session keys only,
+      // biometrics keys stay untouched.
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove('token');
       await prefs.remove('userId');
       await prefs.remove('businessId');
       await prefs.remove('userName');
-      // Also clear biometrics in fallback
-      await prefs.remove('biometrics_token');
-      await prefs.remove('biometrics_userId');
-      await prefs.remove('biometrics_businessId');
-      await prefs.remove('biometrics_userName');
-      await prefs.remove('biometricsEnabled');
-      await prefs.remove('biometricsPromptShown');
     }
     // Don't show dialog - auth state listener will navigate to login
   }
@@ -903,6 +907,17 @@ class ApiService {
   Future<Response> biometricRevoke({String? deviceId}) async {
     return await _dio.delete('/auth/biometric/enroll', data: {
       if (deviceId != null && deviceId.isNotEmpty) 'device_id': deviceId,
+    }, options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// Reports whether THIS device still has a live server-side biometric
+  /// enrollment. POST /auth/biometric/status { device_id } →
+  /// { success, enrolled }. Used by the login screen to detect a stale
+  /// per-device token BEFORE prompting (the endpoint is additive: old
+  /// backends 404 — callers must treat errors as soft-success).
+  Future<Response> biometricStatus(String deviceId) async {
+    return await _dio.post('/auth/biometric/status', data: {
+      'device_id': deviceId,
     }, options: Options(extra: {'suppressToast': true}));
   }
 

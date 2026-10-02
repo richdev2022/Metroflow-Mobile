@@ -9,6 +9,8 @@ import '../models/epic.dart';
 import '../models/bank.dart';
 import '../models/wallet.dart';
 import '../models/transfer.dart';
+import '../widgets/pin_input_boxes.dart';
+import '../widgets/pin_setup_sheet.dart';
 
 class BulkTransferScreen extends ConsumerStatefulWidget {
   const BulkTransferScreen({super.key});
@@ -47,10 +49,30 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
   final Map<String, Timer> _lookupTimers = {};
   final Set<String> _resolvingRecipients = {};
 
+  /// Transaction PIN gate — auto-prompted at most ONCE per app session.
+  static bool _pinPromptShownThisSession = false;
+
   @override
   void initState() {
     super.initState();
     _fetchData();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _ensurePinSetup());
+  }
+
+  /// Checks GET /settings/otp-enabled; when no PIN exists yet, shows the
+  /// setup sheet once (silent on failure — never blocks the screen).
+  Future<void> _ensurePinSetup() async {
+    if (_pinPromptShownThisSession) return;
+    _pinPromptShownThisSession = true;
+    try {
+      final response = await ApiService().getOtpEnabled();
+      final data = response.data;
+      final pinCreated = data is Map && data['pinCreated'] == true;
+      if (!mounted || pinCreated) return;
+      await showPinSetupSheet(context);
+    } catch (e) {
+      debugPrint('PIN status check failed: $e');
+    }
   }
 
   void _startOtpCountdown() {
@@ -1474,16 +1496,8 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
                               ],
                             ),
                             const SizedBox(height: 24),
-                            TextField(
-                              decoration: const InputDecoration(
-                                labelText: 'Transaction PIN',
-                                hintText: 'Enter 4-digit PIN',
-                              ),
-                              style: const TextStyle(fontSize: 24),
-                              keyboardType: TextInputType.number,
-                              maxLength: 4,
-                              obscureText: true,
-                              textAlign: TextAlign.center,
+                            PinInputBoxes(
+                              boxSize: 46,
                               onChanged: (value) => setState(() => _pin = value),
                             ),
                             const SizedBox(height: 32),

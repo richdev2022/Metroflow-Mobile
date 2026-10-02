@@ -127,7 +127,16 @@ jobs:
           FLUTTER_XCODE_CODE_SIGNING_ALLOWED: "NO"
           FLUTTER_XCODE_CODE_SIGNING_REQUIRED: "NO"
           FLUTTER_XCODE_CODE_SIGN_IDENTITY: ""
+          # Google Sign-In iOS OAuth client (iOS-TYPE client). Injected as a
+          # build-setting override so Info.plist's $(GOOGLE_IOS_CLIENT_ID) /
+          # $(GOOGLE_IOS_URL_SCHEME) resolve at build time. The conditional
+          # export below avoids overriding the GoogleSignIn.xcconfig defaults
+          # with empty strings when the secrets are not configured.
+          GOOGLE_IOS_CLIENT_ID: ${{ secrets.GOOGLE_IOS_CLIENT_ID }}
+          GOOGLE_IOS_URL_SCHEME: ${{ secrets.GOOGLE_IOS_URL_SCHEME }}
         run: |
+          if [ -n "$GOOGLE_IOS_CLIENT_ID" ]; then export GOOGLE_IOS_CLIENT_ID; fi
+          if [ -n "$GOOGLE_IOS_URL_SCHEME" ]; then export GOOGLE_IOS_URL_SCHEME; fi
           flutter config --no-enable-swift-package-manager
           rm -rf ios/Runner.xcworkspace/xcshareddata/swiftpm
           flutter build ios --release --no-codesign --build-number=${{ github.run_number }}
@@ -151,7 +160,15 @@ jobs:
           MATCH_PASSWORD: "Metricorex-iOS-signing-2026-x7QkP92mVbT4wZsR"
           MATCH_KEYCHAIN_PASSWORD: "Metricorex-iOS-keychain-2026-j3NvL8hFdC6yWaGe"
           MATCH_GIT_URL: "https://x-access-token:${{ github.token }}@github.com/richdev2022/Metroflow-Mobile.git"
-        run: bundle exec fastlane beta
+          # Google Sign-In iOS OAuth client — gym/xcodebuild read these as
+          # build-setting overrides (same conditional-export guard as the
+          # flutter build step above).
+          GOOGLE_IOS_CLIENT_ID: ${{ secrets.GOOGLE_IOS_CLIENT_ID }}
+          GOOGLE_IOS_URL_SCHEME: ${{ secrets.GOOGLE_IOS_URL_SCHEME }}
+        run: |
+          if [ -n "$GOOGLE_IOS_CLIENT_ID" ]; then export GOOGLE_IOS_CLIENT_ID; fi
+          if [ -n "$GOOGLE_IOS_URL_SCHEME" ]; then export GOOGLE_IOS_URL_SCHEME; fi
+          bundle exec fastlane beta
 
       - name: Upload IPA artifact (backup copy)
         if: always()
