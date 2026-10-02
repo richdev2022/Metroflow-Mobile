@@ -570,6 +570,14 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                         context.push('/main/ranking');
                       },
                     ),
+                    _DrawerTile(
+                      icon: Icons.video_call_outlined,
+                      title: 'Calls',
+                      colors: colors,
+                      onTap: () async {
+                        _onItemTapped(4);
+                      },
+                    ),
                     const _DrawerSectionLabel('Finance'),
                     _DrawerTile(
                       icon: Icons.account_balance_wallet_outlined,
@@ -593,6 +601,55 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       colors: colors,
                       onTap: () async {
                         context.push('/main/transfers');
+                      },
+                    ),
+                    _DrawerTile(
+                      icon: Icons.link_outlined,
+                      title: 'Payment Links',
+                      colors: colors,
+                      onTap: () async {
+                        context.push('/main/payment-links');
+                      },
+                    ),
+                    _DrawerTile(
+                      icon: Icons.receipt_long_outlined,
+                      title: 'Invoices',
+                      colors: colors,
+                      onTap: () async {
+                        context.push('/main/invoices');
+                      },
+                    ),
+                    _DrawerTile(
+                      icon: Icons.storefront_outlined,
+                      title: 'Store',
+                      colors: colors,
+                      onTap: () async {
+                        context.push('/main/store');
+                      },
+                    ),
+                    _DrawerTile(
+                      icon: Icons.autorenew_outlined,
+                      title: 'Subscriptions',
+                      colors: colors,
+                      onTap: () async {
+                        context.push('/main/subscriptions');
+                      },
+                    ),
+                    const _DrawerSectionLabel('MetricAi'),
+                    _DrawerTile(
+                      icon: Icons.smart_toy_outlined,
+                      title: 'MetricAi Chat',
+                      colors: colors,
+                      onTap: () async {
+                        context.push('/main/metric-ai');
+                      },
+                    ),
+                    _DrawerTile(
+                      icon: Icons.auto_awesome_outlined,
+                      title: 'AI Credits',
+                      colors: colors,
+                      onTap: () async {
+                        context.push('/main/ai-credits');
                       },
                     ),
                     const _DrawerSectionLabel('Account'),
@@ -626,6 +683,14 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       colors: colors,
                       onTap: () async {
                         context.push('/main/activity-logs');
+                      },
+                    ),
+                    _DrawerTile(
+                      icon: Icons.settings_outlined,
+                      title: 'Settings',
+                      colors: colors,
+                      onTap: () async {
+                        context.push('/main/settings');
                       },
                     ),
                     const SizedBox(height: 10),
@@ -814,9 +879,13 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     );
   }
 
-  /// "More" overflow sheet: everything that no longer earns a bottom-nav
-  /// slot (Calls, Wallet, Payroll + routed destinations like Board, Team,
-  /// Transfers…). Wallet/Payroll still go through the KYC gate.
+  /// "More" overflow sheet — the full toolbox, GROUPED so 20+ destinations
+  /// stay scannable instead of one confusing flat grid:
+  ///   Work & Team · Money · Get Paid · MetricAi · App
+  /// Groups follow the same taxonomy as the navigation drawer and the web
+  /// sidebar so the mental model is identical across platforms. Wallet and
+  /// Payroll still go through the KYC gate. Scrollable (max ~85% height)
+  /// because every destination earns a slot here.
   void _showMoreSheet() {
     final colors = AppTheme.colors;
     final themeState = ref.read(themeProvider);
@@ -829,175 +898,308 @@ class _MainScreenState extends ConsumerState<MainScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (sheetContext) {
+        final sheetHeight = MediaQuery.of(sheetContext).size.height;
         return SafeArea(
           top: false,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 10),
-              Container(
-                width: 44,
-                height: 4.5,
-                decoration: BoxDecoration(
-                  color: colors.borderVariant,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-              ),
-              const SizedBox(height: 12),
-              GridView.count(
-                crossAxisCount: 4,
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-                childAspectRatio: 0.92,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: sheetHeight * 0.85),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  _MoreTile(
-                    icon: Icons.video_call_outlined,
-                    label: 'Calls',
-                    colors: colors,
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      _onItemTapped(4);
-                    },
+                  const SizedBox(height: 10),
+                  Center(
+                    child: Container(
+                      width: 44,
+                      height: 4.5,
+                      decoration: BoxDecoration(
+                        color: colors.borderVariant,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
                   ),
-                  _MoreTile(
-                    icon: Icons.account_balance_wallet_outlined,
-                    label: 'Wallet',
-                    colors: colors,
-                    onTap: () async {
-                      Navigator.of(sheetContext).pop();
-                      await _onItemTapped(5);
-                    },
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(16, 12, 16, 2),
+                    child: Text(
+                      'All features',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
                   ),
-                  _MoreTile(
-                    icon: Icons.payments_outlined,
-                    label: 'Payroll',
-                    colors: colors,
-                    onTap: () async {
-                      Navigator.of(sheetContext).pop();
-                      await _onItemTapped(6);
-                    },
+                  const SizedBox(height: 4),
+
+                  // ---------- Work & Team ----------
+                  const _MoreSectionLabel('Work & Team'),
+                  GridView.count(
+                    crossAxisCount: 4,
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+                    childAspectRatio: 0.92,
+                    children: [
+                      _MoreTile(
+                        icon: Icons.video_call_outlined,
+                        label: 'Calls',
+                        colors: colors,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          _onItemTapped(4);
+                        },
+                      ),
+                      _MoreTile(
+                        icon: Icons.view_kanban_outlined,
+                        label: 'Board',
+                        colors: colors,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          context.go('/main/board');
+                        },
+                      ),
+                      _MoreTile(
+                        icon: Icons.calendar_month_outlined,
+                        label: 'Calendar',
+                        colors: colors,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          context.push('/main/calendar');
+                        },
+                      ),
+                      _MoreTile(
+                        icon: Icons.archive_outlined,
+                        label: 'Backlog',
+                        colors: colors,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          context.push('/main/backlog');
+                        },
+                      ),
+                      _MoreTile(
+                        icon: Icons.lightbulb_outline,
+                        label: 'Ideas',
+                        colors: colors,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          context.push('/main/ideas');
+                        },
+                      ),
+                      _MoreTile(
+                        icon: Icons.people_outline,
+                        label: 'Team',
+                        colors: colors,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          context.push('/main/team');
+                        },
+                      ),
+                      _MoreTile(
+                        icon: Icons.leaderboard_outlined,
+                        label: 'Rankings',
+                        colors: colors,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          context.push('/main/ranking');
+                        },
+                      ),
+                    ],
                   ),
-                  _MoreTile(
-                    icon: Icons.view_kanban_outlined,
-                    label: 'Board',
-                    colors: colors,
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      context.go('/main/board');
-                    },
+
+                  // ---------- Money ----------
+                  const _MoreSectionLabel('Money'),
+                  GridView.count(
+                    crossAxisCount: 4,
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+                    childAspectRatio: 0.92,
+                    children: [
+                      _MoreTile(
+                        icon: Icons.account_balance_wallet_outlined,
+                        label: 'Wallet',
+                        colors: colors,
+                        onTap: () async {
+                          Navigator.of(sheetContext).pop();
+                          await _onItemTapped(5);
+                        },
+                      ),
+                      _MoreTile(
+                        icon: Icons.swap_horiz_outlined,
+                        label: 'Transfers',
+                        colors: colors,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          context.push('/main/transfers');
+                        },
+                      ),
+                      _MoreTile(
+                        icon: Icons.payments_outlined,
+                        label: 'Payroll',
+                        colors: colors,
+                        onTap: () async {
+                          Navigator.of(sheetContext).pop();
+                          await _onItemTapped(6);
+                        },
+                      ),
+                    ],
                   ),
-                  _MoreTile(
-                    icon: Icons.people_outline,
-                    label: 'Team',
-                    colors: colors,
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      context.push('/main/team');
-                    },
+
+                  // ---------- Get Paid ----------
+                  const _MoreSectionLabel('Get Paid'),
+                  GridView.count(
+                    crossAxisCount: 4,
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+                    childAspectRatio: 0.92,
+                    children: [
+                      _MoreTile(
+                        icon: Icons.link_outlined,
+                        label: 'Pay Links',
+                        colors: colors,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          context.push('/main/payment-links');
+                        },
+                      ),
+                      _MoreTile(
+                        icon: Icons.receipt_long_outlined,
+                        label: 'Invoices',
+                        colors: colors,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          context.push('/main/invoices');
+                        },
+                      ),
+                      _MoreTile(
+                        icon: Icons.storefront_outlined,
+                        label: 'Store',
+                        colors: colors,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          context.push('/main/store');
+                        },
+                      ),
+                      _MoreTile(
+                        icon: Icons.autorenew_outlined,
+                        label: 'Subscriptions',
+                        colors: colors,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          context.push('/main/subscriptions');
+                        },
+                      ),
+                    ],
                   ),
-                  _MoreTile(
-                    icon: Icons.swap_horiz_outlined,
-                    label: 'Transfers',
-                    colors: colors,
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      context.push('/main/transfers');
-                    },
+
+                  // ---------- MetricAi ----------
+                  const _MoreSectionLabel('MetricAi'),
+                  GridView.count(
+                    crossAxisCount: 4,
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+                    childAspectRatio: 0.92,
+                    children: [
+                      _MoreTile(
+                        icon: Icons.smart_toy_outlined,
+                        label: 'MetricAi',
+                        colors: colors,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          context.push('/main/metric-ai');
+                        },
+                      ),
+                      _MoreTile(
+                        icon: Icons.auto_awesome_outlined,
+                        label: 'AI Credits',
+                        colors: colors,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          context.push('/main/ai-credits');
+                        },
+                      ),
+                    ],
                   ),
-                  _MoreTile(
-                    icon: Icons.lightbulb_outline,
-                    label: 'Ideas',
-                    colors: colors,
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      context.push('/main/ideas');
-                    },
+
+                  // ---------- App ----------
+                  const _MoreSectionLabel('App'),
+                  GridView.count(
+                    crossAxisCount: 4,
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                    childAspectRatio: 0.92,
+                    children: [
+                      _MoreTile(
+                        icon: Icons.credit_card_outlined,
+                        label: 'Plan',
+                        colors: colors,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          context.push('/main/subscription');
+                        },
+                      ),
+                      _MoreTile(
+                        icon: Icons.local_offer_outlined,
+                        label: 'Pricing',
+                        colors: colors,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          context.push('/main/fees');
+                        },
+                      ),
+                      _MoreTile(
+                        icon: Icons.receipt_long_outlined,
+                        label: 'Activity Logs',
+                        colors: colors,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          context.push('/main/activity-logs');
+                        },
+                      ),
+                      _MoreTile(
+                        icon: Icons.person_outline,
+                        label: 'Profile',
+                        colors: colors,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          context.push('/main/profile');
+                        },
+                      ),
+                      _MoreTile(
+                        icon: Icons.settings_outlined,
+                        label: 'Settings',
+                        colors: colors,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          context.push('/main/settings');
+                        },
+                      ),
+                      _MoreTile(
+                        icon: themeState.mode == ThemeMode.dark
+                            ? Icons.light_mode_outlined
+                            : Icons.dark_mode_outlined,
+                        label: themeState.mode == ThemeMode.dark
+                            ? 'Light Mode'
+                            : 'Dark Mode',
+                        colors: colors,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          ref.read(themeProvider.notifier).toggleTheme(
+                                themeState.mode == ThemeMode.dark
+                                    ? ThemeMode.light
+                                    : ThemeMode.dark,
+                              );
+                        },
+                      ),
+                    ],
                   ),
-                  _MoreTile(
-                    icon: Icons.archive_outlined,
-                    label: 'Backlog',
-                    colors: colors,
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      context.push('/main/backlog');
-                    },
-                  ),
-                  _MoreTile(
-                    icon: Icons.leaderboard_outlined,
-                    label: 'Rankings',
-                    colors: colors,
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      context.push('/main/ranking');
-                    },
-                  ),
-                  _MoreTile(
-                    icon: Icons.receipt_long_outlined,
-                    label: 'Activity Logs',
-                    colors: colors,
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      context.push('/main/activity-logs');
-                    },
-                  ),
-                  _MoreTile(
-                    icon: Icons.credit_card_outlined,
-                    label: 'Plan',
-                    colors: colors,
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      context.push('/main/subscription');
-                    },
-                  ),
-                  _MoreTile(
-                    icon: Icons.local_offer_outlined,
-                    label: 'Pricing',
-                    colors: colors,
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      context.push('/main/fees');
-                    },
-                  ),
-                  _MoreTile(
-                    icon: Icons.person_outline,
-                    label: 'Profile',
-                    colors: colors,
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      context.push('/main/profile');
-                    },
-                  ),
-                  _MoreTile(
-                    icon: Icons.settings_outlined,
-                    label: 'Settings',
-                    colors: colors,
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      context.push('/main/settings');
-                    },
-                  ),
-                  _MoreTile(
-                    icon: themeState.mode == ThemeMode.dark
-                        ? Icons.light_mode_outlined
-                        : Icons.dark_mode_outlined,
-                    label: themeState.mode == ThemeMode.dark
-                        ? 'Light Mode'
-                        : 'Dark Mode',
-                    colors: colors,
-                    onTap: () {
-                      Navigator.of(sheetContext).pop();
-                      ref.read(themeProvider.notifier).toggleTheme(
-                            themeState.mode == ThemeMode.dark
-                                ? ThemeMode.light
-                                : ThemeMode.dark,
-                          );
-                    },
-                  ),
+                  const SizedBox(height: 8),
                 ],
               ),
-              const SizedBox(height: 8),
-            ],
+            ),
           ),
         );
       },
@@ -1118,6 +1320,30 @@ class _DrawerTile extends StatelessWidget {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Section label used inside the "More" bottom sheet — same treatment as
+/// the drawer's `_DrawerSectionLabel` so both surfaces read identically.
+class _MoreSectionLabel extends StatelessWidget {
+  final String label;
+  const _MoreSectionLabel(this.label);
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppTheme.colors;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 14, 14, 4),
+      child: Text(
+        label.toUpperCase(),
+        style: TextStyle(
+          fontSize: 10.5,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 1.1,
+          color: colors.textSecondary.withValues(alpha: 0.75),
         ),
       ),
     );

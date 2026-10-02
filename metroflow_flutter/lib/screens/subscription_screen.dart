@@ -731,6 +731,19 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
                   maxRecordingDuration: plan.maxRecordingDuration,
                   maxRecordingStorage: plan.maxRecordingStorage,
                   maxTeamMembers: plan.maxTeamMembers,
+                  paymentLinksEnabled: plan.paymentLinksEnabled,
+                  maxPaymentLinks: plan.maxPaymentLinks,
+                  paymentLinkFeeDiscountPercent: plan.paymentLinkFeeDiscountPercent,
+                  invoicesEnabled: plan.invoicesEnabled,
+                  maxInvoicesPerMonth: plan.maxInvoicesPerMonth,
+                  invoiceFeeDiscountPercent: plan.invoiceFeeDiscountPercent,
+                  aiCreditDiscountPercent: plan.aiCreditDiscountPercent,
+                  storeEnabled: plan.storeEnabled,
+                  maxStoreProducts: plan.maxStoreProducts,
+                  storeFeeDiscountPercent: plan.storeFeeDiscountPercent,
+                  recurringEnabled: plan.recurringEnabled,
+                  maxSubscriptionPlans: plan.maxSubscriptionPlans,
+                  subscriptionFeeDiscountPercent: plan.subscriptionFeeDiscountPercent,
                 ),
                 if (action != null) ...[
                   const SizedBox(height:16),
@@ -1138,6 +1151,21 @@ class _LimitGrid extends StatelessWidget {
   final int? maxRecordingDuration;
   final int? maxRecordingStorage;
   final int maxTeamMembers;
+  // Revenue feature knobs (passed from Plan cards; null hides the row)
+  final bool paymentLinksEnabled;
+  final int? maxPaymentLinks;
+  final double? paymentLinkFeeDiscountPercent;
+  final bool invoicesEnabled;
+  final int? maxInvoicesPerMonth;
+  final double? invoiceFeeDiscountPercent;
+  final double? aiCreditDiscountPercent;
+  // Daily-use business revenue feature knobs (Storefront / Recurring Billing)
+  final bool storeEnabled;
+  final int? maxStoreProducts;
+  final double? storeFeeDiscountPercent;
+  final bool recurringEnabled;
+  final int? maxSubscriptionPlans;
+  final double? subscriptionFeeDiscountPercent;
 
   const _LimitGrid({
     required this.maxMeetingDuration,
@@ -1145,7 +1173,23 @@ class _LimitGrid extends StatelessWidget {
     required this.maxRecordingDuration,
     required this.maxRecordingStorage,
     required this.maxTeamMembers,
+    this.paymentLinksEnabled = false,
+    this.maxPaymentLinks,
+    this.paymentLinkFeeDiscountPercent,
+    this.invoicesEnabled = false,
+    this.maxInvoicesPerMonth,
+    this.invoiceFeeDiscountPercent,
+    this.aiCreditDiscountPercent,
+    this.storeEnabled = false,
+    this.maxStoreProducts,
+    this.storeFeeDiscountPercent,
+    this.recurringEnabled = false,
+    this.maxSubscriptionPlans,
+    this.subscriptionFeeDiscountPercent,
   });
+
+  static String _trimPct(double v) =>
+      v.truncateToDouble() == v ? v.toStringAsFixed(0) : v.toStringAsFixed(1);
 
   @override
   Widget build(BuildContext context) {
@@ -1159,6 +1203,34 @@ class _LimitGrid extends StatelessWidget {
       ('Storage', fmt(maxRecordingStorage, ' MB')),
       ('Team size', maxTeamMembers > 9999 ? 'Unlimited' : '$maxTeamMembers'),
     ];
+    if (paymentLinksEnabled) {
+      limits.add(('Payment links', fmt(maxPaymentLinks, '')));
+      if (paymentLinkFeeDiscountPercent != null &&
+          paymentLinkFeeDiscountPercent! > 0) {
+        limits.add(('Link fee discount', '${_trimPct(paymentLinkFeeDiscountPercent!)}%'));
+      }
+    }
+    if (invoicesEnabled) {
+      limits.add(('Invoices', fmt(maxInvoicesPerMonth, '/mo')));
+      if (invoiceFeeDiscountPercent != null && invoiceFeeDiscountPercent! > 0) {
+        limits.add(('Invoice fee discount', '${_trimPct(invoiceFeeDiscountPercent!)}%'));
+      }
+    }
+    if (storeEnabled) {
+      limits.add(('Store products', fmt(maxStoreProducts, '')));
+      if (storeFeeDiscountPercent != null && storeFeeDiscountPercent! > 0) {
+        limits.add(('Store fee discount', '${_trimPct(storeFeeDiscountPercent!)}%'));
+      }
+    }
+    if (recurringEnabled) {
+      limits.add(('Subscription plans', fmt(maxSubscriptionPlans, '')));
+      if (subscriptionFeeDiscountPercent != null && subscriptionFeeDiscountPercent! > 0) {
+        limits.add(('Recurring fee discount', '${_trimPct(subscriptionFeeDiscountPercent!)}%'));
+      }
+    }
+    if (aiCreditDiscountPercent != null && aiCreditDiscountPercent! > 0) {
+      limits.add(('AI credit packs', '${_trimPct(aiCreditDiscountPercent!)}% off'));
+    }
 
     return Column(
       children: limits.map((entry) {

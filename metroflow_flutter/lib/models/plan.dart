@@ -20,6 +20,21 @@ class Plan {
   final bool breakoutRoomsEnabled;
   final bool virtualBackgrounds;
   final bool liveCaptions;
+  // Admin-configured revenue feature knobs (Payment Links / Invoices / AI credits)
+  final bool paymentLinksEnabled;
+  final int? maxPaymentLinks;
+  final double? paymentLinkFeeDiscountPercent;
+  final double? aiCreditDiscountPercent;
+  final bool invoicesEnabled;
+  final int? maxInvoicesPerMonth;
+  final double? invoiceFeeDiscountPercent;
+  // Daily-use business revenue features (Storefront / Recurring Billing)
+  final bool storeEnabled;
+  final int? maxStoreProducts;
+  final double? storeFeeDiscountPercent;
+  final bool recurringEnabled;
+  final int? maxSubscriptionPlans;
+  final double? subscriptionFeeDiscountPercent;
 
   Plan({
     required this.id,
@@ -42,6 +57,19 @@ class Plan {
     this.breakoutRoomsEnabled = false,
     this.virtualBackgrounds = false,
     this.liveCaptions = false,
+    this.paymentLinksEnabled = true,
+    this.maxPaymentLinks,
+    this.paymentLinkFeeDiscountPercent,
+    this.aiCreditDiscountPercent,
+    this.invoicesEnabled = true,
+    this.maxInvoicesPerMonth,
+    this.invoiceFeeDiscountPercent,
+    this.storeEnabled = true,
+    this.maxStoreProducts,
+    this.storeFeeDiscountPercent,
+    this.recurringEnabled = true,
+    this.maxSubscriptionPlans,
+    this.subscriptionFeeDiscountPercent,
   });
 
   factory Plan.fromJson(Map<String, dynamic> json) {
@@ -69,6 +97,19 @@ class Plan {
       breakoutRoomsEnabled: json['breakout_rooms_enabled'] == true,
       virtualBackgrounds: json['virtual_backgrounds'] == true,
       liveCaptions: json['live_captions'] == true,
+      paymentLinksEnabled: json['payment_links_enabled'] != false,
+      maxPaymentLinks: _optionalInt(json['max_payment_links']),
+      paymentLinkFeeDiscountPercent: _optionalDouble(json['payment_link_fee_discount_percent']),
+      aiCreditDiscountPercent: _optionalDouble(json['ai_credit_discount_percent']),
+      invoicesEnabled: json['invoices_enabled'] != false,
+      maxInvoicesPerMonth: _optionalInt(json['max_invoices_per_month']),
+      invoiceFeeDiscountPercent: _optionalDouble(json['invoice_fee_discount_percent']),
+      storeEnabled: json['store_enabled'] != false,
+      maxStoreProducts: _optionalInt(json['max_store_products']),
+      storeFeeDiscountPercent: _optionalDouble(json['store_fee_discount_percent']),
+      recurringEnabled: json['recurring_enabled'] != false,
+      maxSubscriptionPlans: _optionalInt(json['max_subscription_plans']),
+      subscriptionFeeDiscountPercent: _optionalDouble(json['subscription_fee_discount_percent']),
     );
   }
 
@@ -76,6 +117,12 @@ class Plan {
     if (value == null) return null;
     if (value is num) return value.toInt();
     return int.tryParse(value.toString());
+  }
+
+  static double? _optionalDouble(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toDouble();
+    return double.tryParse(value.toString());
   }
 
   Map<String, dynamic> toJson() {

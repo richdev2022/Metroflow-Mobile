@@ -5,13 +5,15 @@ import 'package:go_router/go_router.dart';
 import '../providers/auth_provider.dart';
 import '../theme/app_theme.dart';
 
-/// Revamped onboarding: a coherent 5-slide flow with real imagery.
+/// Revamped onboarding: a tight 5-slide flow with real imagery that
+/// summarizes the whole business platform.
 ///
 /// 1. All your work in one place — tasks, projects, team
 /// 2. Meet, call & chat — video meetings, calls, team chat
 /// 3. Payroll & money moves — salaries, transfers, wallet & virtual accounts
-/// 4. Meet MetricAi — your AI business copilot
-/// 5. Built for growing businesses — KYC, security, insights
+/// 4. Get paid, every way — payment links, smart invoices, storefront,
+///    recurring billing
+/// 5. Smarter. Safer. — MetricAi copilot, credit packs, KYC/OTP/PIN security
 ///
 /// Real photos (from the website's brand library) sit inside layered 3D
 /// cards; every slide gradient stays inside the indigo→violet brand family.
@@ -32,7 +34,7 @@ class OnboardingScreen extends ConsumerStatefulWidget {
 class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   PageController? _pageController;
   int _currentPage = 0;
-  static const int _pageCount = 5;
+  static const int _pageCount = 7;
 
   @override
   void initState() {
@@ -304,31 +306,31 @@ const List<_SlideData> _slides = [
     ],
   ),
   _SlideData(
-    icon: Icons.auto_awesome_rounded,
-    gradient: [Color(0xFF2563EB), Color(0xFF7C3AED)],
-    miniIcons: [Icons.chat_bubble_rounded, Icons.bolt_rounded, Icons.summarize_rounded],
-    photo: 'assets/images/onboarding/ai.jpg',
-    title: 'Meet MetricAi',
+    icon: Icons.storefront_rounded,
+    gradient: [Color(0xFF0EA5E9), Color(0xFF4F46E5)],
+    miniIcons: [Icons.link_rounded, Icons.receipt_long_rounded, Icons.autorenew_rounded],
+    photo: 'assets/images/onboarding/growth.jpg',
+    title: 'Get paid, every way',
     subtitle:
-        'Your AI business copilot. Draft ideas, summarise meetings into action items and get instant answers about your business.',
+        'Payment links, smart invoices, your own storefront and recurring billing — money lands in your wallet the moment clients pay.',
     bullets: [
-      (Icons.summarize_rounded, 'Meeting notes & summaries'),
-      (Icons.bolt_rounded, 'Instant business insights'),
-      (Icons.chat_bubble_rounded, 'Ask anything, get answers'),
+      (Icons.link_rounded, 'Payment links & smart invoices'),
+      (Icons.storefront_rounded, 'Your own storefront'),
+      (Icons.autorenew_rounded, 'Recurring billing on autopilot'),
     ],
   ),
   _SlideData(
-    icon: Icons.shield_rounded,
+    icon: Icons.auto_awesome_rounded,
     gradient: [Color(0xFF4F46E5), Color(0xFF2563EB)],
-    miniIcons: [Icons.verified_user_rounded, Icons.insights_rounded, Icons.lock_rounded],
-    photo: 'assets/images/onboarding/growth.jpg',
-    title: 'Built for growing businesses',
+    miniIcons: [Icons.chat_bubble_rounded, Icons.verified_user_rounded, Icons.bolt_rounded],
+    photo: 'assets/images/onboarding/ai.jpg',
+    title: 'Smarter. Safer.',
     subtitle:
-        'KYC-verified payments, bank-grade security and insight into how your team performs — ready as you scale.',
+        'MetricAi drafts ideas, summarises meetings into action items and answers your questions — while KYC, OTP and PIN protection keep every kobo safe.',
     bullets: [
-      (Icons.verified_user_rounded, 'KYC & secure transactions'),
-      (Icons.insights_rounded, 'Performance insights'),
-      (Icons.lock_rounded, 'OTP & PIN protection'),
+      (Icons.summarize_rounded, 'AI meeting notes & insights'),
+      (Icons.bolt_rounded, 'MetricAi credit packs'),
+      (Icons.verified_user_rounded, 'KYC, OTP & PIN protection'),
     ],
   ),
 ];
