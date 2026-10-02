@@ -580,6 +580,52 @@ class ApiService {
     return await _dio.delete('/invoices/$id');
   }
 
+  // ---- Bills Hub (daily-use revenue feature) --------------------------------
+  Future<Response> getBillsCatalog() async {
+    return await _dio.get('/bills/catalog');
+  }
+
+  Future<Response> getBills() async {
+    return await _dio.get('/bills');
+  }
+
+  Future<Response> payBill(Map<String, dynamic> payload) async {
+    return await _dio.post('/bills/pay', data: payload);
+  }
+
+  Future<Response> getBillDetail(String id) async {
+    return await _dio.get('/bills/$id');
+  }
+
+  // ---- Savings Vaults (daily-use revenue feature) ---------------------------
+  Future<Response> getSavingsVaults() async {
+    return await _dio.get('/savings/vaults');
+  }
+
+  Future<Response> createSavingsVault(Map<String, dynamic> payload) async {
+    return await _dio.post('/savings/vaults', data: payload);
+  }
+
+  Future<Response> getSavingsVaultDetail(String id) async {
+    return await _dio.get('/savings/vaults/$id');
+  }
+
+  Future<Response> updateSavingsVault(String id, Map<String, dynamic> payload) async {
+    return await _dio.put('/savings/vaults/$id', data: payload);
+  }
+
+  Future<Response> deleteSavingsVault(String id) async {
+    return await _dio.delete('/savings/vaults/$id');
+  }
+
+  Future<Response> depositToVault(String id, Map<String, dynamic> payload) async {
+    return await _dio.post('/savings/vaults/$id/deposit', data: payload);
+  }
+
+  Future<Response> withdrawFromVault(String id, Map<String, dynamic> payload) async {
+    return await _dio.post('/savings/vaults/$id/withdraw', data: payload);
+  }
+
 
   /// POST /wallet/fund/card. The backend resolves the active payment provider
   /// itself — the client MUST NOT send a `provider` field (it 400s for

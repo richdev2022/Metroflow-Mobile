@@ -28,6 +28,13 @@ class Plan {
   final bool invoicesEnabled;
   final int? maxInvoicesPerMonth;
   final double? invoiceFeeDiscountPercent;
+  // Daily-use revenue features (Bills Hub / Savings Vaults)
+  final bool billsEnabled;
+  final int? maxBillsPerDay;
+  final double? billFeeDiscountPercent;
+  final bool savingsEnabled;
+  final int? maxSavingsVaults;
+  final double? savingsBreakFeeDiscountPercent;
 
   Plan({
     required this.id,
@@ -57,6 +64,12 @@ class Plan {
     this.invoicesEnabled = true,
     this.maxInvoicesPerMonth,
     this.invoiceFeeDiscountPercent,
+    this.billsEnabled = true,
+    this.maxBillsPerDay,
+    this.billFeeDiscountPercent,
+    this.savingsEnabled = true,
+    this.maxSavingsVaults,
+    this.savingsBreakFeeDiscountPercent,
   });
 
   factory Plan.fromJson(Map<String, dynamic> json) {
@@ -91,6 +104,12 @@ class Plan {
       invoicesEnabled: json['invoices_enabled'] != false,
       maxInvoicesPerMonth: _optionalInt(json['max_invoices_per_month']),
       invoiceFeeDiscountPercent: _optionalDouble(json['invoice_fee_discount_percent']),
+      billsEnabled: json['bills_enabled'] != false,
+      maxBillsPerDay: _optionalInt(json['max_bills_per_day']),
+      billFeeDiscountPercent: _optionalDouble(json['bill_fee_discount_percent']),
+      savingsEnabled: json['savings_enabled'] != false,
+      maxSavingsVaults: _optionalInt(json['max_savings_vaults']),
+      savingsBreakFeeDiscountPercent: _optionalDouble(json['savings_break_fee_discount_percent']),
     );
   }
 

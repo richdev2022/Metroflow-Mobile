@@ -60,6 +60,8 @@ import 'screens/fees_screen.dart';
 import 'screens/payment_links_screen.dart';
 import 'screens/ai_credits_screen.dart';
 import 'screens/invoices_screen.dart';
+import 'screens/bills_screen.dart';
+import 'screens/savings_screen.dart';
 import 'screens/activity_logs_screen.dart';
 import 'screens/board_screen.dart';
 import 'screens/meetings_screen.dart';
@@ -441,6 +443,14 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
             GoRoute(
               path: 'invoices',
               builder: (context, state) => const InvoicesScreen(),
+            ),
+            GoRoute(
+              path: 'bills',
+              builder: (context, state) => const BillsScreen(),
+            ),
+            GoRoute(
+              path: 'savings',
+              builder: (context, state) => const SavingsScreen(),
             ),
             GoRoute(
               path: 'activity-logs',

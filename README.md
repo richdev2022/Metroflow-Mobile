@@ -28,14 +28,22 @@
    ```
 
 ### Features Implemented
-- ✅ Authentication (Login/Register)
+- ✅ Authentication (Login/Register + Google SSO)
 - ✅ KYC Verification flow (BVN/NIN + OTP)
 - ✅ Wallet Management (Personal & Business wallets)
 - ✅ Payroll & Employees
-- ✅ Transfers & History
+- ✅ Transfers (single, bulk & international) & History
+- ✅ **Payment Links** — create & share links, track payments
+- ✅ **Smart Invoices** — itemised invoices, share public checkout, track status
+- ✅ **MetricAi Credit Packs** — purchase AI credit top-ups from your wallet
+- ✅ **Bills Hub** — airtime, data, TV, electricity & betting top-ups from any wallet (PIN-verified)
+- ✅ **Savings Vaults** — goal-based vaults with daily/weekly/monthly auto-save & early-break fee on withdrawal
+- ✅ MetricAi chat, image generation & product documentation (GLM-powered)
+- ✅ Team workspace: tasks, board, backlog, ideas, epics, chat, calls & meetings
 - ✅ Profile & Settings
 - ✅ Theme Switching (Light/Dark/System)
 - ✅ Biometrics (Fingerprint/FaceID)
+- ✅ **7-slide onboarding** summarising the full feature set (work, meetings, money, get-paid, bills & savings, MetricAi, security)
 
 ### Project Structure
 ```

@@ -5,13 +5,16 @@ import 'package:go_router/go_router.dart';
 import '../providers/auth_provider.dart';
 import '../theme/app_theme.dart';
 
-/// Revamped onboarding: a coherent 5-slide flow with real imagery.
+/// Revamped onboarding: a coherent 7-slide flow with real imagery that
+/// summarizes the whole platform.
 ///
 /// 1. All your work in one place — tasks, projects, team
 /// 2. Meet, call & chat — video meetings, calls, team chat
 /// 3. Payroll & money moves — salaries, transfers, wallet & virtual accounts
-/// 4. Meet MetricAi — your AI business copilot
-/// 5. Built for growing businesses — KYC, security, insights
+/// 4. Get paid & grow — payment links, smart invoices, MetricAi credits
+/// 5. Bills & savings, sorted daily — airtime/data/TV/electricity + goal vaults
+/// 6. Meet MetricAi — your AI business copilot
+/// 7. Built for growing businesses — KYC, security, insights
 ///
 /// Real photos (from the website's brand library) sit inside layered 3D
 /// cards; every slide gradient stays inside the indigo→violet brand family.
@@ -32,7 +35,7 @@ class OnboardingScreen extends ConsumerStatefulWidget {
 class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   PageController? _pageController;
   int _currentPage = 0;
-  static const int _pageCount = 5;
+  static const int _pageCount = 7;
 
   @override
   void initState() {
@@ -301,6 +304,34 @@ const List<_SlideData> _slides = [
       (Icons.payments_rounded, 'One-click salary payouts'),
       (Icons.swap_horiz_rounded, 'Single & bulk transfers'),
       (Icons.account_balance_rounded, 'Wallets & virtual accounts'),
+    ],
+  ),
+  _SlideData(
+    icon: Icons.storefront_rounded,
+    gradient: [Color(0xFF0EA5E9), Color(0xFF4F46E5)],
+    miniIcons: [Icons.link_rounded, Icons.receipt_long_rounded, Icons.bolt_rounded],
+    photo: 'assets/images/onboarding/growth.jpg',
+    title: 'Get paid & grow',
+    subtitle:
+        'Share payment links, send smart invoices clients can pay online, and top up MetricAi credits when you need more power.',
+    bullets: [
+      (Icons.link_rounded, 'Payment links anyone can pay'),
+      (Icons.receipt_long_rounded, 'Smart invoices with checkout'),
+      (Icons.bolt_rounded, 'MetricAi credit packs'),
+    ],
+  ),
+  _SlideData(
+    icon: Icons.bolt_rounded,
+    gradient: [Color(0xFF4F46E5), Color(0xFF7C3AED)],
+    miniIcons: [Icons.smartphone_rounded, Icons.tv_rounded, Icons.savings_rounded],
+    photo: 'assets/images/onboarding/ai.jpg',
+    title: 'Bills & savings, sorted daily',
+    subtitle:
+        'Buy airtime, data, TV and electricity in seconds — then watch your savings vaults grow with automatic daily, weekly or monthly auto-save.',
+    bullets: [
+      (Icons.smartphone_rounded, 'Airtime, data, TV & electricity'),
+      (Icons.savings_rounded, 'Goal-based savings vaults'),
+      (Icons.autorenew_rounded, 'Auto-save on your schedule'),
     ],
   ),
   _SlideData(
