@@ -20,6 +20,8 @@ class _PaymentLinksScreenState extends State<PaymentLinksScreen> {
   List<Map<String, dynamic>> _links = [];
   bool _isLoading = true;
   bool _creating = false;
+  // When set, the link sheet edits this existing link instead of creating one.
+  Map<String, dynamic>? _editingLink;
 
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
@@ -87,7 +89,8 @@ class _PaymentLinksScreenState extends State<PaymentLinksScreen> {
     }
   }
 
-  Future<void> _createLink() async {
+  Future<void> _submitLink() async {
+    final editing = _editingLink;
     final title = _titleController.text.trim();
     if (title.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -103,22 +106,33 @@ class _PaymentLinksScreenState extends State<PaymentLinksScreen> {
     }
     setState(() => _creating = true);
     try {
-      await _api.createPaymentLink({
-        'title': title,
-        'description': _descriptionController.text.trim().isNotEmpty
-            ? _descriptionController.text.trim()
-            : null,
-        if (!custom) 'amount': amount,
-        'allow_custom_amount': custom,
-      });
-      if (!mounted) return;
-      Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Payment link created')));
-      _titleController.clear();
-      _descriptionController.clear();
-      _amountController.clear();
-      _allowCustomAmount = false;
+      if (editing != null) {
+        await _api.updatePaymentLink(editing['id'].toString(), {
+          'title': title,
+          // Empty string clears the description; backend COALESCEs null.
+          'description': _descriptionController.text.trim(),
+          if (!custom) 'amount': amount,
+          'allow_custom_amount': custom,
+        });
+        if (!mounted) return;
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Payment link updated')));
+      } else {
+        await _api.createPaymentLink({
+          'title': title,
+          'description': _descriptionController.text.trim().isNotEmpty
+              ? _descriptionController.text.trim()
+              : null,
+          if (!custom) 'amount': amount,
+          'allow_custom_amount': custom,
+        });
+        if (!mounted) return;
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Payment link created')));
+      }
+      _clearForm();
       await _fetchLinks();
     } catch (e) {
       if (mounted) {
@@ -129,6 +143,14 @@ class _PaymentLinksScreenState extends State<PaymentLinksScreen> {
     } finally {
       if (mounted) setState(() => _creating = false);
     }
+  }
+
+  void _clearForm() {
+    _titleController.clear();
+    _descriptionController.clear();
+    _amountController.clear();
+    _allowCustomAmount = false;
+    _editingLink = null;
   }
 
   Future<void> _toggleActive(Map<String, dynamic> link) async {
@@ -170,7 +192,21 @@ class _PaymentLinksScreenState extends State<PaymentLinksScreen> {
     } catch (_) {}
   }
 
-  void _openCreateSheet() {
+  void _openLinkSheet({Map<String, dynamic>? link}) {
+    _editingLink = link;
+    if (link != null) {
+      _titleController.text = link['title']?.toString() ?? '';
+      _descriptionController.text = link['description']?.toString() ?? '';
+      _amountController.text =
+          link['amount'] != null ? link['amount'].toString() : '';
+      _allowCustomAmount = link['allow_custom_amount'] == true;
+    } else {
+      _titleController.clear();
+      _descriptionController.clear();
+      _amountController.clear();
+      _allowCustomAmount = false;
+    }
+    final isEditing = link != null;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -186,7 +222,7 @@ class _PaymentLinksScreenState extends State<PaymentLinksScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Create payment link',
+              Text(isEditing ? 'Edit payment link' : 'Create payment link',
                   style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
@@ -227,14 +263,14 @@ class _PaymentLinksScreenState extends State<PaymentLinksScreen> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: _creating ? null : _createLink,
+                  onPressed: _creating ? null : _submitLink,
                   child: _creating
                       ? const SizedBox(
                           height: 20,
                           width: 20,
                           child: CircularProgressIndicator(
                               strokeWidth: 2, color: Colors.white))
-                      : const Text('Create link'),
+                      : Text(isEditing ? 'Save changes' : 'Create link'),
                 ),
               ),
             ],
@@ -256,7 +292,7 @@ class _PaymentLinksScreenState extends State<PaymentLinksScreen> {
         title: const Text('Payment Links'),
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _openCreateSheet,
+        onPressed: () => _openLinkSheet(),
         icon: const Icon(Icons.add_link),
         label: const Text('New Link'),
       ),
@@ -389,6 +425,12 @@ class _PaymentLinksScreenState extends State<PaymentLinksScreen> {
                                   ),
                                 ),
                                 const SizedBox(width: 8),
+                                IconButton(
+                                  tooltip: 'Edit link',
+                                  onPressed: () => _openLinkSheet(link: link),
+                                  icon: Icon(Icons.edit_outlined,
+                                      color: colors.textSecondary),
+                                ),
                                 IconButton(
                                   tooltip: isActive ? 'Pause' : 'Activate',
                                   onPressed: () => _toggleActive(link),
