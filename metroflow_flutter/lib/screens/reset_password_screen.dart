@@ -160,7 +160,7 @@ class _ResetPasswordScreenState extends ConsumerState<ResetPasswordScreen> {
             onBack: () => context.pop(),
             children: [
               const SizedBox(height: 6),
-              AuthBrandHeader(
+              const AuthBrandHeader(
                 title: 'Set new password',
                 subtitle: 'Create a new password for your account.',
               ),

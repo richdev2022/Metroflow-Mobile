@@ -866,24 +866,24 @@ class _DashboardSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      physics: const NeverScrollableScrollPhysics(),
+    return const SingleChildScrollView(
+      physics: NeverScrollableScrollPhysics(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
             child: ShimmerBox(
               width: double.infinity,
               height: 208,
               radius: 24,
             ),
           ),
-          const SizedBox(height: 22),
+          SizedBox(height: 22),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: EdgeInsets.symmetric(horizontal: 16),
             child: Row(
-              children: const [
+              children: [
                 ShimmerBox(width: 84, height: 96, radius: 18),
                 SizedBox(width: 12),
                 ShimmerBox(width: 84, height: 96, radius: 18),
@@ -892,11 +892,11 @@ class _DashboardSkeleton extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(height: 24),
+          SizedBox(height: 24),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: EdgeInsets.symmetric(horizontal: 16),
             child: Column(
-              children: const [
+              children: [
                 Row(
                   children: [
                     Expanded(child: ShimmerBox(height: 118, radius: 18)),
@@ -915,11 +915,11 @@ class _DashboardSkeleton extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(height: 24),
+          SizedBox(height: 24),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: EdgeInsets.symmetric(horizontal: 16),
             child: Column(
-              children: const [
+              children: [
                 SkeletonCard(),
                 SkeletonCard(),
               ],

@@ -4,6 +4,21 @@ import 'package:go_router/go_router.dart';
 import '../services/api.dart';
 import '../theme/app_theme.dart';
 
+/// Safely extracts `payload['data'][key]` as a List regardless of the
+/// decoded-JSON runtime type. Never throws, never relies on `as` inside
+/// `&&` chains (a `bool && x as List?` precedence bug broke the release
+/// build once — this helper makes that class of bug impossible).
+List<dynamic> _dataList(dynamic payload, String key) {
+  if (payload is Map) {
+    final dynamic data = payload['data'];
+    if (data is Map) {
+      final dynamic raw = data[key];
+      if (raw is List) return raw;
+    }
+  }
+  return const <dynamic>[];
+}
+
 /// Role & Permission management for the business workspace.
 ///
 /// Mirrors the web app's /team/roles page and the platform-admin RBAC:
@@ -94,16 +109,18 @@ class _TeamRolesScreenState extends State<TeamRolesScreen> {
       final permData = results[1].data;
       final meData = results[2].data;
 
-      final roles = ((rolesData is Map && rolesData['data']?['roles']) as List<dynamic>? ?? [])
-          .map((r) => _Role.fromJson(r as Map<String, dynamic>))
+      final roles = _dataList(rolesData, 'roles')
+          .whereType<Map>()
+          .map((r) => _Role.fromJson(Map<String, dynamic>.from(r)))
           .toList();
 
-      final catalog = ((permData is Map && permData['data']?['permissions']) as List<dynamic>? ?? [])
-          .map((p) => _Permission.fromJson(p as Map<String, dynamic>))
+      final catalog = _dataList(permData, 'permissions')
+          .whereType<Map>()
+          .map((p) => _Permission.fromJson(Map<String, dynamic>.from(p)))
           .toList();
 
       // '*' means the caller is owner/admin with full access.
-      final myPerms = (meData is Map && meData['data']?['permissions'] as List<dynamic>? ?? [])
+      final myPerms = _dataList(meData, 'permissions')
           .map((p) => p.toString())
           .toList();
       final wildcard = meData is Map && meData['data']?['wildcard'] == true;

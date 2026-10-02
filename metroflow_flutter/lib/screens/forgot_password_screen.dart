@@ -113,7 +113,7 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
             onBack: () => context.pop(),
             children: [
               const SizedBox(height: 6),
-              AuthBrandHeader(
+              const AuthBrandHeader(
                 title: 'Forgot password',
                 subtitle:
                     'Enter your email address and we\u2019ll send you a verification code to reset your password.',

@@ -631,7 +631,7 @@ class AuthNotifier extends Notifier<AuthState> {
     try {
       final sessionToken = state.token ?? await _storageService.getToken();
       if (sessionToken == null || sessionToken.isEmpty) {
-        return BiometricResult(
+        return const BiometricResult(
           success: false,
           error: 'Sign in with your password first to enable biometric unlock.',
         );
@@ -700,7 +700,7 @@ class AuthNotifier extends Notifier<AuthState> {
       );
     } catch (e) {
       debugPrint('Failed to enable biometrics: $e');
-      return BiometricResult(success: false, error: 'Failed to enable biometric login');
+      return const BiometricResult(success: false, error: 'Failed to enable biometric login');
     }
   }
 
@@ -868,7 +868,7 @@ class AuthNotifier extends Notifier<AuthState> {
       }
     } catch (e) {
       debugPrint('Biometric login failed: $e');
-      return BiometricLoginResult(success: false, error: 'An error occurred during biometric authentication');
+      return const BiometricLoginResult(success: false, error: 'An error occurred during biometric authentication');
     }
   }
 

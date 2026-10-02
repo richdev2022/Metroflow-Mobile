@@ -1012,7 +1012,7 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
       titleSpacing: 8,
       title: Row(
         children: [
-          MetricAiGlowLogo(radius: 17),
+          const MetricAiGlowLogo(radius: 17),
           const SizedBox(width: 10),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1481,7 +1481,7 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         backgroundColor: AppTheme.colors.surface,
-        icon: Icon(Icons.speed_rounded, color: AppColors.warning, size: 34),
+        icon: const Icon(Icons.speed_rounded, color: AppColors.warning, size: 34),
         title: const Text('Daily limit reached'),
         content: Text(
           detail.isNotEmpty
@@ -1521,7 +1521,7 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          MetricAiGlowLogo(radius: 40),
+                          const MetricAiGlowLogo(radius: 40),
                           const SizedBox(height: 16),
                           Text(
                             _helpMode && !_available
@@ -1536,7 +1536,7 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
                           const SizedBox(height: 6),
                           Text(
                             _helpMode && !_available
-                                ? 'Ask me anything about Metricorex — plans, wallets,\ntransfers or meetings. Type \"Talk to a human\" for support.'
+                                ? 'Ask me anything about Metricorex — plans, wallets,\ntransfers or meetings. Type "Talk to a human" for support.'
                                 : 'Ask me anything about Metricorex — or anything else.\nTry "Generate a logo for my bakery".',
                             textAlign: TextAlign.center,
                             style: TextStyle(
@@ -1754,8 +1754,8 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
             Container(
               width: 44,
               height: 44,
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                   colors: [Color(0xFF4F46E5), Color(0xFF2563EB)],

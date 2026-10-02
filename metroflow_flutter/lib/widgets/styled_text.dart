@@ -50,7 +50,7 @@ List<_ParsedSpan> _parse(String input) {
         }
         if (close > i + 1) {
           flush();
-          spans.add(_ParsedSpan(kind!, src.substring(i + 1, close)));
+          spans.add(_ParsedSpan(kind, src.substring(i + 1, close)));
           i = close + 1;
           continue;
         }

@@ -23,7 +23,6 @@ class _StoreScreenState extends State<StoreScreen>
   List<Map<String, dynamic>> _products = [];
   List<Map<String, dynamic>> _orders = [];
   Map<String, dynamic>? _stats;
-  Map<String, dynamic>? _storeInfo;
   bool _isLoading = true;
   bool _busy = false;
 
@@ -64,9 +63,6 @@ class _StoreScreenState extends State<StoreScreen>
         _products = (p['products'] as List<dynamic>? ?? [])
             .map((e) => Map<String, dynamic>.from(e as Map))
             .toList();
-        _storeInfo = p['store'] == null
-            ? null
-            : Map<String, dynamic>.from(p['store'] as Map);
         _orders = (o['orders'] as List<dynamic>? ?? [])
             .map((e) => Map<String, dynamic>.from(e as Map))
             .toList();
