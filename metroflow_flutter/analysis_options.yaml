@@ -3,6 +3,13 @@ include: package:flutter_lints/flutter.yaml
 analyzer:
   exclude:
     - third_party/**
+    # Dormant personal-mode screens (Bills Hub / Savings Vaults). They are
+    # deliberately NOT imported anywhere (not compiled by kernel_snapshot —
+    # they never ship in the release build) and reference ApiService methods
+    # for backend endpoints that are dormant too (server/features/personal).
+    # Remove from this exclude ONLY when reviving personal mode, together
+    # with the revived backend endpoints.
+    - lib/features/personal/**
 
 linter:
   rules:

@@ -188,8 +188,8 @@ class UpgradeDialog extends StatelessWidget {
                             colors: [AppColors.primary, Color(0xFF7C3AED)],
                           ),
                           borderRadius: BorderRadius.circular(999),
-                          boxShadow: [
-                            const BoxShadow(
+                          boxShadow: const [
+                            BoxShadow(
                               color: Color(0x592563EB),
                               blurRadius: 16,
                               offset: Offset(0, 6),

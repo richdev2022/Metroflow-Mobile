@@ -291,7 +291,7 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('This call is protected. Enter the password to join.'),
+            const Text('This call is protected. Enter the password to join.'),
             const SizedBox(height: 12),
             TextField(
               controller: controller,
@@ -503,9 +503,9 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
                                       icon: _filterType == 'video'
                                           ? Icons.videocam_off_outlined
                                           : Icons.call_end_outlined,
-                                      title: 'No ${_filterType} calls',
+                                      title: 'No $_filterType calls',
                                       subtitle:
-                                          'You have no ${_filterType} calls in your history yet.',
+                                          'You have no $_filterType calls in your history yet.',
                                       tint: _filterType == 'video'
                                           ? colors.primary
                                           : colors.success,

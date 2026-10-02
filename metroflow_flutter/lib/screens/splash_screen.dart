@@ -141,17 +141,17 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
         child: Stack(
           children: [
             // Decorative soft circles.
-            Positioned(
+            const Positioned(
               right: -70,
               top: -70,
               child: _SoftCircle(size: 220, alpha: 0.10),
             ),
-            Positioned(
+            const Positioned(
               left: -60,
               bottom: 90,
               child: _SoftCircle(size: 180, alpha: 0.08),
             ),
-            Positioned(
+            const Positioned(
               right: 40,
               bottom: -50,
               child: _SoftCircle(size: 140, alpha: 0.07),

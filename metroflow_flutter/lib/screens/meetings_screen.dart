@@ -748,7 +748,7 @@ class _MeetingCard extends StatelessWidget {
 class _MeetingDialog extends StatefulWidget {
   final List<User> teamMembers;
   final Meeting? meeting;
-  /** Pre-fill the start time (e.g. a tapped empty calendar day). */
+  /// Pre-fill the start time (e.g. a tapped empty calendar day).
   final DateTime? initialDate;
   final Function(Meeting) onSaved;
 
@@ -1162,7 +1162,7 @@ class _MeetingDialogState extends State<_MeetingDialog> {
                 if (widget.meeting == null && !_isInstant) ...[
                   const SizedBox(height: 16),
                   DropdownButtonFormField<String>(
-                    value: _frequency,
+                    initialValue: _frequency,
                     decoration: const InputDecoration(
                       labelText: 'Repeat',
                       prefixIcon: Icon(Icons.repeat),
