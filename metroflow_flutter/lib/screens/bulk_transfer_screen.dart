@@ -38,6 +38,10 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
   bool _loading = true;
   bool _showOtpModal = false;
   bool _submitting = false;
+  /// Live OTP-for-transactions configuration — re-checked when the screen
+  /// loads and again at submit time. When the server has OTP verification
+  /// switched off, the "Request OTP" step is skipped entirely.
+  bool _otpRequired = true;
   String _bankSearchQuery = '';
   final _bankSearchController = TextEditingController();
   int _otpCountdown = 30;
@@ -56,7 +60,22 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
   void initState() {
     super.initState();
     _fetchData();
+    _fetchOtpRequirement();
     WidgetsBinding.instance.addPostFrameCallback((_) => _ensurePinSetup());
+  }
+
+  /// Reads GET /settings/otp-enabled so the submit flow mirrors the current
+  /// server-side configuration (OTP step only when actually enabled).
+  Future<void> _fetchOtpRequirement() async {
+    try {
+      final response = await ApiService().getOtpEnabled();
+      final data = response.data;
+      if (mounted && data is Map && data['success'] == true) {
+        setState(() => _otpRequired = data['otpEnabled'] as bool? ?? true);
+      }
+    } catch (e) {
+      debugPrint('OTP setting check failed: $e');
+    }
   }
 
   /// Checks GET /settings/otp-enabled; when no PIN exists yet, shows the
@@ -357,6 +376,19 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
     setState(() => _submitting = true);
     try {
       final api = ApiService();
+
+      // Re-check the live configuration at submit time — the cached value
+      // may be stale (e.g. toggled on the web or another device).
+      final otpStatus = await api.getOtpEnabled();
+      final statusData = otpStatus.data;
+      if (mounted && statusData is Map && statusData['success'] == true) {
+        setState(() => _otpRequired = statusData['otpEnabled'] as bool? ?? true);
+      }
+      if (!_otpRequired) {
+        await _handleInitiateTransfer();
+        return;
+      }
+
       await api.requestTransferOtp(walletId: wallet['id'], otpMethod: _selectedOtpMethod);
       if (mounted) {
         setState(() => _showOtpModal = true);
@@ -375,6 +407,16 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
     }
   }
 
+  /// The screen's single submit entry point: requests an OTP first when the
+  /// configuration requires it, otherwise initiates the transfer directly.
+  void _handleSubmitTransfer() {
+    if (_otpRequired) {
+      _handleRequestOtp();
+    } else {
+      _handleInitiateTransfer();
+    }
+  }
+
   Future<void> _handleInitiateTransfer() async {
     final wallet = _selectedWallet == 'business' ? _wallets['business_wallet'] : _wallets['user_wallet'];
     if (wallet == null) {
@@ -386,7 +428,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
       return;
     }
 
-    if (_otp.length != 6) {
+    if (_otpRequired && _otp.length != 6) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Please enter a valid 6-digit OTP')),
@@ -466,7 +508,8 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
           // NGN and would reject a USD wallet with a currency mismatch.
           'currency': wallet['currency'] ?? 'NGN',
           'remark': recipient.remark,
-          'otp': _otp,
+          // Only send the OTP when the configuration requires one.
+          if (_otpRequired) 'otp': _otp,
           'pin': _pin,
           'wallet_id': wallet['id'],
         };
@@ -514,7 +557,8 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
         
         final payload = {
           'type': _transferType == 'salary' ? 'Salary' : 'Epic',
-          'otp': _otp,
+          // Only send the OTP when the configuration requires one.
+          if (_otpRequired) 'otp': _otp,
           'pin': _pin,
           'source_wallet_id': wallet['id'],
           'data': {
@@ -810,14 +854,14 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
-                      onPressed: _selectedWalletData == null || _submitting ? null : _handleRequestOtp,
+                      onPressed: _selectedWalletData == null || _submitting ? null : _handleSubmitTransfer,
                       child: _submitting
                           ? const SizedBox(
                               height: 20,
                               width: 20,
                               child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                             )
-                          : const Text('Request OTP'),
+                          : Text(_otpRequired ? 'Request OTP' : 'Confirm Transfer'),
                     ),
                   ),
                   const SizedBox(height: 100),
