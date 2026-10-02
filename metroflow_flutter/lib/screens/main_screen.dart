@@ -611,6 +611,22 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                         context.push('/main/invoices');
                       },
                     ),
+                    _DrawerTile(
+                      icon: Icons.bolt_outlined,
+                      title: 'Bills',
+                      colors: colors,
+                      onTap: () async {
+                        context.push('/main/bills');
+                      },
+                    ),
+                    _DrawerTile(
+                      icon: Icons.savings_outlined,
+                      title: 'Savings',
+                      colors: colors,
+                      onTap: () async {
+                        context.push('/main/savings');
+                      },
+                    ),
                     const _DrawerSectionLabel('Account'),
                     _DrawerTile(
                       icon: Icons.person_outline,

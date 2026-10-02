@@ -738,6 +738,12 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
                   maxInvoicesPerMonth: plan.maxInvoicesPerMonth,
                   invoiceFeeDiscountPercent: plan.invoiceFeeDiscountPercent,
                   aiCreditDiscountPercent: plan.aiCreditDiscountPercent,
+                  billsEnabled: plan.billsEnabled,
+                  maxBillsPerDay: plan.maxBillsPerDay,
+                  billFeeDiscountPercent: plan.billFeeDiscountPercent,
+                  savingsEnabled: plan.savingsEnabled,
+                  maxSavingsVaults: plan.maxSavingsVaults,
+                  savingsBreakFeeDiscountPercent: plan.savingsBreakFeeDiscountPercent,
                 ),
                 if (action != null) ...[
                   const SizedBox(height:16),
@@ -1153,6 +1159,13 @@ class _LimitGrid extends StatelessWidget {
   final int? maxInvoicesPerMonth;
   final double? invoiceFeeDiscountPercent;
   final double? aiCreditDiscountPercent;
+  // Daily-use revenue feature knobs (Bills Hub / Savings Vaults)
+  final bool billsEnabled;
+  final int? maxBillsPerDay;
+  final double? billFeeDiscountPercent;
+  final bool savingsEnabled;
+  final int? maxSavingsVaults;
+  final double? savingsBreakFeeDiscountPercent;
 
   const _LimitGrid({
     required this.maxMeetingDuration,
@@ -1167,6 +1180,12 @@ class _LimitGrid extends StatelessWidget {
     this.maxInvoicesPerMonth,
     this.invoiceFeeDiscountPercent,
     this.aiCreditDiscountPercent,
+    this.billsEnabled = false,
+    this.maxBillsPerDay,
+    this.billFeeDiscountPercent,
+    this.savingsEnabled = false,
+    this.maxSavingsVaults,
+    this.savingsBreakFeeDiscountPercent,
   });
 
   static String _trimPct(double v) =>
@@ -1195,6 +1214,18 @@ class _LimitGrid extends StatelessWidget {
       limits.add(('Invoices', fmt(maxInvoicesPerMonth, '/mo')));
       if (invoiceFeeDiscountPercent != null && invoiceFeeDiscountPercent! > 0) {
         limits.add(('Invoice fee discount', '${_trimPct(invoiceFeeDiscountPercent!)}%'));
+      }
+    }
+    if (billsEnabled) {
+      limits.add(('Bills / day', fmt(maxBillsPerDay, '')));
+      if (billFeeDiscountPercent != null && billFeeDiscountPercent! > 0) {
+        limits.add(('Bill fee discount', '${_trimPct(billFeeDiscountPercent!)}%'));
+      }
+    }
+    if (savingsEnabled) {
+      limits.add(('Savings vaults', fmt(maxSavingsVaults, '')));
+      if (savingsBreakFeeDiscountPercent != null && savingsBreakFeeDiscountPercent! > 0) {
+        limits.add(('Break-fee discount', '${_trimPct(savingsBreakFeeDiscountPercent!)}%'));
       }
     }
     if (aiCreditDiscountPercent != null && aiCreditDiscountPercent! > 0) {
