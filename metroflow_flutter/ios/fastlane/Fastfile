@@ -149,20 +149,41 @@ platform :ios do
     UI.user_error!("match did not yield a provisioning profile") if profile_name.to_s.empty?
     UI.message("Using provisioning profile: #{profile_name}")
 
+    # Prefer the profile UUID as the specifier: it contains no spaces, so it
+    # cannot be mangled by shell splitting between fastlane and xcodebuild.
+    profile_path = ENV["sigh_com.metricorex.app_appstore_profile-path"]
+    profile_uuid =
+      if profile_path && File.exist?(profile_path)
+        FastlaneCore::ProvisioningProfile.uuid(profile_path) rescue nil
+      end
+    specifier = profile_uuid || profile_name
+    UI.message("Signing specifier: #{specifier} (uuid: #{!profile_uuid.nil?})")
+
     # The Flutter AOT artifacts must already exist (CI runs
     # `flutter build ios --release --no-codesign` first). gym archives with
     # MANUAL signing (distribution profile — no devices needed) and exports
     # the IPA for App Store / TestFlight.
+    #
+    # ⚠ CODE_SIGN_IDENTITY is REQUIRED here: the Runner project pins the
+    # legacy 'iPhone Developer' (= iOS Development) identity at project level
+    # ("CODE_SIGN_IDENTITY[sdk=iphoneos*]"), and with CODE_SIGN_STYLE=Manual
+    # that would make xcodebuild look for a development cert we don't have.
+    # The command-line override forces the Apple Distribution identity.
     require "shellwords"
     build_app(
       workspace: "Runner.xcworkspace",
       scheme: "Runner",
       export_method: "app-store",
-      xcargs: "DEVELOPMENT_TEAM=#{ENV['APPLE_TEAM_ID']} CODE_SIGN_STYLE=Manual PROVISIONING_PROFILE_SPECIFIER=#{profile_name.shellescape}",
+      xcargs: [
+        "DEVELOPMENT_TEAM=#{ENV['APPLE_TEAM_ID']}",
+        "CODE_SIGN_STYLE=Manual",
+        "CODE_SIGN_IDENTITY=#{'Apple Distribution'.shellescape}",
+        "PROVISIONING_PROFILE_SPECIFIER=#{specifier.shellescape}"
+      ].join(" "),
       export_options: {
         method: "app-store",
         signingStyle: "manual",
-        provisioningProfiles: { APP_IDENTIFIER => profile_name }
+        provisioningProfiles: { APP_IDENTIFIER => specifier }
       },
       output_directory: "build/ios/ipa",
       output_name: "Metricorex",
