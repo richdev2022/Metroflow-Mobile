@@ -89,7 +89,7 @@ List<TourStep> buildDefaultTourSteps() => [
         icon: Icons.bolt_rounded,
         title: 'Quick actions',
         body:
-            'Send money, fund your wallet, buy airtime and pay bills right from here \u{2014} one tap, no digging through menus.',
+            'Send money, fund your wallet, run payroll and share payment links right from here \u{2014} one tap, no digging through menus.',
       ),
       TourStep(
         anchorKey: AppTourAnchors.get('dashboard-tasks'),

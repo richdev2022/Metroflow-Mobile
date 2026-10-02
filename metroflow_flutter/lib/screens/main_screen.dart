@@ -612,19 +612,19 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       },
                     ),
                     _DrawerTile(
-                      icon: Icons.bolt_outlined,
-                      title: 'Bills',
+                      icon: Icons.storefront_outlined,
+                      title: 'Store',
                       colors: colors,
                       onTap: () async {
-                        context.push('/main/bills');
+                        context.push('/main/store');
                       },
                     ),
                     _DrawerTile(
-                      icon: Icons.savings_outlined,
-                      title: 'Savings',
+                      icon: Icons.autorenew_outlined,
+                      title: 'Subscriptions',
                       colors: colors,
                       onTap: () async {
-                        context.push('/main/savings');
+                        context.push('/main/subscriptions');
                       },
                     ),
                     const _DrawerSectionLabel('Account'),

@@ -36,14 +36,14 @@
 - ✅ **Payment Links** — create & share links, track payments
 - ✅ **Smart Invoices** — itemised invoices, share public checkout, track status
 - ✅ **MetricAi Credit Packs** — purchase AI credit top-ups from your wallet
-- ✅ **Bills Hub** — airtime, data, TV, electricity & betting top-ups from any wallet (PIN-verified)
-- ✅ **Savings Vaults** — goal-based vaults with daily/weekly/monthly auto-save & early-break fee on withdrawal
+- ✅ **Store** — list products/services, share the storefront link, fulfil paid orders
+- ✅ **Subscriptions** — recurring billing plans (daily/weekly/monthly), subscribers & auto-charges
 - ✅ MetricAi chat, image generation & product documentation (GLM-powered)
 - ✅ Team workspace: tasks, board, backlog, ideas, epics, chat, calls & meetings
 - ✅ Profile & Settings
 - ✅ Theme Switching (Light/Dark/System)
 - ✅ Biometrics (Fingerprint/FaceID)
-- ✅ **7-slide onboarding** summarising the full feature set (work, meetings, money, get-paid, bills & savings, MetricAi, security)
+- ✅ **5-slide onboarding** summarising the full business feature set (work, meetings, money, get-paid, MetricAi & security)
 
 ### Project Structure
 ```
