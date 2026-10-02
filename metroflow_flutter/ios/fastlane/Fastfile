@@ -50,15 +50,19 @@ platform :ios do
 
   def cloud_signing_xcargs!
     team = ENV["APPLE_TEAM_ID"]
+    key_id = ENV["APP_STORE_CONNECT_KEY_ID"]
     UI.user_error!("APPLE_TEAM_ID missing") if team.to_s.empty?
+    UI.user_error!("APP_STORE_CONNECT_KEY_ID missing") if key_id.to_s.empty?
     key_path = File.expand_path(File.join(Dir.home, "private_keys"))
-    # xcodebuild automatically picks up ~/private_keys/AuthKey_<ID>.p8, but we
-    # pass the folder explicitly to be safe.
+    # ⚠ -authenticationKeyPath expects the FULL PATH to the .p8 FILE, not the
+    # directory. Passing the directory makes xcodebuild fail instantly with
+    # NSCocoaErrorDomain 256 ("Is a directory").
+    key_file = File.join(key_path, "AuthKey_#{key_id}.p8")
     [
       "DEVELOPMENT_TEAM=#{team}",
       "-allowProvisioningUpdates",
-      "-authenticationKeyPath #{key_path}",
-      "-authenticationKeyID #{ENV['APP_STORE_CONNECT_KEY_ID']}",
+      "-authenticationKeyPath #{key_file}",
+      "-authenticationKeyID #{key_id}",
       "-authenticationKeyIssuerID #{ENV['APP_STORE_CONNECT_ISSUER_ID']}",
     ].join(" ")
   end
