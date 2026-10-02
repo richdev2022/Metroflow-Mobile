@@ -201,7 +201,9 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
               );
             }));
         });
-        Future.delayed(const Duration(milliseconds: 80), _scrollToBottom);
+        Future.delayed(const Duration(milliseconds: 80), () {
+          if (mounted) _scrollToBottom();
+        });
       }
     } catch (e) {
       Logger.error('MetricAi history failed: $e');
@@ -544,24 +546,36 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
     });
   }
 
+  /// Smooth-scrolls to the newest message. Runs AFTER the current frame so
+  /// `maxScrollExtent` reflects the freshly-laid-out content — an unanchored
+  /// `animateTo` racing layout (keyboard insets, media loading, list item
+  /// changes) targets a stale extent and makes the list appear to drift or
+  /// "scroll loop" on its own. Skipped entirely when already at the bottom.
   void _scrollToBottom() {
-    if (_scrollController.hasClients) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      if (position.maxScrollExtent - position.pixels <= 8) return;
       _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
+        position.maxScrollExtent,
         duration: const Duration(milliseconds: 250),
         curve: Curves.easeOut,
       );
-    }
+    });
   }
 
+  /// Same post-frame guard as [_scrollToBottom], for the support-mode list.
   void _scrollSupportToBottom() {
-    if (_supportScrollController.hasClients) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_supportScrollController.hasClients) return;
+      final position = _supportScrollController.position;
+      if (position.maxScrollExtent - position.pixels <= 8) return;
       _supportScrollController.animateTo(
-        _supportScrollController.position.maxScrollExtent,
+        position.maxScrollExtent,
         duration: const Duration(milliseconds: 250),
         curve: Curves.easeOut,
       );
-    }
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -825,17 +839,25 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
       final status = data is Map ? data['status']?.toString() : null;
       setState(() {
         if (messages is List) {
+          // Merge by id (drop local system echoes first) — re-adding the
+          // full server list on every load would duplicate messages and
+          // make the list extent grow unexpectedly.
+          final existing = _supportMessages.map((m) => m.id).toSet();
+          final fresh = messages
+              .whereType<Map>()
+              .map((m) => _SupportMessage.fromMap(Map<String, dynamic>.from(m)))
+              .where((m) => !existing.contains(m.id))
+              .toList();
           _supportMessages
-            ..removeWhere((m) => m.id.startsWith('local-system-'))
-            ..addAll(messages
-                .whereType<Map>()
-                .map((m) => _SupportMessage.fromMap(Map<String, dynamic>.from(m)))
-                .toList());
+            ..removeWhere((m) => m.id.startsWith('local-system-') && !fresh.any((f) => f.id == m.id))
+            ..addAll(fresh);
         }
         if (status != null && status.isNotEmpty) _supportStatus = status;
         _supportLoading = false;
       });
-      Future.delayed(const Duration(milliseconds: 80), _scrollSupportToBottom);
+      Future.delayed(const Duration(milliseconds: 80), () {
+        if (mounted) _scrollSupportToBottom();
+      });
     } catch (e) {
       Logger.error('Support messages load failed: $e');
       if (mounted) setState(() => _supportLoading = false);

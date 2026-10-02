@@ -21,6 +21,7 @@ import '../utils/timezone_data.dart';
 import '../widgets/avatar_with_initials.dart';
 import '../widgets/app_tour.dart';
 import '../widgets/pin_input_boxes.dart';
+import 'webview_screen.dart';
 
 const _businessIndustries = [
   'Technology',
@@ -88,6 +89,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final _contactController = TextEditingController();
   final _industrySearchController = TextEditingController();
   final _otpController = TextEditingController();
+  final _otpToggleOtpController = TextEditingController();
   final _pinController = TextEditingController();
   final _newPinController = TextEditingController();
 
@@ -106,6 +108,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _otpEnabled = true;
   bool _pinCreated = false;
   String? _contactType;
+
+  // OTP-for-transactions toggle: flipping the switch requires an OTP
+  // confirmation before the change is applied (backend-enforced too).
+  bool? _otpToggleTarget;
 
   // Sign-in & Security (GET /auth/me, cached in auth_provider)
   String? _authProvider;
@@ -149,6 +155,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _contactController.dispose();
     _industrySearchController.dispose();
     _otpController.dispose();
+    _otpToggleOtpController.dispose();
     super.dispose();
   }
 
@@ -410,17 +417,127 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  /// Tapping the switch opens the OTP confirmation sheet — the change is
+  /// only applied after the OTP is verified (the backend rejects the
+  /// toggle without a valid OTP, so both ends stay in sync).
   Future<void> _handleToggleOtp(bool enabled) async {
-    setState(() => _isSaving = true);
-    try {
-      await ApiService().updateOtpEnabled(enabled);
-      setState(() => _otpEnabled = enabled);
-    } catch (e) {
-      debugPrint('Failed to toggle OTP: $e');
-      AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
-    } finally {
-      if (mounted) setState(() => _isSaving = false);
-    }
+    _otpToggleOtpController.clear();
+    setState(() => _otpToggleTarget = enabled);
+    _showOtpToggleSheet();
+  }
+
+  void _showOtpToggleSheet() {
+    final colors = AppTheme.colors;
+    final enabledTarget = _otpToggleTarget ?? true;
+    bool sheetBusy = false;
+    bool otpSent = false;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) => _modalShell(
+          title: enabledTarget ? 'Enable OTP for Transfers' : 'Disable OTP for Transfers',
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                enabledTarget
+                    ? 'For your security, confirm this change with an OTP before OTP verification is turned on for all transfers.'
+                    : 'For your security, confirm this change with an OTP before OTP verification is turned off for transfers.',
+                style: TextStyle(fontSize: 13.5, height: 1.45, color: colors.textSecondary),
+              ),
+              const SizedBox(height: 16),
+              if (!otpSent) ...[
+                ElevatedButton(
+                  onPressed: sheetBusy
+                      ? null
+                      : () async {
+                          setSheetState(() => sheetBusy = true);
+                          try {
+                            await ApiService().sendOtpToggleOtp();
+                            setSheetState(() => otpSent = true);
+                            AppToast.show('OTP sent successfully', type: AppToastType.success);
+                          } catch (e) {
+                            debugPrint('Failed to send OTP-toggle OTP: $e');
+                            AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
+                          } finally {
+                            if (sheetContext.mounted) setSheetState(() => sheetBusy = false);
+                          }
+                        },
+                  child: sheetBusy
+                      ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Text('Send OTP'),
+                ),
+              ] else ...[
+                _fieldLabel('Enter 6-digit OTP'),
+                TextField(
+                  controller: _otpToggleOtpController,
+                  decoration: const InputDecoration(hintText: 'OTP'),
+                  keyboardType: TextInputType.number,
+                  maxLength: 6,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 24),
+                ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: sheetBusy
+                        ? null
+                        : () async {
+                            setSheetState(() => sheetBusy = true);
+                            try {
+                              await ApiService().sendOtpToggleOtp();
+                              AppToast.show('OTP sent successfully', type: AppToastType.success);
+                            } catch (e) {
+                              debugPrint('Failed to resend OTP-toggle OTP: $e');
+                              AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
+                            } finally {
+                              if (sheetContext.mounted) setSheetState(() => sheetBusy = false);
+                            }
+                          },
+                    child: const Text('Resend OTP'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ElevatedButton(
+                  onPressed: sheetBusy
+                      ? null
+                      : () async {
+                          final otp = _otpToggleOtpController.text.trim();
+                          if (otp.length != 6) {
+                            AppToast.show('Please enter the 6-digit OTP');
+                            return;
+                          }
+                          setSheetState(() => sheetBusy = true);
+                          try {
+                            await ApiService().updateOtpEnabled(enabledTarget, otp: otp);
+                            if (mounted) {
+                              setState(() => _otpEnabled = enabledTarget);
+                            }
+                            AppToast.show(
+                              enabledTarget ? 'OTP verification enabled' : 'OTP verification disabled',
+                              type: AppToastType.success,
+                            );
+                            if (sheetContext.mounted) Navigator.of(sheetContext).pop();
+                          } catch (e) {
+                            debugPrint('Failed to toggle OTP: $e');
+                            AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
+                          } finally {
+                            if (sheetContext.mounted) setSheetState(() => sheetBusy = false);
+                          }
+                        },
+                  child: sheetBusy
+                      ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Text('Confirm Change'),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _handleCreatePin() async {
@@ -973,6 +1090,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     AppToast.show(ApiService.extractErrorMessage(error), type: AppToastType.error);
   }
 
+  /// Opens the official Metricorex support/contact page in an in-app
+  /// web view (Help Center + Contact Support both land on
+  /// https://metricorex.com/contact).
+  void _openSupportWebView(String title) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => const InAppWebViewScreen(
+          title: 'Help & Support',
+          url: 'https://metricorex.com/contact',
+        ),
+      ),
+    );
+  }
+
   void _showInfo(String title, String message) {
     showDialog<void>(
       context: context,
@@ -1182,12 +1313,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     _settingItem(
                       icon: Icons.help_outline,
                       title: 'Help Center',
-                      onTap: () => _showInfo('Coming Soon', 'Help Center will be available soon.'),
+                      subtitle: 'Guides and answers on metricorex.com',
+                      onTap: () => _openSupportWebView('Help Center'),
                     ),
                     _settingItem(
                       icon: Icons.chat_bubble_outline,
                       title: 'Contact Support',
-                      onTap: () => _showInfo('Coming Soon', 'Contact Support will be available soon.'),
+                      subtitle: 'Reach the team via metricorex.com/contact',
+                      onTap: () => _openSupportWebView('Contact Support'),
                     ),
                     _settingItem(
                       icon: Icons.system_update_outlined,

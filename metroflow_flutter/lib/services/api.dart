@@ -1065,8 +1065,17 @@ class ApiService {
     return await _dio.get('/settings/otp-enabled');
   }
 
-  Future<Response> updateOtpEnabled(bool enabled) async {
-    return await _dio.put('/settings/otp-enabled', data: {'enabled': enabled});
+  /// Request the OTP that authorizes flipping the OTP-for-transactions
+  /// setting (the PUT below is rejected without it).
+  Future<Response> sendOtpToggleOtp() async {
+    return await _dio.post('/settings/otp-enabled/send-otp');
+  }
+
+  Future<Response> updateOtpEnabled(bool enabled, {String? otp}) async {
+    return await _dio.put('/settings/otp-enabled', data: {
+      'enabled': enabled,
+      if (otp != null) 'otp': otp,
+    });
   }
 
   Future<Response> createPin(String pin) async {
