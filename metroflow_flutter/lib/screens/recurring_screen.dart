@@ -583,7 +583,7 @@ class _RecurringScreenState extends State<RecurringScreen>
                         return Container(
                           margin: const EdgeInsets.only(bottom: 12),
                           decoration: BoxDecoration(
-                            color: Colors.white,
+                            color: AppTheme.colors.surface,
                             borderRadius: BorderRadius.circular(16),
                           ),
                           child: ListTile(
@@ -721,7 +721,7 @@ class _RecurringScreenState extends State<RecurringScreen>
                             return Container(
                               margin: const EdgeInsets.only(bottom: 10),
                               decoration: BoxDecoration(
-                                color: Colors.white,
+                                color: AppTheme.colors.surface,
                                 borderRadius: BorderRadius.circular(14),
                               ),
                               child: ListTile(
@@ -807,7 +807,7 @@ class _RecurringScreenState extends State<RecurringScreen>
                             return Container(
                               margin: const EdgeInsets.only(bottom: 10),
                               decoration: BoxDecoration(
-                                color: Colors.white,
+                                color: AppTheme.colors.surface,
                                 borderRadius: BorderRadius.circular(14),
                               ),
                               child: ListTile(

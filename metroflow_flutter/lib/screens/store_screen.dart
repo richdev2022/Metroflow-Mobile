@@ -485,7 +485,7 @@ class _StoreScreenState extends State<StoreScreen>
                             return Container(
                               margin: const EdgeInsets.only(bottom: 12),
                               decoration: BoxDecoration(
-                                color: Colors.white,
+                                color: AppTheme.colors.surface,
                                 borderRadius: BorderRadius.circular(16),
                                 boxShadow: [
                                   BoxShadow(
@@ -619,7 +619,7 @@ class _StoreScreenState extends State<StoreScreen>
                         return Container(
                           margin: const EdgeInsets.only(bottom: 10),
                           decoration: BoxDecoration(
-                            color: Colors.white,
+                            color: AppTheme.colors.surface,
                             borderRadius: BorderRadius.circular(14),
                           ),
                           child: ListTile(

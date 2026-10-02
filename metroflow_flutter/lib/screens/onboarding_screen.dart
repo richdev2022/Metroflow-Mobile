@@ -34,7 +34,10 @@ class OnboardingScreen extends ConsumerStatefulWidget {
 class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   PageController? _pageController;
   int _currentPage = 0;
-  static const int _pageCount = 7;
+  // BUGFIX: was hardcoded to 7 while _slides holds only 5 entries — swiping
+  // past slide 5 threw RangeError inside PageView.builder -> grey/blank page
+  // (users could only escape via Skip). Derive from the list instead.
+  static const int _pageCount = _slides.length;
 
   @override
   void initState() {

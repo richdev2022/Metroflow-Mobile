@@ -460,8 +460,11 @@ class _BankInfoModal extends StatelessWidget {
       constraints: BoxConstraints(
         maxHeight: MediaQuery.of(context).size.height * 0.7,
       ),
-      decoration: const BoxDecoration(
-        color: Colors.white,
+      decoration: BoxDecoration(
+        // Theme-aware: was hardcoded Colors.white — in dark mode the sheet
+        // stayed white while title/values inherited near-white text colors
+        // (white-on-white). surface = white in light, dark navy in dark.
+        color: AppTheme.colors.surface,
         borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
       ),
       padding: const EdgeInsets.all(24),
