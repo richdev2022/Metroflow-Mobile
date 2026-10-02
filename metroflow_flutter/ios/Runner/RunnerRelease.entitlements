@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Push Notifications capability — RELEASE (App Store / TestFlight).
+	     "production" makes Xcode's automatic signing pick an Apple
+	     DISTRIBUTION profile when archiving on CI (distribution profiles do
+	     not require registered devices — development profiles do, which made
+	     cloud-signed archives fail with "Your team has no devices").
+	     APNs delivery for TestFlight/App Store builds uses production. -->
+	<key>aps-environment</key>
+	<string>production</string>
+</dict>
+</plist>
