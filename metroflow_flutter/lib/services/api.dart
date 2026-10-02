@@ -526,6 +526,36 @@ class ApiService {
     return await _dio.get('/wallet');
   }
 
+  // ---- Payment Links ("Get Paid" revenue feature) ---------------------------
+  Future<Response> getPaymentLinks() async {
+    return await _dio.get('/payment-links');
+  }
+
+  Future<Response> createPaymentLink(Map<String, dynamic> payload) async {
+    return await _dio.post('/payment-links', data: payload);
+  }
+
+  Future<Response> updatePaymentLink(String id, Map<String, dynamic> payload) async {
+    return await _dio.put('/payment-links/$id', data: payload);
+  }
+
+  Future<Response> deletePaymentLink(String id) async {
+    return await _dio.delete('/payment-links/$id');
+  }
+
+  // ---- MetricAi Credit Packs (revenue feature) ------------------------------
+  Future<Response> getAiCreditPacks() async {
+    return await _dio.get('/ai-credits/packs');
+  }
+
+  Future<Response> purchaseAiCreditPack(String packId, {String? walletId}) async {
+    return await _dio.post('/ai-credits/purchase', data: {
+      'pack_id': packId,
+      if (walletId != null) 'wallet_id': walletId,
+    });
+  }
+
+
   /// POST /wallet/fund/card. The backend resolves the active payment provider
   /// itself — the client MUST NOT send a `provider` field (it 400s for
   /// unsupported names and fights the admin-configured active provider).
