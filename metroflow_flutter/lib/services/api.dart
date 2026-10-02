@@ -580,50 +580,70 @@ class ApiService {
     return await _dio.delete('/invoices/$id');
   }
 
-  // ---- Bills Hub (daily-use revenue feature) --------------------------------
-  Future<Response> getBillsCatalog() async {
-    return await _dio.get('/bills/catalog');
+  // ---- Storefront (Metroflow Store — business revenue feature) --------------
+  Future<Response> getStoreProducts() async {
+    return await _dio.get('/store/products');
   }
 
-  Future<Response> getBills() async {
-    return await _dio.get('/bills');
+  Future<Response> createStoreProduct(Map<String, dynamic> payload) async {
+    return await _dio.post('/store/products', data: payload);
   }
 
-  Future<Response> payBill(Map<String, dynamic> payload) async {
-    return await _dio.post('/bills/pay', data: payload);
+  Future<Response> updateStoreProduct(String id, Map<String, dynamic> payload) async {
+    return await _dio.put('/store/products/$id', data: payload);
   }
 
-  Future<Response> getBillDetail(String id) async {
-    return await _dio.get('/bills/$id');
+  Future<Response> deleteStoreProduct(String id) async {
+    return await _dio.delete('/store/products/$id');
   }
 
-  // ---- Savings Vaults (daily-use revenue feature) ---------------------------
-  Future<Response> getSavingsVaults() async {
-    return await _dio.get('/savings/vaults');
+  Future<Response> getStoreOrders() async {
+    return await _dio.get('/store/orders');
   }
 
-  Future<Response> createSavingsVault(Map<String, dynamic> payload) async {
-    return await _dio.post('/savings/vaults', data: payload);
+  Future<Response> fulfilStoreOrder(String id) async {
+    return await _dio.post('/store/orders/$id/fulfil');
   }
 
-  Future<Response> getSavingsVaultDetail(String id) async {
-    return await _dio.get('/savings/vaults/$id');
+  Future<Response> cancelStoreOrder(String id) async {
+    return await _dio.post('/store/orders/$id/cancel');
   }
 
-  Future<Response> updateSavingsVault(String id, Map<String, dynamic> payload) async {
-    return await _dio.put('/savings/vaults/$id', data: payload);
+  // ---- Recurring Billing (customer subscriptions — business revenue feature)
+  Future<Response> getSubscriptionPlans() async {
+    return await _dio.get('/recurring/plans');
   }
 
-  Future<Response> deleteSavingsVault(String id) async {
-    return await _dio.delete('/savings/vaults/$id');
+  Future<Response> createSubscriptionPlan(Map<String, dynamic> payload) async {
+    return await _dio.post('/recurring/plans', data: payload);
   }
 
-  Future<Response> depositToVault(String id, Map<String, dynamic> payload) async {
-    return await _dio.post('/savings/vaults/$id/deposit', data: payload);
+  Future<Response> updateSubscriptionPlan(String id, Map<String, dynamic> payload) async {
+    return await _dio.put('/recurring/plans/$id', data: payload);
   }
 
-  Future<Response> withdrawFromVault(String id, Map<String, dynamic> payload) async {
-    return await _dio.post('/savings/vaults/$id/withdraw', data: payload);
+  Future<Response> deleteSubscriptionPlan(String id) async {
+    return await _dio.delete('/recurring/plans/$id');
+  }
+
+  Future<Response> getSubscribers() async {
+    return await _dio.get('/recurring/subscribers');
+  }
+
+  Future<Response> addSubscriber(Map<String, dynamic> payload) async {
+    return await _dio.post('/recurring/subscribers', data: payload);
+  }
+
+  Future<Response> cancelSubscriber(String id) async {
+    return await _dio.delete('/recurring/subscribers/$id');
+  }
+
+  Future<Response> reactivateSubscriber(String id) async {
+    return await _dio.post('/recurring/subscribers/$id/reactivate');
+  }
+
+  Future<Response> getSubscriptionCharges() async {
+    return await _dio.get('/recurring/charges');
   }
 
 

@@ -738,12 +738,12 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
                   maxInvoicesPerMonth: plan.maxInvoicesPerMonth,
                   invoiceFeeDiscountPercent: plan.invoiceFeeDiscountPercent,
                   aiCreditDiscountPercent: plan.aiCreditDiscountPercent,
-                  billsEnabled: plan.billsEnabled,
-                  maxBillsPerDay: plan.maxBillsPerDay,
-                  billFeeDiscountPercent: plan.billFeeDiscountPercent,
-                  savingsEnabled: plan.savingsEnabled,
-                  maxSavingsVaults: plan.maxSavingsVaults,
-                  savingsBreakFeeDiscountPercent: plan.savingsBreakFeeDiscountPercent,
+                  storeEnabled: plan.storeEnabled,
+                  maxStoreProducts: plan.maxStoreProducts,
+                  storeFeeDiscountPercent: plan.storeFeeDiscountPercent,
+                  recurringEnabled: plan.recurringEnabled,
+                  maxSubscriptionPlans: plan.maxSubscriptionPlans,
+                  subscriptionFeeDiscountPercent: plan.subscriptionFeeDiscountPercent,
                 ),
                 if (action != null) ...[
                   const SizedBox(height:16),
@@ -1159,13 +1159,13 @@ class _LimitGrid extends StatelessWidget {
   final int? maxInvoicesPerMonth;
   final double? invoiceFeeDiscountPercent;
   final double? aiCreditDiscountPercent;
-  // Daily-use revenue feature knobs (Bills Hub / Savings Vaults)
-  final bool billsEnabled;
-  final int? maxBillsPerDay;
-  final double? billFeeDiscountPercent;
-  final bool savingsEnabled;
-  final int? maxSavingsVaults;
-  final double? savingsBreakFeeDiscountPercent;
+  // Daily-use business revenue feature knobs (Storefront / Recurring Billing)
+  final bool storeEnabled;
+  final int? maxStoreProducts;
+  final double? storeFeeDiscountPercent;
+  final bool recurringEnabled;
+  final int? maxSubscriptionPlans;
+  final double? subscriptionFeeDiscountPercent;
 
   const _LimitGrid({
     required this.maxMeetingDuration,
@@ -1180,12 +1180,12 @@ class _LimitGrid extends StatelessWidget {
     this.maxInvoicesPerMonth,
     this.invoiceFeeDiscountPercent,
     this.aiCreditDiscountPercent,
-    this.billsEnabled = false,
-    this.maxBillsPerDay,
-    this.billFeeDiscountPercent,
-    this.savingsEnabled = false,
-    this.maxSavingsVaults,
-    this.savingsBreakFeeDiscountPercent,
+    this.storeEnabled = false,
+    this.maxStoreProducts,
+    this.storeFeeDiscountPercent,
+    this.recurringEnabled = false,
+    this.maxSubscriptionPlans,
+    this.subscriptionFeeDiscountPercent,
   });
 
   static String _trimPct(double v) =>
@@ -1216,16 +1216,16 @@ class _LimitGrid extends StatelessWidget {
         limits.add(('Invoice fee discount', '${_trimPct(invoiceFeeDiscountPercent!)}%'));
       }
     }
-    if (billsEnabled) {
-      limits.add(('Bills / day', fmt(maxBillsPerDay, '')));
-      if (billFeeDiscountPercent != null && billFeeDiscountPercent! > 0) {
-        limits.add(('Bill fee discount', '${_trimPct(billFeeDiscountPercent!)}%'));
+    if (storeEnabled) {
+      limits.add(('Store products', fmt(maxStoreProducts, '')));
+      if (storeFeeDiscountPercent != null && storeFeeDiscountPercent! > 0) {
+        limits.add(('Store fee discount', '${_trimPct(storeFeeDiscountPercent!)}%'));
       }
     }
-    if (savingsEnabled) {
-      limits.add(('Savings vaults', fmt(maxSavingsVaults, '')));
-      if (savingsBreakFeeDiscountPercent != null && savingsBreakFeeDiscountPercent! > 0) {
-        limits.add(('Break-fee discount', '${_trimPct(savingsBreakFeeDiscountPercent!)}%'));
+    if (recurringEnabled) {
+      limits.add(('Subscription plans', fmt(maxSubscriptionPlans, '')));
+      if (subscriptionFeeDiscountPercent != null && subscriptionFeeDiscountPercent! > 0) {
+        limits.add(('Recurring fee discount', '${_trimPct(subscriptionFeeDiscountPercent!)}%'));
       }
     }
     if (aiCreditDiscountPercent != null && aiCreditDiscountPercent! > 0) {
