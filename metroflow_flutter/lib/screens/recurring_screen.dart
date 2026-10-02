@@ -24,7 +24,6 @@ class _RecurringScreenState extends State<RecurringScreen>
   List<Map<String, dynamic>> _subscribers = [];
   List<Map<String, dynamic>> _charges = [];
   Map<String, dynamic>? _stats;
-  Map<String, dynamic>? _billing;
   bool _isLoading = true;
   bool _busy = false;
 
@@ -74,7 +73,6 @@ class _RecurringScreenState extends State<RecurringScreen>
             .map((e) => Map<String, dynamic>.from(e as Map))
             .toList();
         _stats = p['stats'] == null ? null : Map<String, dynamic>.from(p['stats'] as Map);
-        _billing = p['billing'] == null ? null : Map<String, dynamic>.from(p['billing'] as Map);
         _subscribers = (s['subscribers'] as List<dynamic>? ?? [])
             .map((e) => Map<String, dynamic>.from(e as Map))
             .toList();
@@ -407,7 +405,7 @@ class _RecurringScreenState extends State<RecurringScreen>
                   style: TextStyle(fontSize: 12, color: Colors.grey)),
               const SizedBox(height: 16),
               DropdownButtonFormField<String>(
-                value: _subPlanId.isEmpty ? null : _subPlanId,
+                initialValue: _subPlanId.isEmpty ? null : _subPlanId,
                 decoration: const InputDecoration(
                     labelText: 'Plan', border: OutlineInputBorder()),
                 items: _plans

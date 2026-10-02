@@ -292,7 +292,7 @@ class _AiCreditsScreenState extends State<AiCreditsScreen> {
                                           color: colors.text),
                                     ),
                                     Text(
-                                      '${p['reference']?.toString() ?? ''}',
+                                      p['reference']?.toString() ?? '',
                                       style: TextStyle(
                                           fontSize: 11,
                                           color: colors.textSecondary),

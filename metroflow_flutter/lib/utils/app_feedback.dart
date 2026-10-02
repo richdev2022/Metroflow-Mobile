@@ -37,7 +37,7 @@ class AppFeedback {
   // NOTE: AudioContext's constructor is NOT const in audioplayers 6.x, so
   // this getter constructs a fresh instance each call (cheap, config-only).
   static AudioContext get _ringAudioContext => AudioContext(
-        android: AudioContextAndroid(
+        android: const AudioContextAndroid(
           audioFocus: AndroidAudioFocus.none,
           contentType: AndroidContentType.music,
           usageType: AndroidUsageType.media,

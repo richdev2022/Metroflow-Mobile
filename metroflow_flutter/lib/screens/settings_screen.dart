@@ -1114,7 +1114,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               ],
                               selected: {AppTimezone.instance.is24h},
                               showSelectedIcon: false,
-                              style: ButtonStyle(
+                              style: const ButtonStyle(
                                 visualDensity: VisualDensity.compact,
                                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                               ),

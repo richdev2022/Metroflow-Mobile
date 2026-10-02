@@ -888,13 +888,13 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  SizedBox(
+                  const SizedBox(
                     width: 76,
                     height: 76,
                     child: Stack(
                       alignment: Alignment.center,
                       children: [
-                        const SizedBox(
+                        SizedBox(
                           width: 76,
                           height: 76,
                           child: CircularProgressIndicator(
@@ -902,7 +902,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                             strokeWidth: 3,
                           ),
                         ),
-                        const SizedBox(
+                        SizedBox(
                           width: 46,
                           height: 46,
                           child: CircularProgressIndicator(
@@ -1709,9 +1709,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
   /// Elapsed time chip + optional plan-limit remaining countdown.
   Widget _buildDurationChip() {
-    final remaining = _planEndsAt != null
-        ? _planEndsAt!.difference(DateTime.now()).inSeconds
-        : null;
+    final remaining = _planEndsAt?.difference(DateTime.now()).inSeconds;
     final urgent = remaining != null && remaining <= 60;
     final warning = remaining != null && remaining <= 5 * 60;
     final color = urgent
@@ -2210,8 +2208,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         child: Container(
           width: large ? 104 : 56,
           height: large ? 104 : 56,
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
               colors: [Color(0xFF2563EB), Color(0xFF3B82F6)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
@@ -2594,7 +2592,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                               margin: const EdgeInsets.only(bottom: 10),
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 12, vertical: 8),
-                              constraints: BoxConstraints(
+                              constraints: const BoxConstraints(
                                 maxWidth: 220,
                               ),
                               decoration: BoxDecoration(

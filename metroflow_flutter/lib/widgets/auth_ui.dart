@@ -225,7 +225,7 @@ class AuthBrandHeader extends StatelessWidget {
           shaderCallback: (bounds) => BrandSplashGradient.buttonGradient.createShader(
             Rect.fromLTWH(0, 0, bounds.width, bounds.height),
           ),
-          child: Text(
+          child: const Text(
             'Metricorex',
             style: TextStyle(
               fontSize: 24,

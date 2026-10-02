@@ -116,7 +116,21 @@ jobs:
 
       - name: Build Flutter iOS (AOT, unsigned)
         working-directory: metroflow_flutter
-        run: flutter build ios --release --no-codesign --build-number=${{ github.run_number }}
+        env:
+          # Flutter 3.44 builds iOS through Swift Package Manager by default.
+          # With `--no-codesign`, the SPM-generated plugin package
+          # (FlutterGeneratedPluginSwiftPackage) still demanded a Development
+          # Team at the final embed/sign phase and aborted the build after the
+          # full 228s compile. Disable SPM so every plugin resolves through
+          # CocoaPods again (as in all pre-3.44 builds), and hard-force
+          # signing off at the xcodebuild level via FLUTTER_XCODE_* overrides.
+          FLUTTER_XCODE_CODE_SIGNING_ALLOWED: "NO"
+          FLUTTER_XCODE_CODE_SIGNING_REQUIRED: "NO"
+          FLUTTER_XCODE_CODE_SIGN_IDENTITY: ""
+        run: |
+          flutter config --no-enable-swift-package-manager
+          rm -rf ios/Runner.xcworkspace/xcshareddata/swiftpm
+          flutter build ios --release --no-codesign --build-number=${{ github.run_number }}
 
       - name: Setup Ruby + fastlane
         uses: ruby/setup-ruby@v1
