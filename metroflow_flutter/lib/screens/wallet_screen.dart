@@ -38,6 +38,9 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   String amount = '';
   String remark = '';
   String otpCode = '';
+  /// Inline 4-digit Transaction PIN for the transfer form (was a late dialog
+  /// after OTP — users reported the section never appearing).
+  String transactionPin = '';
   String selectedAccountType = 'Personal';
 
   // -- International (USD) payout — mirrors the web app Wallet transfer form --
@@ -306,6 +309,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
       amount = '';
       remark = '';
       otpCode = '';
+      transactionPin = '';
       transferCurrency = 'NGN';
       payoutRail = '';
       bankName = '';
@@ -511,12 +515,20 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
     setState(() => isOtpLoading = true);
     try {
       final api = ApiService();
+      // suppressToast: false → the request method surfaces provider errors;
+      // we also catch locally so the user ALWAYS sees why OTP failed
+      // (previously errors were only debugPrint'ed and the flow stalled).
       await api.requestTransferOtp(walletId: wallet['id']);
       if (mounted) {
         setState(() => showOtpModal = true);
       }
     } catch (e) {
       debugPrint('Failed to send OTP: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(ApiService.extractErrorMessage(e))),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() => isOtpLoading = false);
@@ -561,9 +573,14 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
       }
     }
 
-    // Transaction PIN is mandatory on the backend (4 digits)
-    final pin = await _promptForTransactionPin();
-    if (pin == null || pin.isEmpty) return; // user cancelled
+    // Transaction PIN is mandatory on the backend (4 digits). Prefer the
+    // inline PIN section; fall back to the secure dialog when left blank.
+    String pin = transactionPin.trim();
+    if (pin.length != 4) {
+      final prompted = await _promptForTransactionPin();
+      if (prompted == null || prompted.isEmpty) return; // user cancelled
+      pin = prompted;
+    }
 
     setState(() => isOtpLoading = true);
     try {
@@ -685,8 +702,122 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
       amount = '';
       remark = '';
       otpCode = '';
+      transactionPin = '';
       showTransferModal = true;
     });
+  }
+
+  /// Wallet selector for the transfer modal: every wallet the user may fund
+  /// the transfer from (personal + business when available). The tapped card
+  /// pre-selects one — users can now switch here instead of closing and
+  /// re-opening the modal from another card.
+  Widget _buildTransferWalletSelector(ThemeColors colors) {
+    final options = <Map<String, dynamic>>[
+      if (wallets['user_wallet'] != null)
+        {
+          'type': 'user',
+          'label': 'Personal Wallet',
+          'wallet': wallets['user_wallet'],
+        },
+      if (canManageBusinessWallet && wallets['business_wallet'] != null)
+        {
+          'type': 'business',
+          'label': 'Business Wallet',
+          'wallet': wallets['business_wallet'],
+        },
+    ];
+
+    if (options.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Text(
+          'No wallet available — complete your KYC to create one.',
+          style: TextStyle(color: colors.textSecondary, fontSize: 13),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('From Wallet',
+            style: TextStyle(
+                fontSize: 13, fontWeight: FontWeight.w600, color: colors.text)),
+        const SizedBox(height: 8),
+        ...options.map((option) {
+          final type = option['type'] as String;
+          final wallet = option['wallet'];
+          final selected = selectedWalletType == type;
+          final currency = (wallet['currency']?.toString() ?? 'NGN').toUpperCase();
+          final balance = double.tryParse(wallet['balance']?.toString() ?? '0') ?? 0.0;
+          final symbol = currency == 'USD' ? r'$' : (currency == 'EUR' ? '€' : (currency == 'GBP' ? '£' : '₦'));
+          return GestureDetector(
+            onTap: () => setState(() => selectedWalletType = type),
+            child: Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: selected ? colors.primaryBg : colors.surface,
+                border: Border.all(
+                  color: selected ? colors.primary : colors.border,
+                  width: selected ? 1.4 : 1,
+                ),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    selected ? Icons.radio_button_checked : Icons.radio_button_off,
+                    size: 20,
+                    color: selected ? colors.primary : colors.textSecondary,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      option['label'] as String,
+                      style: TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                        color: colors.text,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '$symbol${balance.toStringAsFixed(2)}',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: selected ? colors.primary : colors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  /// Inline Transaction PIN section — always visible in the transfer form so
+  /// users can authorise before sending the OTP (the old post-OTP dialog
+  /// remains as a fallback when this is left blank).
+  Widget _buildTransactionPinField(ThemeColors colors) {
+    return _buildField('Transaction PIN', TextField(
+      obscureText: true,
+      autofocus: false,
+      keyboardType: TextInputType.number,
+      maxLength: 4,
+      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+      decoration: InputDecoration(
+        hintText: 'Enter your 4-digit PIN',
+        hintStyle: TextStyle(color: colors.textSecondary),
+        counterText: '',
+      ),
+      style: TextStyle(color: colors.text, fontSize: 18, letterSpacing: 8),
+      onChanged: (value) => setState(() => transactionPin = value),
+    ));
   }
 
 
@@ -998,6 +1129,9 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            // -- Wallet selector (personal / business) --
+                            _buildTransferWalletSelector(colors),
+                            const SizedBox(height: 16),
                             // -- Currency toggle: NGN local bank vs USD intl --
                             Row(
                               children: [
@@ -1070,6 +1204,9 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                               style: TextStyle(color: colors.text, fontSize: 16),
                               onChanged: (value) => setState(() => remark = value),
                             )),
+                            const SizedBox(height: 20),
+                            // -- Inline Transaction PIN section --
+                            _buildTransactionPinField(colors),
                             const SizedBox(height: 24),
                             SizedBox(
                               width: double.infinity,

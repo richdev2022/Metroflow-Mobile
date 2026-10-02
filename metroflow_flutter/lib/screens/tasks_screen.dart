@@ -807,6 +807,14 @@ class _TaskCard extends StatelessWidget {
                                   color: task.isOverdue ? colors.error : colors.textSecondary,
                                   icon: Icons.schedule,
                                 ),
+                                // Attachment count so users can see tasks that
+                                // carry files without opening them.
+                                if ((task.attachments?.isNotEmpty ?? false))
+                                  ModernBadge(
+                                    label: '${task.attachments!.length} attachment${task.attachments!.length == 1 ? '' : 's'}',
+                                    color: colors.primary,
+                                    icon: Icons.attach_file_rounded,
+                                  ),
                               ],
                             ),
                           ),

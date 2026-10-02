@@ -11,13 +11,22 @@ import '../widgets/app_tour.dart';
 import '../widgets/avatar_with_initials.dart';
 import '../widgets/modern_ui.dart';
 
-/// Home — deliberately LEAN.
+/// Home — the whole business suite at a glance.
 ///
-/// The previous revision stacked NINE sections (hero, quick actions, stat
-/// grid, weekly chart, filters, my tasks, overdue banner, status pie, top
-/// members) which made the page endless on phones. This revision keeps the
-/// four sections that matter (compact hero, quick actions, my tasks,
-/// overdue banner) and gets out of the way.
+/// v3 layout: the previous "lean" revision was 100% task-centric, which hid
+/// the platform's other pillars after Storefront + Recurring Billing shipped.
+/// This revision stays scannable while surfacing every pillar:
+///   1. Compact hero — greeting, task chips + a wallet balance strip
+///      (tap = Wallet tab, Fund pill = top-up).
+///   2. Quick actions — a work + money mix (task, meeting, chat, invoice,
+///      payment link, product).
+///   3. "Get Paid" hub — the four revenue surfaces (Payment Links, Invoices,
+///      Storefront, Subscriptions) with live counts.
+///   4. Money row — move-money operations (Transfers, Payroll, Fund).
+///   5. My Tasks preview + overdue banner (unchanged).
+///
+/// Suite stats load best-effort AFTER the shell renders — each fetch fails
+/// silently into an em dash so the page never blocks or errors on them.
 class DashboardScreen extends ConsumerStatefulWidget {
   const DashboardScreen({super.key});
 
@@ -28,6 +37,16 @@ class DashboardScreen extends ConsumerStatefulWidget {
 class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   List<dynamic> _allTasks = [];
   bool _isLoading = true;
+
+  // "Get Paid" hub counters — null means "still loading / unavailable".
+  int? _linkCount;
+  int? _invoiceCount;
+  int? _productCount;
+  int? _planCount;
+
+  // Wallet balance strip — the primary wallet shown in the hero.
+  Map<String, dynamic>? _primaryWallet;
+  String _walletLabel = 'Wallet balance';
 
   // Anchors for the guided app tour (lib/widgets/app_tour.dart) — the tour
   // spotlights these regions on first launch.
@@ -42,6 +61,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     AppTourAnchors.register('dashboard-quick-actions', _tourQuickActionsKey);
     AppTourAnchors.register('dashboard-tasks', _tourTasksKey);
     _fetchData();
+    _fetchSuiteStats();
     // Warm the shared user profile (name/avatar) from the local cache and,
     // best-effort, from the server — used by the greeting + avatar chip.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -79,6 +99,69 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         });
       }
     }
+  }
+
+  /// Best-effort loaders for the "Get Paid" hub counters + wallet balance.
+  /// Every block is independently guarded — a failing surface just keeps its
+  /// em dash instead of breaking the home page.
+  Future<void> _fetchSuiteStats() async {
+    final api = ApiService();
+
+    try {
+      final r = await api.getPaymentLinks();
+      final links = r.data?['links'];
+      if (mounted && links is List) setState(() => _linkCount = links.length);
+    } catch (_) {}
+
+    try {
+      final r = await api.getInvoices();
+      final invoices = r.data?['invoices'];
+      if (mounted && invoices is List) {
+        setState(() => _invoiceCount = invoices.length);
+      }
+    } catch (_) {}
+
+    try {
+      final r = await api.getStoreProducts();
+      final products = r.data?['products'];
+      if (mounted && products is List) {
+        setState(() => _productCount = products.length);
+      }
+    } catch (_) {}
+
+    try {
+      final r = await api.getRecurringPlans();
+      final plans = r.data?['plans'];
+      if (mounted && plans is List) setState(() => _planCount = plans.length);
+    } catch (_) {}
+
+    try {
+      final r = await api.getWallet();
+      final data = r.data;
+      if (mounted && data is Map) {
+        final canManage = data['canManageBusinessWallet'] == true;
+        final business = data['business_wallet'] is Map
+            ? Map<String, dynamic>.from(data['business_wallet'] as Map)
+            : null;
+        final personal = data['user_wallet'] is Map
+            ? Map<String, dynamic>.from(data['user_wallet'] as Map)
+            : null;
+        if (!mounted) return;
+        setState(() {
+          if (canManage && business != null) {
+            // Business-first: this is the business suite.
+            _primaryWallet = business;
+            _walletLabel = 'Business wallet';
+          } else if (personal != null) {
+            _primaryWallet = personal;
+            _walletLabel = 'Wallet balance';
+          } else if (business != null) {
+            _primaryWallet = business;
+            _walletLabel = 'Business wallet';
+          }
+        });
+      }
+    } catch (_) {}
   }
 
   String _greeting() {
@@ -173,6 +256,19 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     }
   }
 
+  String _walletBalanceLabel() {
+    final w = _primaryWallet;
+    if (w == null) return '—';
+    final currency = (w['currency']?.toString() ?? 'NGN').toUpperCase();
+    final balance = double.tryParse(w['balance']?.toString() ?? '0') ?? 0.0;
+    final symbol = currency == 'USD'
+        ? r'$'
+        : (currency == 'EUR'
+            ? '€'
+            : (currency == 'GBP' ? '£' : '₦'));
+    return '$symbol${balance.toStringAsFixed(2)}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = AppTheme.colors;
@@ -207,7 +303,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
 
     return SafeArea(
       child: RefreshIndicator(
-        onRefresh: () => _fetchData(false),
+        onRefresh: () async {
+          await _fetchData(false);
+          await _fetchSuiteStats();
+        },
         color: colors.primary,
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -215,7 +314,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ---------- Compact hero (greeting + mini stats) ----------
+              // ---------- Compact hero (greeting + stats + wallet) ----------
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                 child: _buildCompactHero(
@@ -231,6 +330,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
 
               // ---------- Quick actions ----------
               _buildQuickActions(colors),
+              const SizedBox(height: 22),
+
+              // ---------- "Get Paid" hub (revenue surfaces) ----------
+              _buildGetPaidHub(colors),
+              const SizedBox(height: 20),
+
+              // ---------- Money row (move money) ----------
+              _buildMoneyRow(colors),
               const SizedBox(height: 22),
 
               // ---------- My Tasks preview ----------
@@ -294,9 +401,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     );
   }
 
-  /// Compact hero: greeting + avatar + today's date + three tappable stat
-  /// chips. Everything else that used to live in the hero (workspace chip,
-  /// giant counter, progress bar) moved to the Tasks tab or got cut.
+  /// Compact hero: greeting + avatar + today's date + three tappable task
+  /// stat chips + a wallet balance strip. The balance row taps into the
+  /// Wallet tab (KYC-gated via MainScreen) and the Fund pill jumps straight
+  /// to the top-up screen.
   Widget _buildCompactHero(
     ThemeColors colors,
     String firstName,
@@ -377,8 +485,101 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             ),
           ),
           const SizedBox(height: 16),
-          // Three tappable stat chips — the whole row is one flexible unit,
-          // so it never overflows on narrow screens.
+          // Wallet balance strip — glanceable money anchor for the whole app.
+          Row(
+            children: [
+              Expanded(
+                child: Material(
+                  color: Colors.white.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(16),
+                  child: InkWell(
+                    onTap: () => context.go('/main?tab=5'), // Wallet tab (KYC-gated)
+                    borderRadius: BorderRadius.circular(16),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.account_balance_wallet_rounded,
+                            size: 18,
+                            color: Colors.white.withValues(alpha: 0.9),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  _walletLabel,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w600,
+                                    color:
+                                        Colors.white.withValues(alpha: 0.75),
+                                  ),
+                                ),
+                                const SizedBox(height: 1),
+                                Text(
+                                  _walletBalanceLabel(),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 15.5,
+                                    fontWeight: FontWeight.w800,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Icon(
+                            Icons.chevron_right_rounded,
+                            size: 18,
+                            color: Colors.white.withValues(alpha: 0.7),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // Fund pill — the highest-frequency money action, one tap away.
+              Material(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                child: InkWell(
+                  onTap: () => context.push('/main/fund-wallet'),
+                  borderRadius: BorderRadius.circular(14),
+                  child: const Padding(
+                    padding:
+                        EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    child: Row(
+                      children: [
+                        Icon(Icons.add_rounded,
+                            size: 16, color: Color(0xFF2563EB)),
+                        SizedBox(width: 3),
+                        Text(
+                          'Fund',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF2563EB),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          // Three tappable task stat chips — the whole row is one flexible
+          // unit, so it never overflows on narrow screens.
           Row(
             children: [
               Expanded(
@@ -438,22 +639,22 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         onTap: () => context.go('/main?tab=2'),
       ),
       _QuickActionData(
-        icon: Icons.archive_outlined,
-        label: 'Backlog',
-        tint: const Color(0xFF0891B2),
-        onTap: () => context.go('/main/backlog'),
+        icon: Icons.receipt_long_outlined,
+        label: 'New Invoice',
+        tint: const Color(0xFF059669),
+        onTap: () => context.push('/main/invoices'),
       ),
       _QuickActionData(
-        icon: Icons.lightbulb_outlined,
-        label: 'Ideas',
-        tint: const Color(0xFFF59E0B),
-        onTap: () => context.go('/main/ideas'),
+        icon: Icons.link_rounded,
+        label: 'Payment Link',
+        tint: const Color(0xFF2563EB),
+        onTap: () => context.push('/main/payment-links'),
       ),
       _QuickActionData(
-        icon: Icons.people_outlined,
-        label: 'Team',
-        tint: const Color(0xFF4F46E5),
-        onTap: () => context.go('/main/team'),
+        icon: Icons.storefront_outlined,
+        label: 'Add Product',
+        tint: const Color(0xFFEA580C),
+        onTap: () => context.push('/main/store'),
       ),
     ];
 
@@ -483,7 +684,126 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       ),
     );
   }
+
+  /// "Get Paid" hub — the four revenue surfaces, 2×2, each with a live
+  /// counter (best-effort; em dash while loading / on failure). The section
+  /// header links to Pricing so plan limits are one tap away.
+  Widget _buildGetPaidHub(ThemeColors colors) {
+    final cards = <_GetPaidData>[
+      _GetPaidData(
+        icon: Icons.link_rounded,
+        title: 'Payment Links',
+        tagline: 'Sell with a shareable link',
+        tint: const Color(0xFF2563EB),
+        count: _linkCount,
+        countNoun: 'link',
+        onTap: () => context.push('/main/payment-links'),
+      ),
+      _GetPaidData(
+        icon: Icons.receipt_long_rounded,
+        title: 'Invoices',
+        tagline: 'Bill clients smartly',
+        tint: const Color(0xFF059669),
+        count: _invoiceCount,
+        countNoun: 'invoice',
+        onTap: () => context.push('/main/invoices'),
+      ),
+      _GetPaidData(
+        icon: Icons.storefront_rounded,
+        title: 'Storefront',
+        tagline: 'Your online store',
+        tint: const Color(0xFFEA580C),
+        count: _productCount,
+        countNoun: 'product',
+        onTap: () => context.push('/main/store'),
+      ),
+      _GetPaidData(
+        icon: Icons.autorenew_rounded,
+        title: 'Subscriptions',
+        tagline: 'Recurring revenue',
+        tint: const Color(0xFF7C3AED),
+        count: _planCount,
+        countNoun: 'plan',
+        onTap: () => context.push('/main/subscriptions'),
+      ),
+    ];
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _SectionKicker(
+            label: 'Get Paid',
+            subtitle: 'Every way your customers pay you',
+            actionLabel: 'Pricing',
+            actionIcon: Icons.local_offer_outlined,
+            onAction: () => context.push('/main/fees'),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(child: _GetPaidCard(data: cards[0], colors: colors)),
+              const SizedBox(width: 10),
+              Expanded(child: _GetPaidCard(data: cards[1], colors: colors)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(child: _GetPaidCard(data: cards[2], colors: colors)),
+              const SizedBox(width: 10),
+              Expanded(child: _GetPaidCard(data: cards[3], colors: colors)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Money row — the move-money operations that don't fit "Get Paid":
+  /// Transfers (send to banks), Payroll (salaries; KYC-gated) and Fund
+  /// Wallet (top-up). Wallet itself lives behind the hero balance strip.
+  Widget _buildMoneyRow(ThemeColors colors) {
+    final tiles = <_MoneyTileData>[
+      _MoneyTileData(
+        icon: Icons.swap_horiz_rounded,
+        label: 'Transfers',
+        tint: const Color(0xFF0891B2),
+        onTap: () => context.push('/main/transfers'),
+      ),
+      _MoneyTileData(
+        icon: Icons.payments_rounded,
+        label: 'Payroll',
+        tint: const Color(0xFF4F46E5),
+        // tab=6 → Payroll inside MainScreen (KYC gate re-enters post-frame)
+        onTap: () => context.go('/main?tab=6'),
+      ),
+      _MoneyTileData(
+        icon: Icons.savings_outlined,
+        label: 'Fund Wallet',
+        tint: colors.success,
+        onTap: () => context.push('/main/fund-wallet'),
+      ),
+    ];
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Row(
+        children: [
+          for (var i = 0; i < tiles.length; i++) ...[
+            if (i > 0) const SizedBox(width: 10),
+            Expanded(child: _MoneyTile(data: tiles[i], colors: colors)),
+          ],
+        ],
+      ),
+    );
+  }
 }
+
+// ---------------------------------------------------------------------------
+// Private widgets
+// ---------------------------------------------------------------------------
 
 /// Small translucent stat chip used inside the compact hero.
 class _HeroStatChip extends StatelessWidget {
@@ -541,10 +861,6 @@ class _HeroStatChip extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Private widgets
-// ---------------------------------------------------------------------------
-
 class _DashboardSkeleton extends StatelessWidget {
   const _DashboardSkeleton();
 
@@ -559,7 +875,7 @@ class _DashboardSkeleton extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
             child: ShimmerBox(
               width: double.infinity,
-              height: 150,
+              height: 208,
               radius: 24,
             ),
           ),
@@ -581,7 +897,29 @@ class _DashboardSkeleton extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Column(
               children: const [
-                SkeletonCard(),
+                Row(
+                  children: [
+                    Expanded(child: ShimmerBox(height: 118, radius: 18)),
+                    SizedBox(width: 10),
+                    Expanded(child: ShimmerBox(height: 118, radius: 18)),
+                  ],
+                ),
+                SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(child: ShimmerBox(height: 118, radius: 18)),
+                    SizedBox(width: 10),
+                    Expanded(child: ShimmerBox(height: 118, radius: 18)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(
+              children: const [
                 SkeletonCard(),
                 SkeletonCard(),
               ],
@@ -653,6 +991,180 @@ class _QuickAction extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Data for one "Get Paid" hub card.
+class _GetPaidData {
+  final IconData icon;
+  final String title;
+  final String tagline;
+  final Color tint;
+  final int? count;
+  final String countNoun;
+  final VoidCallback onTap;
+
+  const _GetPaidData({
+    required this.icon,
+    required this.title,
+    required this.tagline,
+    required this.tint,
+    required this.count,
+    required this.countNoun,
+    required this.onTap,
+  });
+}
+
+/// Revenue-surface card in the "Get Paid" hub.
+class _GetPaidCard extends StatelessWidget {
+  final _GetPaidData data;
+  final ThemeColors colors;
+
+  const _GetPaidCard({required this.data, required this.colors});
+
+  String get _countLabel {
+    final c = data.count;
+    if (c == null) return '—';
+    return '$c ${data.countNoun}${c == 1 ? '' : 's'}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: colors.surface,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: data.onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: colors.border),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  TintedCircleIcon(
+                    icon: data.icon,
+                    tint: data.tint,
+                    size: 34,
+                    iconSize: 18,
+                  ),
+                  const Spacer(),
+                  Flexible(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: colors.primary.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        _countLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                          color: colors.primary,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(
+                data.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w700,
+                  color: colors.text,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                data.tagline,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: colors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Data for one money-row tile.
+class _MoneyTileData {
+  final IconData icon;
+  final String label;
+  final Color tint;
+  final VoidCallback onTap;
+
+  const _MoneyTileData({
+    required this.icon,
+    required this.label,
+    required this.tint,
+    required this.onTap,
+  });
+}
+
+/// Move-money tile in the money row (Transfers / Payroll / Fund).
+class _MoneyTile extends StatelessWidget {
+  final _MoneyTileData data;
+  final ThemeColors colors;
+
+  const _MoneyTile({required this.data, required this.colors});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: colors.surface,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: data.onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: colors.border),
+          ),
+          child: Column(
+            children: [
+              TintedCircleIcon(
+                icon: data.icon,
+                tint: data.tint,
+                size: 34,
+                iconSize: 18,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                data.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                  color: colors.text,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
