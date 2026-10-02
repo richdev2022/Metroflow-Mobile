@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../models/business_profile.dart';
 import '../models/kyc_status.dart';
 import '../models/subscription.dart';
@@ -11,6 +12,7 @@ import '../providers/auth_provider.dart';
 import '../providers/theme_provider.dart';
 import '../providers/user_profile_provider.dart';
 import '../services/api.dart';
+import '../services/app_update_service.dart';
 import '../services/biometrics.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_timezone.dart';
@@ -121,6 +123,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _fetchData();
     _checkBiometricAvailability();
     _loadSignInSecurity();
+    _loadAppVersion();
+  }
+
+  /// Current app version shown under "Check for Updates".
+  String? _appVersionLabel;
+
+  Future<void> _loadAppVersion() async {
+    try {
+      final pkg = await PackageInfo.fromPlatform();
+      if (!mounted) return;
+      setState(() {
+        _appVersionLabel =
+            'App version ${pkg.version} (build ${pkg.buildNumber})';
+      });
+    } catch (_) {
+      // PackageInfo should never fail in practice; keep the row generic.
+    }
   }
 
   @override
@@ -1168,6 +1187,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       icon: Icons.chat_bubble_outline,
                       title: 'Contact Support',
                       onTap: () => _showInfo('Coming Soon', 'Contact Support will be available soon.'),
+                    ),
+                    _settingItem(
+                      icon: Icons.system_update_outlined,
+                      title: 'Check for Updates',
+                      subtitle: _appVersionLabel ??
+                          'See if a newer version of MetriCorex is available',
+                      onTap: () => AppUpdateService.instance.checkManually(),
                     ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),

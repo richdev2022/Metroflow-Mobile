@@ -34,6 +34,12 @@ String get webAppOrigin {
   return '${uri.scheme}://$webHost${uri.hasPort ? ':${uri.port}' : ''}';
 }
 
+/// Base URL of the API (…/api). Exported for the app-update checker
+/// (AppUpdateService), which calls the unauthenticated
+/// /public/app-updates/check endpoint through its own short-timeout Dio
+/// instance instead of ApiService's auth/plan-gate interceptors.
+String get apiBaseUrl => _apiBaseUrl;
+
 // Global key to access navigator context
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
