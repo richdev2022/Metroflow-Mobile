@@ -736,26 +736,27 @@ class AuthNotifier extends Notifier<AuthState> {
     }
   }
 
-  /// Local wipe only (no network) — used when the backend answers 401/403,
-  /// i.e. the stored credential was revoked server-side.
-  Future<void> _clearBiometricEnrollment() async {
+  /// Local wipe ONLY (no network, no flag change) — used when the backend
+  /// answers 401/403 or the token is missing, i.e. the stored credential is
+  /// no longer usable. Keeps `biometricsEnabled == true` so the next
+  /// password/Google login silently re-enrolls this device.
+  Future<void> _clearBiometricTokenOnly() async {
     try {
       final deviceId = await _storageService.getBiometricDeviceId();
       if (deviceId != null && deviceId.isNotEmpty) {
         await _storageService.clearBiometricToken(deviceId);
       }
-      await _storageService.setBiometricsEnabled(false);
-      await _storageService.clearBiometricsCredentials();
-      state = state.copyWith(biometricsEnabled: false);
     } catch (e) {
-      debugPrint('Failed to clear biometric enrollment: $e');
+      debugPrint('Failed to clear biometric token: $e');
     }
   }
 
   /// Silent re-enroll after a successful password/Google login so the
-  /// per-device biometric token always matches a live enrollment. Never
-  /// throws; failures simply leave the previous (possibly revoked) token in
-  /// place — the next biometric login falls back to password sign-in.
+  /// per-device biometric token always matches a live enrollment. Runs only
+  /// when biometrics are enabled AND no token is stored (missing/empty) —
+  /// a live enrollment stays untouched. Never throws; failures simply leave
+  /// the state as-is — the next biometric login falls back to password
+  /// sign-in and the login screen's status check catches stale tokens.
   Future<void> _reenrollBiometricsIfNeeded() async {
     try {
       if (!state.biometricsEnabled) return;
@@ -764,6 +765,11 @@ class AuthNotifier extends Notifier<AuthState> {
       if (!await BiometricService.canAuthenticate()) return;
 
       final deviceId = await _storageService.getOrCreateBiometricDeviceId();
+      final existing = await _storageService.getBiometricToken(deviceId);
+      // Re-enroll ONLY when the stored token is missing or empty — otherwise
+      // the (already valid) enrollment is kept as-is.
+      if (existing != null && existing.isNotEmpty) return;
+
       final response = await _apiService.biometricEnroll(
         deviceId: deviceId,
         deviceName: BiometricService.deviceName(),
@@ -799,11 +805,13 @@ class AuthNotifier extends Notifier<AuthState> {
           ? null
           : await _storageService.getBiometricToken(deviceId);
       if (deviceId == null || deviceId.isEmpty || biometricToken == null || biometricToken.isEmpty) {
-        await _clearBiometricEnrollment();
+        // Token gone locally — clear ONLY the token and keep the flag so the
+        // next password/Google login silently re-enrolls.
+        await _clearBiometricTokenOnly();
         return const BiometricLoginResult(
           success: false,
           revoked: true,
-          error: 'Biometric unlock is not set up on this device. Please sign in with your password.',
+          error: 'Biometric unlock needs to be re-verified — please sign in once with your password.',
         );
       }
 
@@ -856,12 +864,14 @@ class AuthNotifier extends Notifier<AuthState> {
       } on DioException catch (e) {
         final status = e.response?.statusCode;
         if (status == 401 || status == 403) {
-          // Credential revoked server-side — wipe and ask for the password.
-          await _clearBiometricEnrollment();
+          // Credential rejected server-side — clear ONLY the stored token
+          // (biometricsEnabled stays true so the next password/Google login
+          // silently re-enrolls this device) and ask for the password.
+          await _clearBiometricTokenOnly();
           return const BiometricLoginResult(
             success: false,
             revoked: true,
-            error: 'Biometric unlock was reset. Please sign in with your password once to re-enable it.',
+            error: 'Biometric unlock needs to be re-verified — please sign in once with your password.',
           );
         }
         return BiometricLoginResult(success: false, error: ApiService.extractErrorMessage(e));

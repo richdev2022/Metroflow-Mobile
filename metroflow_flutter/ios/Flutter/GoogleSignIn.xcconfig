@@ -1,0 +1,13 @@
+// Google Sign-In iOS OAuth client (iOS-TYPE client, NOT the Web client).
+// Google blocks custom-scheme redirects for WEB-type clients (Error 400:
+// "Custom scheme URIs are not allowed for 'WEB' client type"). Create an
+// iOS-type OAuth client (Console > APIs & Services > Credentials > Create
+// credentials > OAuth client ID > iOS) in the SAME GCP project as the Web
+// client, with bundle ID matching PRODUCT_BUNDLE_IDENTIFIER, then paste its
+// client ID below (or override via CI env/secret GOOGLE_IOS_CLIENT_ID and
+// GOOGLE_IOS_URL_SCHEME). The scheme is the client ID reversed with
+// '.apps.googleusercontent.com' stripped:
+//   com.googleusercontent.apps.<client-id-without-that-suffix>
+// Keep the WEB client ID as serverClientId in lib/services/google_auth_service.dart.
+GOOGLE_IOS_CLIENT_ID = 438902996656-dbmnffpr8vufvso2o10esspalvl9c25c.apps.googleusercontent.com
+GOOGLE_IOS_URL_SCHEME = com.googleusercontent.apps.438902996656-dbmnffpr8vufvso2o10esspalvl9c25c

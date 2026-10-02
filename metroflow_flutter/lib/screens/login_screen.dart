@@ -6,6 +6,7 @@ import '../theme/app_theme.dart';
 import '../providers/auth_provider.dart';
 import '../services/biometrics.dart';
 import '../services/api.dart';
+import '../services/app_update_service.dart';
 import '../widgets/auth_ui.dart';
 import 'permission_primer.dart';
 
@@ -24,16 +25,57 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _biometricLoading = false;
   bool _biometricsAvailable = false;
   bool _showBiometricsSetupModal = false;
+  /// Set when the enrollment status check finds the server-side enrollment
+  /// gone — suppresses the auto biometric prompt for THIS session so the
+  /// user signs in with their password once (and is silently re-enrolled).
+  bool _suppressAutoBiometrics = false;
 
   @override
   void initState() {
     super.initState();
     _checkBiometrics();
     _loadUserName();
-    _autoTriggerBiometrics();
+    _verifyBiometricEnrollmentThenAutoTrigger();
+  }
+
+  /// Anti-stale-token guard: when biometrics are enabled AND a per-device
+  /// token is stored, ask the backend (POST /auth/biometric/status) whether
+  /// the enrollment is still live. If it is NOT: clear ONLY the token (keep
+  /// the enabled flag), suppress the auto prompt for this session — the user
+  /// signs in with their password once and gets silently re-enrolled.
+  /// Guarded silently: any failure keeps today's behaviour (never blocks).
+  Future<void> _verifyBiometricEnrollmentThenAutoTrigger() async {
+    try {
+      final enabled = await BiometricService.isEnabled();
+      if (enabled) {
+        final storage = StorageService();
+        final deviceId = await storage.getBiometricDeviceId();
+        final token = (deviceId == null || deviceId.isEmpty)
+            ? null
+            : await storage.getBiometricToken(deviceId);
+        if (deviceId != null &&
+            deviceId.isNotEmpty &&
+            token != null &&
+            token.isNotEmpty) {
+          final response = await ApiService().biometricStatus(deviceId);
+          final data = response.data;
+          // Old backends without the endpoint respond without `enrolled` —
+          // default to true so nothing regresses.
+          final enrolled = data is Map ? data['enrolled'] == true : true;
+          if (!enrolled) {
+            await storage.clearBiometricToken(deviceId);
+            if (mounted) setState(() => _suppressAutoBiometrics = true);
+          }
+        }
+      }
+    } catch (_) {
+      // Status check is best-effort; soft-fail closed to current behaviour.
+    }
+    if (mounted) await _autoTriggerBiometrics();
   }
 
   Future<void> _autoTriggerBiometrics() async {
+    if (_suppressAutoBiometrics) return;
     // Wait for the next frame to ensure the UI is built
     await Future.delayed(Duration.zero);
     if (!mounted) return;
@@ -218,6 +260,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       await _checkKycAndNavigate();
       // One-time permissions primer (never blocks — flag-gated inside).
       await PermissionPrimer.maybeShow();
+      // In-app update prompt: checked shortly after landing so the target
+      // screen settles first. Silent on any failure; force-updates always
+      // show, optional ones respect per-version dismissal.
+      Future.delayed(const Duration(seconds: 2), () {
+        AppUpdateService.instance.checkAndPrompt(source: 'login');
+      });
     } catch (e) {
       final errorMsg = e.toString();
       if (errorMsg.contains('OTP required')) {
@@ -253,6 +301,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       await _checkKycAndNavigate();
       // One-time permissions primer (never blocks — flag-gated inside).
       await PermissionPrimer.maybeShow();
+      // Same post-login update prompt as password login (de-duped inside
+      // AppUpdateService when the startup hook already ran).
+      Future.delayed(const Duration(seconds: 2), () {
+        AppUpdateService.instance.checkAndPrompt(source: 'google-login');
+      });
     } catch (e) {
       if (mounted) {
         await _showAlert('Google Sign-In', _friendlyError(e));
