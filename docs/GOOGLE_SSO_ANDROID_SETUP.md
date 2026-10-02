@@ -202,24 +202,86 @@ confirmation of `com.metricorex.app`):
 
 ---
 
-## 7. Recommended follow-up — pin a release keystore for CI (required for SSO in CI builds)
+## 7. Release keystore — GENERATED ✅ (pinned signing key)
 
-Current state: `buildTypes.release.signingConfig = debug` → every CI build is
-signed by a random ephemeral key, so Google (and later Play integrity) can
-never trust CI artifacts. Recommended:
+A dedicated release keystore has been generated and handed to the owner
+(**never commit it, never lose it**). Details of the pinned key:
 
-1. Generate a dedicated keystore once (keep it private, back it up — losing it
-   after first Play upload is unrecoverable):
+| Item | Value |
+|---|---|
+| File | `metricorex-release.keystore` (PKCS12) |
+| Alias | `metricorex` |
+| SHA-1 | `48:F9:26:DD:D7:9D:F9:A4:1A:95:6B:87:93:25:68:B5:6E:DE:7C:C5` |
+| SHA-256 | `58:E6:4E:52:E7:53:81:A7:49:A6:69:B0:1F:27:9D:27:58:3D:2D:CD:70:AD:6E:34:D2:D8:EA:CB:5A:AF:E0:32` |
+| Validity | 10,000 days (until ~2053) |
+| DN | CN=Metricorex, OU=Metroflow, O=Metricorex Ltd, L=Lagos, ST=Lagos, C=NG |
 
-   ```bash
-   keytool -genkey -v -keystore metricorex-release.keystore \
-     -alias metricorex -keyalg RSA -keysize 2048 -validity 10000
-   ```
+**Register the SHA-1 above in the console** (§4). Passwords are NOT stored in
+this repo — the owner keeps them with the keystore file.
 
-2. Add GitHub repo secrets: `ANDROID_KEYSTORE_BASE64`,
-   `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`.
-3. Ask the assistant to update `.github/workflows/flutter-build.yml` (decode
-   keystore before build) and `android/app/build.gradle.kts` (real release
-   signing config reading env vars).
-4. Register the **new keystore's SHA-1** in the Firebase project
-   (Project settings → Add fingerprint) and re-download the json.
+### CI signing is wired and graceful
+
+- `android/app/build.gradle.kts` reads `ANDROID_KEYSTORE_PATH` /
+  `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`
+  env vars; when present the release build is signed with this keystore.
+- `.github/workflows/flutter-build.yml` decodes `ANDROID_KEYSTORE_BASE64`
+  (GitHub secret) into `$RUNNER_TEMP` and exports the env vars. **If the
+  secrets are not configured the build still succeeds with debug signing** and
+  prints a warning — set these 4 secrets to make CI artifacts SSO-capable:
+  1. `ANDROID_KEYSTORE_BASE64` — base64 of the keystore file
+     (`base64 -w0 metricorex-release.keystore > metricorex-release.keystore.b64`)
+  2. `ANDROID_KEYSTORE_PASSWORD`
+  3. `ANDROID_KEY_ALIAS` → `metricorex`
+  4. `ANDROID_KEY_PASSWORD` (same value as the store password)
+
+### Application ID finalized
+
+`applicationId`/`namespace` = **`com.metricorex.app`** (matches the iOS bundle
+ID). MainActivity moved to `kotlin/com/metricorex/app/MainActivity.kt`
+(package `com.metricorex.app`). The committed `google-services.json` was
+hand-patched to the new package name only to keep builds green — **it must be
+replaced by a console-generated json** (§4) once the Android app + SHA-1 are
+registered.
+
+---
+
+## 8. Keystore recovery / re-deriving the SHA-1
+
+**The SHA-1 is not a separate secret — it is a fingerprint OF the keystore
+file.** Anyone holding the keystore file + store password can always re-print
+it:
+
+```bash
+keytool -list -v -keystore metricorex-release.keystore -alias metricorex
+# enter the store password when prompted (or pass -storepass '...')
+```
+
+You can also read it from a signed APK without the keystore:
+
+```bash
+keytool -printcert -jarfile app-release.apk
+```
+
+**If the keystore file is lost:**
+
+- **Before the app is live on Google Play:** nothing is permanently broken —
+  generate a fresh keystore, register the NEW SHA-1 in the console (remove the
+  old fingerprint), and update the GitHub secrets. Users installing updates
+  over a previously sideloaded APK signed with the LOST key will need to
+  uninstall first (Android refuses updates across different signing keys) —
+  one more reason to pin the real keystore before any public distribution.
+- **After Play App Signing is enabled** (first AAB upload to Play): Google
+  holds the *app signing key*, and the keystore you upload with becomes the
+  *upload key*. Losing the upload key is recoverable — Play Console →
+  Release → Setup → App signing → **Request reset** of the upload key. The
+  app signing key SHA-1 (visible on that same page) is what must remain
+  registered in the Google console for SSO.
+- **After public release with sideloaded APKs (no Play):** the lost keystore
+  is unrecoverable — a new key means every installed copy must be manually
+  uninstalled/reinstalled. Back up the keystore + password in a password
+  manager AND a second private location BEFORE doing anything else.
+
+**There is no way to regenerate the same key** — a "regenerated" keystore is a
+different key with a different SHA-1. Keep the original file safe; that is the
+whole point of pinning it.
+
