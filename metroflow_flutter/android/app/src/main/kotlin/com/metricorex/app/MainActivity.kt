@@ -1,4 +1,4 @@
-package com.example.Metricorex_flutter
+package com.metricorex.app
 
 import android.content.Context
 import io.flutter.embedding.android.FlutterFragmentActivity
