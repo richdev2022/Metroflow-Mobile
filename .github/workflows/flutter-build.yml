@@ -29,6 +29,32 @@ jobs:
         working-directory: metroflow_flutter
         run: flutter pub get
 
+      # Restore the pinned release keystore from GitHub secrets. When the
+      # ANDROID_KEYSTORE_BASE64 secret is absent the step is skipped and the
+      # build gracefully falls back to debug signing (gradle reads
+      # ANDROID_KEYSTORE_PATH and only uses the release signing config when
+      # the file exists — see android/app/build.gradle.kts).
+      # Google Sign-In only works in artifacts signed by a keystore whose
+      # SHA-1 is registered in the Google/Firebase console.
+      - name: Restore release keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::warning::ANDROID_KEYSTORE_BASE64 not set — falling back to debug signing (Google SSO will NOT work in this artifact)."
+            exit 0
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/metricorex-release.keystore"
+          {
+            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/metricorex-release.keystore"
+            echo "ANDROID_KEYSTORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD"
+            echo "ANDROID_KEY_ALIAS=$ANDROID_KEY_ALIAS"
+            echo "ANDROID_KEY_PASSWORD=$ANDROID_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+
       - name: Build APK
         working-directory: metroflow_flutter
         run: flutter build apk --release
