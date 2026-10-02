@@ -57,6 +57,8 @@ import 'screens/transaction_detail_screen.dart';
 import 'screens/bulk_create_tasks_screen.dart';
 import 'models/payment_transaction.dart';
 import 'screens/fees_screen.dart';
+import 'screens/payment_links_screen.dart';
+import 'screens/ai_credits_screen.dart';
 import 'screens/activity_logs_screen.dart';
 import 'screens/board_screen.dart';
 import 'screens/meetings_screen.dart';
@@ -426,6 +428,14 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
             GoRoute(
               path: 'fees',
               builder: (context, state) => const FeesScreen(),
+            ),
+            GoRoute(
+              path: 'payment-links',
+              builder: (context, state) => const PaymentLinksScreen(),
+            ),
+            GoRoute(
+              path: 'ai-credits',
+              builder: (context, state) => const AiCreditsScreen(),
             ),
             GoRoute(
               path: 'activity-logs',

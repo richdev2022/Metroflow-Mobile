@@ -595,6 +595,14 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                         context.push('/main/transfers');
                       },
                     ),
+                    _DrawerTile(
+                      icon: Icons.link_outlined,
+                      title: 'Payment Links',
+                      colors: colors,
+                      onTap: () async {
+                        context.push('/main/payment-links');
+                      },
+                    ),
                     const _DrawerSectionLabel('Account'),
                     _DrawerTile(
                       icon: Icons.person_outline,
@@ -610,6 +618,14 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       colors: colors,
                       onTap: () async {
                         context.push('/main/subscription');
+                      },
+                    ),
+                    _DrawerTile(
+                      icon: Icons.auto_awesome_outlined,
+                      title: 'MetricAi Credits',
+                      colors: colors,
+                      onTap: () async {
+                        context.push('/main/ai-credits');
                       },
                     ),
                     _DrawerTile(

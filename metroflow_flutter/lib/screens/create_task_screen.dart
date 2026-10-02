@@ -36,7 +36,6 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
   final _startDateController = TextEditingController();
   final _endDateController = TextEditingController();
   final List<String> _taskAssignedToIds = [];
-  final List<String> _taskImages = [];
   // Files picked at creation time — uploaded to POST /tasks/:id/attachments
   // right after the task (or, in edit mode, the existing task) is saved.
   final List<PlatformFile> _pendingTaskFiles = [];
@@ -65,7 +64,7 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
       'startDate': '',
       'endDate': '',
       'assigneeIds': <String>[],
-      'images': <String>[],
+      'files': <PlatformFile>[],
     };
   }
 
@@ -155,11 +154,22 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
             'startDate': task['startDate'].toString().isNotEmpty ? task['startDate'] : null,
             'endDate': task['endDate'].toString().isNotEmpty ? task['endDate'] : null,
             'assignedTo': (task['assigneeIds'] as List<String>).isNotEmpty ? task['assigneeIds'] : null,
-            'images': task['images'],
           };
         }).toList();
         
-        await api.createBulkTasks(tasksPayload);
+        final response = await api.createBulkTasks(tasksPayload);
+        // Attachments: upload each task's picked files to its created task
+        // (backend returns tasks in payload order).
+        final createdIds = _extractBulkCreatedIds(response);
+        var uploadIndex = 0;
+        for (final task in _tasks) {
+          final files = task['files'] as List<PlatformFile>? ?? [];
+          final taskId = uploadIndex < createdIds.length ? createdIds[uploadIndex] : null;
+          if (files.isNotEmpty && taskId != null) {
+            await _uploadFiles(taskId, files);
+          }
+          uploadIndex++;
+        }
         Fluttertoast.showToast(msg: 'Tasks created successfully');
         if (mounted) context.go('/main/backlog');
       } catch (e) {
@@ -195,7 +205,9 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
           'startDate': _startDateController.text.isNotEmpty ? _startDateController.text : null,
           'endDate': _endDateController.text.isNotEmpty ? _endDateController.text : null,
           'assignedTo': _taskAssignedToIds.isNotEmpty ? _taskAssignedToIds : null,
-          'images': _taskImages,
+          // NOTE: attachments (images/videos/files) go through the multipart
+          // /tasks/:id/attachments pipeline below — never as local `images`
+          // paths (those could never render on any device).
         };
 
         if (_editingTask == null) {
@@ -229,6 +241,54 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
   static const int _maxUploadFiles = 10;
   static const int _maxUploadBytes = 100 * 1024 * 1024; // 100MB per file
 
+  /// Pull the new tasks' ids out of POST /tasks/bulk's response
+  /// (`{ success, data: [task, ...] }` in payload order).
+  List<String> _extractBulkCreatedIds(dynamic response) {
+    try {
+      final data = response?.data;
+      if (data is! Map) return [];
+      final payload = data['data'];
+      if (payload is List) {
+        return payload
+            .whereType<Map>()
+            .map((t) => t['id']?.toString())
+            .whereType<String>()
+            .toList();
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  static bool _isImageFile(String name) {
+    final lower = name.toLowerCase();
+    return lower.endsWith('.png') ||
+        lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.gif') ||
+        lower.endsWith('.webp') ||
+        lower.endsWith('.bmp') ||
+        lower.endsWith('.heic');
+  }
+
+  /// Shared picker used by both single-task and per-task (multi) pickers.
+  Future<List<PlatformFile>> _pickValidFiles({FileType type = FileType.any}) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: type,
+      allowMultiple: true,
+      withData: true, // covers web/no-path picks; bytes power inline previews
+    );
+    if (result == null || result.files.isEmpty) return [];
+    final oversized = result.files.where((f) => f.size > _maxUploadBytes).length;
+    if (oversized > 0) {
+      Fluttertoast.showToast(
+          msg: '$oversized file(s) exceed the 100 MB limit and will be skipped');
+    }
+    return result.files
+        .where((f) => f.size <= _maxUploadBytes && f.size >= 0)
+        .take(_maxUploadFiles)
+        .toList();
+  }
+
   /// Pull the new task's id out of POST /tasks' response. Tolerates both
   /// `{ data: { task: { id } } }` and `{ data: { id } }` shapes.
   String? _extractCreatedTaskId(dynamic response) {
@@ -246,21 +306,8 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
   }
 
   Future<void> _pickTaskFiles() async {
-    final result = await FilePicker.platform.pickFiles(
-      allowMultiple: true,
-      withData: true, // covers web/no-path picks; native uses the path
-    );
-    if (result == null || result.files.isEmpty) return;
-    final oversized = result.files.where((f) => f.size > _maxUploadBytes).length;
-    if (oversized > 0) {
-      Fluttertoast.showToast(
-          msg: '$oversized file(s) exceed the 100 MB limit and will be skipped');
-    }
-    final valid = result.files
-        .where((f) => f.size <= _maxUploadBytes && f.size >= 0)
-        .take(_maxUploadFiles)
-        .toList();
-    if (!mounted) return;
+    final valid = await _pickValidFiles();
+    if (!mounted || valid.isEmpty) return;
     setState(() {
       _pendingTaskFiles.addAll(valid);
       if (_pendingTaskFiles.length > _maxUploadFiles) {
@@ -270,15 +317,30 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
     });
   }
 
-  /// Upload the picked files (≤10, ≤50MB each) to the saved task. Individual
-  /// failures are skipped — the task itself is already saved, so the flow
-  /// continues; a 403 stops the loop with a friendly message.
-  Future<void> _uploadPendingFiles(String taskId) async {
-    if (_pendingTaskFiles.isEmpty) return;
-    setState(() => _isUploadingFiles = true);
+  /// Per-task picker for multi-task mode — files ride on the task map and
+  /// upload to each created task after POST /tasks/bulk returns.
+  Future<void> _pickInlineTaskFiles(Map<String, dynamic> task) async {
+    final valid = await _pickValidFiles();
+    if (valid.isEmpty) return;
+    setState(() {
+      final files = (task['files'] as List<PlatformFile>? ?? <PlatformFile>[]);
+      files.addAll(valid);
+      if (files.length > _maxUploadFiles) {
+        files.removeRange(_maxUploadFiles, files.length);
+      }
+      task['files'] = files;
+    });
+  }
+
+  /// Upload `files` (≤10, ≤100MB each) to a saved task. Individual failures
+  /// are skipped — the task itself is already saved, so the flow continues;
+  /// a 403 stops the loop with a friendly message.
+  Future<void> _uploadFiles(String taskId, List<PlatformFile> files) async {
+    if (files.isEmpty) return;
+    if (mounted) setState(() => _isUploadingFiles = true);
     var uploaded = 0;
     var forbidden = false;
-    for (final picked in _pendingTaskFiles) {
+    for (final picked in files) {
       try {
         MultipartFile part;
         final path = picked.path;
@@ -302,7 +364,6 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
         debugPrint('Task attachment upload failed: $e');
       }
     }
-    _pendingTaskFiles.clear();
     if (mounted) setState(() => _isUploadingFiles = false);
     if (forbidden) {
       Fluttertoast.showToast(
@@ -311,6 +372,10 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
       Fluttertoast.showToast(msg: '$uploaded file(s) attached to the task');
     }
   }
+
+  /// Legacy single-list wrapper (kept for edit flow).
+  Future<void> _uploadPendingFiles(String taskId) =>
+      _uploadFiles(taskId, _pendingTaskFiles);
 
   Widget _buildTaskFilesPicker(ThemeColors colors) {
     return Column(
@@ -1007,20 +1072,10 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Images (Optional)', style: TextStyle(color: colors.text, fontSize: 12, fontWeight: FontWeight.bold)),
+        Text('Attachments — Images, Videos & Files (Optional)', style: TextStyle(color: colors.text, fontSize: 12, fontWeight: FontWeight.bold)),
         const SizedBox(height: 4),
         InkWell(
-          onTap: () async {
-            final result = await FilePicker.platform.pickFiles(
-              type: FileType.image,
-              allowMultiple: true,
-            );
-            if (result != null) {
-              setState(() {
-                _taskImages.addAll(result.files.map((f) => f.path ?? '').where((p) => p.isNotEmpty));
-              });
-            }
-          },
+          onTap: _isUploadingFiles ? null : _pickTaskFiles,
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
@@ -1030,13 +1085,13 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
             ),
             child: Row(
               children: [
-                Icon(Icons.image_outlined, color: colors.textSecondary, size: 18),
+                Icon(Icons.attach_file_rounded, color: colors.textSecondary, size: 18),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    _taskImages.isEmpty ? 'Choose Files' : '${_taskImages.length} file(s) chosen',
+                    _pendingTaskFiles.isEmpty ? 'Choose images, videos or files' : '${_pendingTaskFiles.length} file(s) ready — attached after saving',
                     style: TextStyle(
-                      color: _taskImages.isEmpty ? colors.textSecondary : colors.text,
+                      color: _pendingTaskFiles.isEmpty ? colors.textSecondary : colors.text,
                       fontSize: 14,
                     ),
                   ),
@@ -1045,6 +1100,82 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
             ),
           ),
         ),
+        if (_pendingTaskFiles.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          _buildFilesPreview(colors, files: _pendingTaskFiles, onRemove: (i) => setState(() => _pendingTaskFiles.removeAt(i))),
+        ],
+      ],
+    );
+  }
+
+  /// Visual preview of pending files: image thumbnails (rendered from the
+  /// picked bytes) and icon tiles for videos/documents, each with a remove
+  /// button. Replaces the old "N file(s) chosen" text-only row.
+  Widget _buildFilesPreview(ThemeColors colors,
+      {required List<PlatformFile> files, required void Function(int index) onRemove}) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (var i = 0; i < files.length; i++)
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  color: colors.surfaceVariant,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: colors.border),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(9.5),
+                  child: _isImageFile(files[i].name) && files[i].bytes != null
+                      ? Image.memory(files[i].bytes!, fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Icon(Icons.image_outlined, color: colors.textSecondary))
+                      : Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              files[i].name.toLowerCase().endsWith('.pdf')
+                                  ? Icons.picture_as_pdf_outlined
+                                  : (files[i].name.toLowerCase().endsWith('.mp4') || files[i].name.toLowerCase().endsWith('.mov'))
+                                      ? Icons.videocam_outlined
+                                      : Icons.insert_drive_file_outlined,
+                              color: colors.textSecondary,
+                            ),
+                            const SizedBox(height: 2),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 4),
+                              child: Text(
+                                files[i].name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 8, color: colors.textSecondary),
+                              ),
+                            ),
+                          ],
+                        ),
+                ),
+              ),
+              Positioned(
+                top: -6,
+                right: -6,
+                child: GestureDetector(
+                  onTap: () => onRemove(i),
+                  child: Container(
+                    padding: const EdgeInsets.all(3),
+                    decoration: BoxDecoration(
+                      color: colors.error,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.close, size: 12, color: Colors.white),
+                  ),
+                ),
+              ),
+            ],
+          ),
       ],
     );
   }
@@ -1053,24 +1184,14 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
     required Map<String, dynamic> task,
     required ThemeColors colors,
   }) {
-    final images = task['images'] as List<String>;
+    final files = task['files'] as List<PlatformFile>? ?? <PlatformFile>[];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Images (Optional)', style: TextStyle(color: colors.text, fontSize: 12, fontWeight: FontWeight.bold)),
+        Text('Attachments — Images, Videos & Files (Optional)', style: TextStyle(color: colors.text, fontSize: 12, fontWeight: FontWeight.bold)),
         const SizedBox(height: 4),
         InkWell(
-          onTap: () async {
-            final result = await FilePicker.platform.pickFiles(
-              type: FileType.image,
-              allowMultiple: true,
-            );
-            if (result != null) {
-              setState(() {
-                images.addAll(result.files.map((f) => f.path ?? '').where((p) => p.isNotEmpty));
-              });
-            }
-          },
+          onTap: () => _pickInlineTaskFiles(task),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
@@ -1080,13 +1201,13 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
             ),
             child: Row(
               children: [
-                Icon(Icons.image_outlined, color: colors.textSecondary, size: 18),
+                Icon(Icons.attach_file_rounded, color: colors.textSecondary, size: 18),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    images.isEmpty ? 'Choose Files' : '${images.length} file(s) chosen',
+                    files.isEmpty ? 'Choose images, videos or files' : '${files.length} file(s) ready — attached after saving',
                     style: TextStyle(
-                      color: images.isEmpty ? colors.textSecondary : colors.text,
+                      color: files.isEmpty ? colors.textSecondary : colors.text,
                       fontSize: 14,
                     ),
                   ),
@@ -1095,6 +1216,10 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
             ),
           ),
         ),
+        if (files.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          _buildFilesPreview(colors, files: files, onRemove: (i) => setState(() => (task['files'] as List<PlatformFile>).removeAt(i))),
+        ],
       ],
     );
   }
