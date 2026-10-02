@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../theme/app_theme.dart';
 import '../widgets/single_transfer_sheet.dart';
@@ -14,18 +15,24 @@ class SingleTransferScreen extends StatelessWidget {
     final colors = AppTheme.colors;
     return Scaffold(
       backgroundColor: colors.background,
+      // Primary-blue app bar + transparent status bar so the network/battery
+      // icons stay readable — consistent with the main shell and the other
+      // money screens (transfers, fund wallet).
       appBar: AppBar(
-        backgroundColor: colors.surface,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0.5,
-        shadowColor: colors.border,
-        iconTheme: IconThemeData(color: colors.text),
+        backgroundColor: colors.primary,
+        foregroundColor: Colors.white,
+        systemOverlayStyle: const SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: Brightness.light,
+          statusBarBrightness: Brightness.dark,
+        ),
+        elevation: 0,
         title: Text(
           'New Transfer',
           style: TextStyle(
             fontSize: 18,
             fontWeight: FontWeight.w700,
-            color: colors.text,
+            color: Colors.white,
           ),
         ),
       ),

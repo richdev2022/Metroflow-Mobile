@@ -3,6 +3,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../theme/app_theme.dart';
@@ -311,36 +312,36 @@ class _TransfersScreenState extends ConsumerState<TransfersScreen> {
   Widget build(BuildContext context) {
     final colors = AppTheme.colors;
 
+    // Primary-blue app bar (same treatment as the main shell) so the status
+    // bar area is blue with light icons — network/battery stay visible. The
+    // previous white surface header rendered a white status bar on top.
     return Scaffold(
-      body: SafeArea(
-        child: Column(
+      appBar: AppBar(
+        backgroundColor: colors.primary,
+        foregroundColor: Colors.white,
+        systemOverlayStyle: const SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: Brightness.light,
+          statusBarBrightness: Brightness.dark,
+        ),
+        title: const Text(
+          'Transfers',
+          style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+        ),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => context.pop(),
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.download_outlined),
+            tooltip: 'Export statement',
+            onPressed: _isLoading ? null : _exportToCsv,
+          ),
+        ],
+      ),
+      body: Column(
           children: [
-            Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(color: colors.surface),
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: Icon(Icons.arrow_back, color: colors.text),
-                    onPressed: () => context.pop(),
-                  ),
-                  Expanded(
-                    child: Text(
-                      'Transfers',
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: colors.text,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    icon: Icon(Icons.download_outlined, color: colors.primary),
-                    onPressed: _isLoading ? null : _exportToCsv,
-                  ),
-                ],
-              ),
-            ),
             // Prominent entry point: start a new individual or bulk transfer.
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
@@ -460,7 +461,6 @@ class _TransfersScreenState extends ConsumerState<TransfersScreen> {
               child: _buildTransferList(colors),
             ),
           ],
-        ),
       ),
     );
   }
