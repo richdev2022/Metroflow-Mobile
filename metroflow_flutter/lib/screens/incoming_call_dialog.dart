@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/call_provider.dart';
+import '../theme/app_theme.dart';
 import 'video_call_screen.dart';
 import '../services/api.dart';
 
@@ -26,7 +27,9 @@ class IncomingCallDialog extends ConsumerWidget {
       child: Container(
         padding: const EdgeInsets.all(30),
         decoration: BoxDecoration(
-          color: Colors.white,
+          // Theme-aware (was hardcoded white with grey labels — unreadable
+          // pairs depending on mode).
+          color: AppTheme.colors.surface,
           borderRadius: BorderRadius.circular(20),
         ),
         child: Column(
@@ -49,9 +52,10 @@ class IncomingCallDialog extends ConsumerWidget {
             const SizedBox(height: 20),
             Text(
               callerName,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
+                color: AppTheme.colors.text,
               ),
             ),
             const SizedBox(height: 10),
@@ -59,7 +63,7 @@ class IncomingCallDialog extends ConsumerWidget {
               callType,
               style: TextStyle(
                 fontSize: 18,
-                color: Colors.grey[600],
+                color: AppTheme.colors.textSecondary,
               ),
             ),
             const SizedBox(height: 30),
@@ -72,7 +76,7 @@ class IncomingCallDialog extends ConsumerWidget {
                   'Calling',
                   style: TextStyle(
                     fontSize: 16,
-                    color: Colors.grey[600],
+                    color: AppTheme.colors.textSecondary,
                   ),
                 ),
                 const SizedBox(width: 8),

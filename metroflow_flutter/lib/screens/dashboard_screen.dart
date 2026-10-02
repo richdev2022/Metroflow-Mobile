@@ -662,6 +662,13 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         tint: const Color(0xFFEA580C),
         onTap: () => context.push('/main/store'),
       ),
+      // 8th tile: completes the 4x2 grid (was 7 items -> ragged gap on row 2).
+      _QuickActionData(
+        icon: Icons.call_outlined,
+        label: 'Calls',
+        tint: const Color(0xFF0891B2),
+        onTap: () => context.push('/main/calls'),
+      ),
     ];
 
     return Padding(

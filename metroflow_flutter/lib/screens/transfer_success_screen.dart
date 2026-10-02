@@ -13,6 +13,32 @@ class TransferSuccessScreen extends StatelessWidget {
   final BulkTransferResponse? bulkResponse;
   final SingleTransferResponse? singleResponse;
 
+  // Status-aware display: the backend can legitimately return a FAILED
+  // transfer (provider rejection, processing error). Showing a green
+  // "Transfer Successful" with the raw failure text was misleading.
+  String get _status {
+    final s = (singleResponse?.data?.status ?? '').toLowerCase();
+    if (s.isNotEmpty) return s;
+    if (bulkResponse != null) return 'queued';
+    return (singleResponse?.success ?? false) ? 'success' : 'failed';
+  }
+
+  bool get _isFailed => _status == 'failed';
+  bool get _isProcessing =>
+      _status == 'processing' || _status == 'pending' || _status == 'queued';
+
+  String get _screenTitle {
+    if (_isFailed) return 'Transfer Failed';
+    if (_isProcessing) return 'Transfer Processing';
+    return 'Transfer Successful';
+  }
+
+  String get _headline {
+    if (_isFailed) return 'Transfer Failed';
+    if (_isProcessing) return 'Transfer Processing';
+    return bulkResponse?.message ?? singleResponse?.message ?? 'Transfer Initiated';
+  }
+
   static String formatAmount(double amount, String currency) {
     return '$currency ${amount.toStringAsFixed(0).replaceAllMapped(
       RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
@@ -49,7 +75,7 @@ class TransferSuccessScreen extends StatelessWidget {
                   ),
                   Expanded(
                     child: Text(
-                      'Transfer Successful',
+                      _screenTitle,
                       style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: colors.text),
                     ),
                   ),
@@ -79,6 +105,23 @@ class TransferSuccessScreen extends StatelessWidget {
   }
 
   Widget _buildHeader(ThemeColors colors) {
+    final IconData headerIcon;
+    final Color iconColor;
+    final Color iconBg;
+    if (_isFailed) {
+      headerIcon = Icons.error_outline;
+      iconColor = AppColors.error;
+      iconBg = AppColors.error.withValues(alpha: 0.12);
+    } else if (_isProcessing) {
+      headerIcon = Icons.schedule_rounded;
+      iconColor = AppColors.warning;
+      iconBg = AppColors.warning.withValues(alpha: 0.12);
+    } else {
+      headerIcon = Icons.check_circle_outline;
+      iconColor = AppColors.success;
+      iconBg = AppColors.success.withValues(alpha: 0.12);
+    }
+
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
@@ -92,17 +135,27 @@ class TransferSuccessScreen extends StatelessWidget {
             width: 56,
             height: 56,
             decoration: BoxDecoration(
-              color: AppColors.success.withValues(alpha: 0.12),
+              color: iconBg,
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.check_circle_outline, color: AppColors.success, size: 28),
+            child: Icon(headerIcon, color: iconColor, size: 28),
           ),
           const SizedBox(height: 16),
           Text(
-            bulkResponse?.message ?? singleResponse?.message ?? 'Transfer Initiated',
+            _headline,
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: colors.text),
             textAlign: TextAlign.center,
           ),
+          if (_isFailed) ...[
+            const SizedBox(height: 10),
+            Text(
+              // With server-side auto-reversal the debit (amount + fee) is
+              // returned to the wallet automatically.
+              'The full amount, including the fee, is being returned to your wallet automatically.',
+              style: TextStyle(fontSize: 13, color: colors.textSecondary),
+              textAlign: TextAlign.center,
+            ),
+          ],
         ],
       ),
     );

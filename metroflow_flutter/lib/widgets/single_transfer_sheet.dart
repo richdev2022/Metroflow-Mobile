@@ -636,8 +636,17 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
       final response = await ApiService().singleTransfer(payload);
       if (!mounted) return;
       final singleResponse = SingleTransferResponse.fromJson(response.data);
+      // Status-aware feedback: the backend returns the processed row, which
+      // can be FAILED (provider rejection / processing error) — never tell
+      // the user "submitted successfully" for a failed transfer.
+      final failed =
+          (singleResponse.data?.status.toLowerCase() ?? '') == 'failed';
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Transfer submitted successfully')),
+        SnackBar(
+          content: Text(failed
+              ? 'Transfer failed — the amount will be returned to your wallet'
+              : 'Transfer submitted successfully'),
+        ),
       );
       setState(() {
         showOtpModal = false;
