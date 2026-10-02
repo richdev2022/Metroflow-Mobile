@@ -1,18 +1,26 @@
 {
   "project_info": {
-    "project_number": "268045301442",
-    "project_id": "metricorex",
-    "storage_bucket": "metricorex.firebasestorage.app"
+    "project_number": "438902996656",
+    "project_id": "project-65e11808-f15a-47a5-b68",
+    "storage_bucket": "project-65e11808-f15a-47a5-b68.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:268045301442:android:0893c79e4e7676f7312d5b",
+        "mobilesdk_app_id": "1:438902996656:android:cbf566a79ab5728306c575",
         "android_client_info": {
           "package_name": "com.metricorex.app"
         }
       },
       "oauth_client": [
+        {
+          "client_id": "438902996656-i1umv1ril623btklostgk09r0pesoc9b.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.metricorex.app",
+            "certificate_hash": "48f926ddd79df9a41a956b87932568b56ede7cc5"
+          }
+        },
         {
           "client_id": "438902996656-dbmnffpr8vufvso2o10esspalvl9c25c.apps.googleusercontent.com",
           "client_type": 3
@@ -20,7 +28,7 @@
       ],
       "api_key": [
         {
-          "current_key": "AIzaSyD6xaYI5Oq8BpMc2yEvC9xB2UAx_7M2yxk"
+          "current_key": "AIzaSyAcnkWkrReftrGOhwTEe-bg4d5d3cChmIs"
         }
       ],
       "services": {
@@ -29,6 +37,14 @@
             {
               "client_id": "438902996656-dbmnffpr8vufvso2o10esspalvl9c25c.apps.googleusercontent.com",
               "client_type": 3
+            },
+            {
+              "client_id": "438902996656-ufvc3giigfte0eng4d0qsuhnabf726r0.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.metricorex.app",
+                "app_store_id": "6818319166"
+              }
             }
           ]
         }
