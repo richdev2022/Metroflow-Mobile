@@ -731,6 +731,13 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
                   maxRecordingDuration: plan.maxRecordingDuration,
                   maxRecordingStorage: plan.maxRecordingStorage,
                   maxTeamMembers: plan.maxTeamMembers,
+                  paymentLinksEnabled: plan.paymentLinksEnabled,
+                  maxPaymentLinks: plan.maxPaymentLinks,
+                  paymentLinkFeeDiscountPercent: plan.paymentLinkFeeDiscountPercent,
+                  invoicesEnabled: plan.invoicesEnabled,
+                  maxInvoicesPerMonth: plan.maxInvoicesPerMonth,
+                  invoiceFeeDiscountPercent: plan.invoiceFeeDiscountPercent,
+                  aiCreditDiscountPercent: plan.aiCreditDiscountPercent,
                 ),
                 if (action != null) ...[
                   const SizedBox(height:16),
@@ -1138,6 +1145,14 @@ class _LimitGrid extends StatelessWidget {
   final int? maxRecordingDuration;
   final int? maxRecordingStorage;
   final int maxTeamMembers;
+  // Revenue feature knobs (passed from Plan cards; null hides the row)
+  final bool paymentLinksEnabled;
+  final int? maxPaymentLinks;
+  final double? paymentLinkFeeDiscountPercent;
+  final bool invoicesEnabled;
+  final int? maxInvoicesPerMonth;
+  final double? invoiceFeeDiscountPercent;
+  final double? aiCreditDiscountPercent;
 
   const _LimitGrid({
     required this.maxMeetingDuration,
@@ -1145,7 +1160,17 @@ class _LimitGrid extends StatelessWidget {
     required this.maxRecordingDuration,
     required this.maxRecordingStorage,
     required this.maxTeamMembers,
+    this.paymentLinksEnabled = false,
+    this.maxPaymentLinks,
+    this.paymentLinkFeeDiscountPercent,
+    this.invoicesEnabled = false,
+    this.maxInvoicesPerMonth,
+    this.invoiceFeeDiscountPercent,
+    this.aiCreditDiscountPercent,
   });
+
+  static String _trimPct(double v) =>
+      v.truncateToDouble() == v ? v.toStringAsFixed(0) : v.toStringAsFixed(1);
 
   @override
   Widget build(BuildContext context) {
@@ -1159,6 +1184,22 @@ class _LimitGrid extends StatelessWidget {
       ('Storage', fmt(maxRecordingStorage, ' MB')),
       ('Team size', maxTeamMembers > 9999 ? 'Unlimited' : '$maxTeamMembers'),
     ];
+    if (paymentLinksEnabled) {
+      limits.add(('Payment links', fmt(maxPaymentLinks, '')));
+      if (paymentLinkFeeDiscountPercent != null &&
+          paymentLinkFeeDiscountPercent! > 0) {
+        limits.add(('Link fee discount', '${_trimPct(paymentLinkFeeDiscountPercent!)}%'));
+      }
+    }
+    if (invoicesEnabled) {
+      limits.add(('Invoices', fmt(maxInvoicesPerMonth, '/mo')));
+      if (invoiceFeeDiscountPercent != null && invoiceFeeDiscountPercent! > 0) {
+        limits.add(('Invoice fee discount', '${_trimPct(invoiceFeeDiscountPercent!)}%'));
+      }
+    }
+    if (aiCreditDiscountPercent != null && aiCreditDiscountPercent! > 0) {
+      limits.add(('AI credit packs', '${_trimPct(aiCreditDiscountPercent!)}% off'));
+    }
 
     return Column(
       children: limits.map((entry) {

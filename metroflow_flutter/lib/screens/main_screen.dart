@@ -603,6 +603,14 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                         context.push('/main/payment-links');
                       },
                     ),
+                    _DrawerTile(
+                      icon: Icons.receipt_long_outlined,
+                      title: 'Invoices',
+                      colors: colors,
+                      onTap: () async {
+                        context.push('/main/invoices');
+                      },
+                    ),
                     const _DrawerSectionLabel('Account'),
                     _DrawerTile(
                       icon: Icons.person_outline,
