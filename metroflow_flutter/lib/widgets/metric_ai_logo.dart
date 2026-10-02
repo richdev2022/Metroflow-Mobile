@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_theme.dart';
+
 /// The MetricAi logo inside a circle with a subtle glow that blends indigo
 /// (#4F46E5) and blue (#2563EB). Used for the pinned MetricAi entry in the
 /// chat list, the MetricAi screen header and every assistant bubble.
@@ -36,7 +38,10 @@ class MetricAiGlowLogo extends StatelessWidget {
       height: size,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: Colors.white,
+        // Theme-aware disc: hardcoded white glared in dark mode (this widget
+        // sits in the app bar, the chat-list tile and EVERY assistant bubble).
+        // Light keeps the classic white disc; dark uses the surface color.
+        color: AppTheme.colors.surface,
         boxShadow: glowStrength <= 0
             ? null
             : [

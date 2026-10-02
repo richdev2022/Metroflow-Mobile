@@ -1964,9 +1964,17 @@ class StorageService {
     } catch (_) {}
   }
 
+  /// Bump when the onboarding flow changes (new slides/design). Existing
+  /// installs will see onboarding once more after an app update ships a
+  /// higher version here. The legacy bool-only flag predates versioning.
+  static const int kOnboardingVersion = 2;
+
   Future<void> setHasSeenOnboarding(bool seen) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('hasSeenOnboarding', seen);
+    if (seen) {
+      await prefs.setInt('onboarding_seen_version', kOnboardingVersion);
+    }
   }
 
   /// Whether the guided app tour (lib/widgets/app_tour.dart) has already been
@@ -1983,7 +1991,11 @@ class StorageService {
 
   Future<bool> getHasSeenOnboarding() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool('hasSeenOnboarding') ?? false;
+    // Version-keyed: legacy installs (bool flag only, no version key) have
+    // NOT seen the CURRENT onboarding -> they get it once after the update
+    // (fixes "onboarding not showing after app update").
+    final seenVersion = prefs.getInt('onboarding_seen_version') ?? 0;
+    return seenVersion >= kOnboardingVersion;
   }
 
   Future<void> setLastRoute(String route) async {

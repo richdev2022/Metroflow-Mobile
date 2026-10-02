@@ -80,7 +80,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     await Future.delayed(Duration.zero);
     if (!mounted) return;
 
-    final biometricsEnabled = ref.read(authProvider).biometricsEnabled;
+    // BUGFIX: read from storage (source of truth), NOT the provider — on a
+    // cold start checkAuth() may not have finished yet, leaving the provider
+    // at its default (biometricsEnabled: false), so the auto-prompt silently
+    // never fired for users who had enabled biometrics.
+    final biometricsEnabled = await BiometricService.isEnabled();
     final canAuth = await BiometricService.canAuthenticate();
 
     if (biometricsEnabled && canAuth && mounted) {

@@ -622,8 +622,13 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
           }
         }
         
-        // Prompt biometrics if needed
-        if (_shouldPromptBiometricsOnResume && updatedAuthState.biometricsEnabled && !updatedAuthState.isAuthenticated) {
+        // Prompt biometrics if needed.
+        // BUGFIX: re-read the provider AFTER logout() — the snapshot taken at
+        // the top (updatedAuthState) was captured before logout flipped
+        // isAuthenticated to false, so `!…isAuthenticated` was always false
+        // and the post-backgrounding biometric re-prompt could never fire.
+        final postLogoutState = ref.read(authProvider);
+        if (_shouldPromptBiometricsOnResume && postLogoutState.biometricsEnabled && !postLogoutState.isAuthenticated) {
           // Prompt biometrics
           final hasBiometrics = await BiometricService.canAuthenticate();
           if (hasBiometrics && mounted) {
