@@ -569,7 +569,29 @@ class _FundWalletWebViewState extends State<_FundWalletWebView> {
   bool _isLoading = true;
   late final WebViewController _controller;
   bool _isVerifying = false;
-  bool _completed = false;
+  bool _succeeded = false;
+  // Callback URLs already handed to verification — prevents double-firing
+  // when the provider redirect triggers the delegate more than once.
+  final Set<String> _handledUrls = <String>{};
+
+  /// ONLY our own callback endpoints signal "payment finished". Broad
+  /// substring matches like 'success'/'callback'/'verify' used to trip on
+  /// bank 3DS/OTP pages mid-checkout, latched the handler, and left the
+  /// webview stuck on a dead (blank) navigation afterwards.
+  static const List<String> _callbackPathMarkers = <String>[
+    '/api/wallet/verify',
+    '/payment/callback',
+  ];
+
+  bool _isCallbackUrl(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return false;
+    final path = uri.path.toLowerCase();
+    if (_callbackPathMarkers.any(path.contains)) return true;
+    // Any URL carrying our own funding reference is a callback signal too.
+    final ref = uri.queryParameters['reference'] ?? uri.queryParameters['tx_ref'];
+    return ref != null && ref.startsWith('FUND-');
+  }
 
   @override
   void initState() {
@@ -582,10 +604,18 @@ class _FundWalletWebViewState extends State<_FundWalletWebView> {
         NavigationDelegate(
           onNavigationRequest: (request) async {
             final url = request.url;
-            if (url.contains('success') || url.contains('callback') || url.contains('verify')) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (mounted) _handlePaymentComplete(url);
-              });
+            if (_isCallbackUrl(url)) {
+              final key = Uri.tryParse(url)?.toString() ?? url;
+              if (!_handledUrls.contains(key)) {
+                _handledUrls.add(key);
+                // Verify AFTER the frame — calling setState synchronously
+                // from the navigation delegate is unsafe.
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) _verifyPayment();
+                });
+              }
+              // Never render the backend/browser callback page inside this
+              // webview — the app verifies and returns on its own.
               return NavigationDecision.prevent;
             }
             return NavigationDecision.navigate;
@@ -608,70 +638,186 @@ class _FundWalletWebViewState extends State<_FundWalletWebView> {
     super.dispose();
   }
 
-  Future<void> _handlePaymentComplete(String url) async {
-    if (_completed || _isVerifying) return;
-    _completed = true;
+  /// Re-verifies the transaction against the backend (which re-checks the
+  /// provider). Retryable — a pending result never locks the user out; they
+  /// can also tap "Verify" manually at any time.
+  Future<void> _verifyPayment() async {
+    if (_isVerifying || _succeeded) return;
+    final reference = widget.reference;
+    if (reference == null || reference.isEmpty) {
+      AppToast.show('Payment reference missing — please contact support.');
+      return;
+    }
     if (mounted) setState(() => _isVerifying = true);
-    var shouldResetVerifying = true;
     try {
-      final uri = Uri.parse(url);
-      final reference = uri.queryParameters['reference'] ??
-          uri.queryParameters['tx_ref'] ??
-          widget.reference;
-      if (reference != null) {
-        final api = ApiService();
-        final response = await api.verifyWalletPayment(reference, suppressToast: true);
-        if (_isWalletVerificationSuccessful(response)) {
-          AppToast.show(
-            _walletVerificationMessage(response),
-            type: AppToastType.success,
-          );
+      final api = ApiService();
+      final response = await api.verifyWalletPayment(reference, suppressToast: true);
+      final data = response.data;
+      final explicitlyCancelled =
+          data is Map && data['cancelled'] == true && data['success'] != true;
+
+      if (_isWalletVerificationSuccessful(response)) {
+        AppToast.show(
+          _walletVerificationMessage(response),
+          type: AppToastType.success,
+        );
+        if (mounted) {
+          setState(() {
+            _succeeded = true;
+            _isVerifying = false;
+          });
+          // Brief success beat, then auto-close back into the app.
+          await Future<void>.delayed(const Duration(milliseconds: 1200));
           if (mounted) {
-            shouldResetVerifying = false;
             Navigator.of(context).pop();
             widget.onComplete();
           }
-        } else {
-          AppToast.show(
-            _walletVerificationMessage(response, fallback: 'Payment verification pending'),
-          );
         }
+        return;
       }
+
+      AppToast.show(
+        explicitlyCancelled
+            ? (data is Map && data['message'] is String
+                ? data['message'] as String
+                : 'Payment cancelled — no money was deducted.')
+            : _walletVerificationMessage(response,
+                fallback: 'Payment verification pending — tap Verify to retry'),
+      );
     } catch (e) {
       debugPrint('Payment verification failed: $e');
       if (_isAlreadyVerifiedError(e)) {
         AppToast.show('Wallet funded successfully', type: AppToastType.success);
         if (mounted) {
-          shouldResetVerifying = false;
-          Navigator.of(context).pop();
-          widget.onComplete();
+          setState(() {
+            _succeeded = true;
+            _isVerifying = false;
+          });
+          await Future<void>.delayed(const Duration(milliseconds: 1200));
+          if (mounted) {
+            Navigator.of(context).pop();
+            widget.onComplete();
+          }
         }
       } else {
-        AppToast.show('Payment verification pending. Please refresh your wallet balance.');
+        AppToast.show(
+          'Payment verification pending — complete the checkout, then tap Verify.',
+        );
       }
     } finally {
-      if (shouldResetVerifying && mounted) setState(() => _isVerifying = false);
+      if (mounted && !_succeeded) setState(() => _isVerifying = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final colors = AppTheme.colors;
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: AppTheme.colors.surface,
+        backgroundColor: colors.primary,
+        foregroundColor: Colors.white,
+        systemOverlayStyle: const SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: Brightness.light,
+          statusBarBrightness: Brightness.dark,
+        ),
         leading: IconButton(
           icon: const Icon(Icons.close),
           onPressed: () => Navigator.pop(context),
         ),
         title: const Text('Fund Wallet'),
         centerTitle: true,
+        actions: [
+          if (!_succeeded && widget.reference != null)
+            TextButton.icon(
+              onPressed: _isVerifying ? null : _verifyPayment,
+              icon: _isVerifying
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.verified_outlined, color: Colors.white),
+              label: const Text(
+                'Verify',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+        ],
       ),
       body: Stack(
         children: [
           WebViewWidget(controller: _controller),
-          if (_isLoading || _isVerifying)
+          if (_isLoading && !_isVerifying && !_succeeded)
             const Center(child: CircularProgressIndicator()),
+          if (_isVerifying)
+            _PaymentStatusOverlay(
+              icon: const CircularProgressIndicator(),
+              title: 'Verifying your payment...',
+              message:
+                  'Checking with the payment provider. This only takes a moment — '
+                  'you will return to your wallet automatically.',
+            ),
+          if (_succeeded)
+            _PaymentStatusOverlay(
+              icon: Icon(Icons.check_circle, size: 56, color: Colors.green[600]),
+              title: 'Wallet funded successfully',
+              message: 'Returning you to the app...',
+            ),
         ],
+      ),
+    );
+  }
+}
+
+class _PaymentStatusOverlay extends StatelessWidget {
+  final Widget icon;
+  final String title;
+  final String message;
+
+  const _PaymentStatusOverlay({
+    required this.icon,
+    required this.title,
+    required this.message,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppTheme.colors;
+    return Container(
+      color: Colors.black.withValues(alpha: 0.45),
+      alignment: Alignment.center,
+      padding: const EdgeInsets.all(24),
+      child: Card(
+        color: colors.surface,
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              icon,
+              const SizedBox(height: 16),
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: colors.text,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                message,
+                style: TextStyle(fontSize: 13, color: colors.textSecondary),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
