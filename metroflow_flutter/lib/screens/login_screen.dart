@@ -6,6 +6,7 @@ import '../theme/app_theme.dart';
 import '../providers/auth_provider.dart';
 import '../services/biometrics.dart';
 import '../services/api.dart';
+import '../services/app_update_service.dart';
 import '../widgets/auth_ui.dart';
 import 'permission_primer.dart';
 
@@ -218,6 +219,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       await _checkKycAndNavigate();
       // One-time permissions primer (never blocks — flag-gated inside).
       await PermissionPrimer.maybeShow();
+      // In-app update prompt: checked shortly after landing so the target
+      // screen settles first. Silent on any failure; force-updates always
+      // show, optional ones respect per-version dismissal.
+      Future.delayed(const Duration(seconds: 2), () {
+        AppUpdateService.instance.checkAndPrompt(source: 'login');
+      });
     } catch (e) {
       final errorMsg = e.toString();
       if (errorMsg.contains('OTP required')) {
@@ -253,6 +260,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       await _checkKycAndNavigate();
       // One-time permissions primer (never blocks — flag-gated inside).
       await PermissionPrimer.maybeShow();
+      // Same post-login update prompt as password login (de-duped inside
+      // AppUpdateService when the startup hook already ran).
+      Future.delayed(const Duration(seconds: 2), () {
+        AppUpdateService.instance.checkAndPrompt(source: 'google-login');
+      });
     } catch (e) {
       if (mounted) {
         await _showAlert('Google Sign-In', _friendlyError(e));
