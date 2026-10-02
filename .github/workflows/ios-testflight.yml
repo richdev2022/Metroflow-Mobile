@@ -121,9 +121,14 @@ jobs:
           # With `--no-codesign`, the SPM-generated plugin package
           # (FlutterGeneratedPluginSwiftPackage) still demanded a Development
           # Team at the final embed/sign phase and aborted the build after the
-          # full 228s compile. Disable SPM so every plugin resolves through
-          # CocoaPods again (as in all pre-3.44 builds), and hard-force
-          # signing off at the xcodebuild level via FLUTTER_XCODE_* overrides.
+          # full compile. The project is now DE-MIGRATED from SPM: all
+          # FlutterGeneratedPluginSwiftPackage references were removed from
+          # Runner.xcodeproj/project.pbxproj, so every plugin resolves through
+          # CocoaPods again (as in all pre-3.44 builds). NOTE: the global
+          # config flag below is NOT sufficient on its own — once the pbxproj
+          # carries the SPM references, SPM stays active even with
+          # --no-enable-swift-package-manager. Signing stays hard-forced off
+          # at the xcodebuild level via the FLUTTER_XCODE_* overrides.
           FLUTTER_XCODE_CODE_SIGNING_ALLOWED: "NO"
           FLUTTER_XCODE_CODE_SIGNING_REQUIRED: "NO"
           FLUTTER_XCODE_CODE_SIGN_IDENTITY: ""
