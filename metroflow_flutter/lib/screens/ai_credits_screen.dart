@@ -15,8 +15,10 @@ class AiCreditsScreen extends StatefulWidget {
 class _AiCreditsScreenState extends State<AiCreditsScreen> {
   final ApiService _api = ApiService();
   List<Map<String, dynamic>> _packs = [];
+  List<Map<String, dynamic>> _purchases = [];
   int _balance = 0;
   bool _isLoading = true;
+  bool _historyExpanded = false;
   String? _buyingPackId;
 
   @override
@@ -37,6 +39,17 @@ class _AiCreditsScreenState extends State<AiCreditsScreen> {
           _balance = (response.data['balance']?['balance'] as num?)?.toInt() ?? 0;
         });
       }
+      // Purchase history is best-effort — never block the screen on it.
+      try {
+        final histRes = await _api.getAiCreditPurchases();
+        if (histRes.data['success'] == true && mounted) {
+          setState(() {
+            _purchases = (histRes.data['purchases'] as List<dynamic>? ?? [])
+                .map((e) => Map<String, dynamic>.from(e as Map))
+                .toList();
+          });
+        }
+      } catch (_) {}
     } catch (e) {
       debugPrint('Failed to load AI credit packs: $e');
     } finally {
@@ -211,6 +224,97 @@ class _AiCreditsScreenState extends State<AiCreditsScreen> {
                     style: TextStyle(fontSize: 12, color: colors.textSecondary),
                     textAlign: TextAlign.center,
                   ),
+                  if (_purchases.isNotEmpty) ...[
+                    const SizedBox(height: 20),
+                    InkWell(
+                      onTap: () =>
+                          setState(() => _historyExpanded = !_historyExpanded),
+                      borderRadius: BorderRadius.circular(12),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Row(
+                          children: [
+                            Icon(Icons.history,
+                                size: 18, color: colors.textSecondary),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Recent purchases (${_purchases.length})',
+                                style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700,
+                                    color: colors.text),
+                              ),
+                            ),
+                            Icon(
+                              _historyExpanded
+                                  ? Icons.keyboard_arrow_up
+                                  : Icons.keyboard_arrow_down,
+                              color: colors.textSecondary,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    if (_historyExpanded)
+                      ..._purchases.take(10).map((p) {
+                        final status = p['status']?.toString() ?? 'success';
+                        final isSuccess = status == 'success';
+                        return Container(
+                          margin: const EdgeInsets.only(top: 8),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: colors.surface,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: colors.border),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                isSuccess
+                                    ? Icons.check_circle
+                                    : Icons.error_outline,
+                                size: 18,
+                                color: isSuccess
+                                    ? colors.success
+                                    : colors.error,
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      '${p['pack_name']?.toString() ?? 'Pack'} · ${(p['credits'] as num?)?.toInt() ?? 0} credits',
+                                      style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          color: colors.text),
+                                    ),
+                                    Text(
+                                      '${p['reference']?.toString() ?? ''}',
+                                      style: TextStyle(
+                                          fontSize: 11,
+                                          color: colors.textSecondary),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Text(
+                                _money(p['amount'],
+                                    p['currency']?.toString() ?? 'NGN'),
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w700,
+                                    color: colors.text),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                  ],
                 ],
               ),
             ),

@@ -555,6 +555,31 @@ class ApiService {
     });
   }
 
+  Future<Response> getAiCreditPurchases() async {
+    return await _dio.get('/ai-credits/purchases');
+  }
+
+  // ---- Smart Invoices ("Get Paid" revenue feature) --------------------------
+  Future<Response> getInvoices() async {
+    return await _dio.get('/invoices');
+  }
+
+  Future<Response> createInvoice(Map<String, dynamic> payload) async {
+    return await _dio.post('/invoices', data: payload);
+  }
+
+  Future<Response> updateInvoice(String id, Map<String, dynamic> payload) async {
+    return await _dio.put('/invoices/$id', data: payload);
+  }
+
+  Future<Response> cancelInvoice(String id) async {
+    return await _dio.post('/invoices/$id/cancel');
+  }
+
+  Future<Response> deleteInvoice(String id) async {
+    return await _dio.delete('/invoices/$id');
+  }
+
 
   /// POST /wallet/fund/card. The backend resolves the active payment provider
   /// itself — the client MUST NOT send a `provider` field (it 400s for

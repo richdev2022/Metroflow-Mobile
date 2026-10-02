@@ -20,6 +20,14 @@ class Plan {
   final bool breakoutRoomsEnabled;
   final bool virtualBackgrounds;
   final bool liveCaptions;
+  // Admin-configured revenue feature knobs (Payment Links / Invoices / AI credits)
+  final bool paymentLinksEnabled;
+  final int? maxPaymentLinks;
+  final double? paymentLinkFeeDiscountPercent;
+  final double? aiCreditDiscountPercent;
+  final bool invoicesEnabled;
+  final int? maxInvoicesPerMonth;
+  final double? invoiceFeeDiscountPercent;
 
   Plan({
     required this.id,
@@ -42,6 +50,13 @@ class Plan {
     this.breakoutRoomsEnabled = false,
     this.virtualBackgrounds = false,
     this.liveCaptions = false,
+    this.paymentLinksEnabled = true,
+    this.maxPaymentLinks,
+    this.paymentLinkFeeDiscountPercent,
+    this.aiCreditDiscountPercent,
+    this.invoicesEnabled = true,
+    this.maxInvoicesPerMonth,
+    this.invoiceFeeDiscountPercent,
   });
 
   factory Plan.fromJson(Map<String, dynamic> json) {
@@ -69,6 +84,13 @@ class Plan {
       breakoutRoomsEnabled: json['breakout_rooms_enabled'] == true,
       virtualBackgrounds: json['virtual_backgrounds'] == true,
       liveCaptions: json['live_captions'] == true,
+      paymentLinksEnabled: json['payment_links_enabled'] != false,
+      maxPaymentLinks: _optionalInt(json['max_payment_links']),
+      paymentLinkFeeDiscountPercent: _optionalDouble(json['payment_link_fee_discount_percent']),
+      aiCreditDiscountPercent: _optionalDouble(json['ai_credit_discount_percent']),
+      invoicesEnabled: json['invoices_enabled'] != false,
+      maxInvoicesPerMonth: _optionalInt(json['max_invoices_per_month']),
+      invoiceFeeDiscountPercent: _optionalDouble(json['invoice_fee_discount_percent']),
     );
   }
 
@@ -76,6 +98,12 @@ class Plan {
     if (value == null) return null;
     if (value is num) return value.toInt();
     return int.tryParse(value.toString());
+  }
+
+  static double? _optionalDouble(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toDouble();
+    return double.tryParse(value.toString());
   }
 
   Map<String, dynamic> toJson() {
