@@ -25,16 +25,57 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _biometricLoading = false;
   bool _biometricsAvailable = false;
   bool _showBiometricsSetupModal = false;
+  /// Set when the enrollment status check finds the server-side enrollment
+  /// gone — suppresses the auto biometric prompt for THIS session so the
+  /// user signs in with their password once (and is silently re-enrolled).
+  bool _suppressAutoBiometrics = false;
 
   @override
   void initState() {
     super.initState();
     _checkBiometrics();
     _loadUserName();
-    _autoTriggerBiometrics();
+    _verifyBiometricEnrollmentThenAutoTrigger();
+  }
+
+  /// Anti-stale-token guard: when biometrics are enabled AND a per-device
+  /// token is stored, ask the backend (POST /auth/biometric/status) whether
+  /// the enrollment is still live. If it is NOT: clear ONLY the token (keep
+  /// the enabled flag), suppress the auto prompt for this session — the user
+  /// signs in with their password once and gets silently re-enrolled.
+  /// Guarded silently: any failure keeps today's behaviour (never blocks).
+  Future<void> _verifyBiometricEnrollmentThenAutoTrigger() async {
+    try {
+      final enabled = await BiometricService.isEnabled();
+      if (enabled) {
+        final storage = StorageService();
+        final deviceId = await storage.getBiometricDeviceId();
+        final token = (deviceId == null || deviceId.isEmpty)
+            ? null
+            : await storage.getBiometricToken(deviceId);
+        if (deviceId != null &&
+            deviceId.isNotEmpty &&
+            token != null &&
+            token.isNotEmpty) {
+          final response = await ApiService().biometricStatus(deviceId);
+          final data = response.data;
+          // Old backends without the endpoint respond without `enrolled` —
+          // default to true so nothing regresses.
+          final enrolled = data is Map ? data['enrolled'] == true : true;
+          if (!enrolled) {
+            await storage.clearBiometricToken(deviceId);
+            if (mounted) setState(() => _suppressAutoBiometrics = true);
+          }
+        }
+      }
+    } catch (_) {
+      // Status check is best-effort; soft-fail closed to current behaviour.
+    }
+    if (mounted) await _autoTriggerBiometrics();
   }
 
   Future<void> _autoTriggerBiometrics() async {
+    if (_suppressAutoBiometrics) return;
     // Wait for the next frame to ensure the UI is built
     await Future.delayed(Duration.zero);
     if (!mounted) return;

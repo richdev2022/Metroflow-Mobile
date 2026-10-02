@@ -496,6 +496,32 @@ class _TeamScreenState extends State<TeamScreen> {
     return value[0].toUpperCase() + value.substring(1);
   }
 
+  /// Badge color per role: Owner amber/gold, Admin red, Manager blue,
+  /// Member grey, custom roles use the primary color.
+  Color _roleBadgeColor(String displayRole) {
+    switch (displayRole.toLowerCase()) {
+      case 'owner':
+        return const Color(0xFFF59E0B);
+      case 'admin':
+        return const Color(0xFFEF4444);
+      case 'manager':
+        return const Color(0xFF3B82F6);
+      case 'member':
+        return const Color(0xFF94A3B8);
+      default:
+        return AppColors.primary;
+    }
+  }
+
+  /// Resolved badge label: custom roleName when a roleId is set, else the
+  /// title-cased legacy role.
+  String _roleBadgeLabel(TeamMember member) {
+    if (member.roleId != null && member.roleName != null) {
+      return member.roleName!;
+    }
+    return _titleCase(member.role);
+  }
+
   String? _formatJoinedDate(String? value) {
     if (value == null || value.isEmpty) return null;
     final parsed = DateTime.tryParse(value);
@@ -899,30 +925,50 @@ class _TeamScreenState extends State<TeamScreen> {
                   runSpacing: 6,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          member.roleId != null && member.roleName != null
-                              ? Icons.shield_outlined
-                              : _getRoleIcon(member.role),
-                          size: 16,
-                          color: member.roleId != null && member.roleName != null
-                              ? colors.primary
-                              : colors.textSecondary,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          member.roleId != null && member.roleName != null
-                              ? member.roleName!
-                              : _titleCase(member.role),
-                          style: TextStyle(
-                            color: colors.textSecondary,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
+                    // Tappable role badge → fast path to the role-change modal.
+                    InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => _showRoleModal(member),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: _roleBadgeColor(_roleBadgeLabel(member))
+                              .withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: _roleBadgeColor(_roleBadgeLabel(member))
+                                .withValues(alpha: 0.4),
                           ),
                         ),
-                      ],
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              member.roleId != null && member.roleName != null
+                                  ? Icons.shield_outlined
+                                  : _getRoleIcon(member.role),
+                              size: 14,
+                              color: _roleBadgeColor(_roleBadgeLabel(member)),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              _roleBadgeLabel(member),
+                              style: TextStyle(
+                                color: _roleBadgeColor(_roleBadgeLabel(member)),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(
+                              Icons.edit_outlined,
+                              size: 11,
+                              color: _roleBadgeColor(_roleBadgeLabel(member)),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                     InkWell(
                       borderRadius: BorderRadius.circular(8),
@@ -961,6 +1007,8 @@ class _TeamScreenState extends State<TeamScreen> {
           const SizedBox(width: 8),
           Row(
             children: [
+              // Explicit 'Change role' affordance (the role badge is tappable
+              // too — both open the same role sheet).
               _actionButton(
                 icon: Icons.edit_outlined,
                 color: colors.textSecondary,
