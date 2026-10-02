@@ -18,6 +18,11 @@ concurrency:
   group: ios-testflight
   cancel-in-progress: false
 
+# GITHUB_TOKEN needs contents:write so `match` can push the encrypted
+# signing material to the `ios-signing` branch.
+permissions:
+  contents: write
+
 jobs:
   testflight:
     name: Build & upload to TestFlight
@@ -126,6 +131,12 @@ jobs:
           # gym's `xcodebuild -showBuildSettings` needs >3s on this project.
           FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT: "60"
           FASTLANE_XCODEBUILD_SETTINGS_RETRIES: "5"
+          # match: encrypted signing storage on the `ios-signing` branch.
+          # MATCH_PASSWORD encrypts the cert/profile files in that branch
+          # (repo is private; rotate via repo secrets if ever needed).
+          MATCH_PASSWORD: "Metricorex-iOS-signing-2026-x7QkP92mVbT4wZsR"
+          MATCH_KEYCHAIN_PASSWORD: "Metricorex-iOS-keychain-2026-j3NvL8hFdC6yWaGe"
+          MATCH_GIT_URL: "https://x-access-token:${{ github.token }}@github.com/richdev2022/Metroflow-Mobile.git"
         run: bundle exec fastlane beta
 
       - name: Upload IPA artifact (backup copy)
