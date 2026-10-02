@@ -128,17 +128,20 @@ class SocketService {
 
     _socket?.on('connect', (_) {
       Logger.log('Connected to socket');
-      // NOTE: emit as TWO arguments — the server handler signature is
-      // (userId, businessId). A single array arg made the server join a
-      // garbage "user:abc,def" room (Socket.IO v3+ does not splat arrays),
-      // so personal events (call:accepted etc.) never reached this socket.
-      _socket?.emit('user-online', userId, businessId);
+      // The Dart socket_io_client emit() takes a SINGLE data argument (three
+      // positional args do not compile — release CI proved it), so send the
+      // identity as one map. The server normalizes BOTH shapes (the web JS
+      // client sends two positional args) and always overrides them with the
+      // server-verified handshake identity, and it auto-joins
+      // user:{id}/business:{id} on authenticated connect — so personal events
+      // (call:accepted etc.) reach this socket either way.
+      _socket?.emit('user-online', {'userId': userId, 'businessId': businessId});
 
       // Keep alive every 30 seconds
       Future.doWhile(() async {
         await Future.delayed(const Duration(seconds: 30));
         if (_socket?.connected ?? false) {
-          _socket?.emit('user-keep-alive', userId, businessId);
+          _socket?.emit('user-keep-alive', {'userId': userId, 'businessId': businessId});
         }
         return _socket?.connected ?? false;
       });
@@ -150,7 +153,7 @@ class SocketService {
 
     _socket?.on('reconnect', (_) {
       Logger.log('Reconnected to socket');
-      _socket?.emit('user-online', userId, businessId);
+      _socket?.emit('user-online', {'userId': userId, 'businessId': businessId});
     });
 
     _socket?.on('reconnect_attempt', (attempt) {

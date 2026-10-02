@@ -37,7 +37,10 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   // BUGFIX: was hardcoded to 7 while _slides holds only 5 entries — swiping
   // past slide 5 threw RangeError inside PageView.builder -> grey/blank page
   // (users could only escape via Skip). Derive from the list instead.
-  static const int _pageCount = _slides.length;
+  // NOTE: must be `static final`, NOT `static const` — `.length` is not a
+  // constant expression in Dart (const version killed the release CI at
+  // kernel_snapshot).
+  static final int _pageCount = _slides.length;
 
   @override
   void initState() {
