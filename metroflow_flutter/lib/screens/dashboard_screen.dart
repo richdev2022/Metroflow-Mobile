@@ -639,6 +639,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         onTap: () => context.go('/main?tab=2'),
       ),
       _QuickActionData(
+        icon: Icons.smart_toy_outlined,
+        label: 'MetricAi',
+        tint: const Color(0xFF4F46E5),
+        onTap: () => context.push('/main/metric-ai'),
+      ),
+      _QuickActionData(
         icon: Icons.receipt_long_outlined,
         label: 'New Invoice',
         tint: const Color(0xFF059669),
@@ -666,19 +672,20 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         children: [
           const _SectionKicker(label: 'Quick Actions'),
           const SizedBox(height: 10),
-          SizedBox(
-            height: 96,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              physics: const BouncingScrollPhysics(),
-              padding: EdgeInsets.zero,
-              itemCount: actions.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 12),
-              itemBuilder: (context, index) {
-                final action = actions[index];
-                return _QuickAction(data: action, colors: colors);
-              },
-            ),
+          // 2-row grid instead of the old horizontally-scrolling strip: every
+          // action is visible at a glance and the row wraps evenly on small
+          // screens (4 per row, MetricAi slotted alongside the essentials).
+          GridView.count(
+            crossAxisCount: 4,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            padding: EdgeInsets.zero,
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 12,
+            childAspectRatio: 0.8,
+            children: [
+              for (final action in actions) _QuickAction(data: action, colors: colors),
+            ],
           ),
         ],
       ),
@@ -956,7 +963,6 @@ class _QuickAction extends StatelessWidget {
     return GestureDetector(
       onTap: data.onTap,
       child: Container(
-        width: 84,
         padding: const EdgeInsets.symmetric(vertical: 12),
         decoration: BoxDecoration(
           color: colors.surface,

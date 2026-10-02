@@ -136,6 +136,11 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
   bool isOtpLoading = false;
   bool showOtpModal = false;
   bool showBankSearchModal = false;
+  /// Live OTP-for-transactions configuration. Fetched when the sheet opens
+  /// AND re-checked at submit time — when the server says OTP verification
+  /// is switched off, the "Send OTP" step disappears and the form submits
+  /// with the transaction PIN only.
+  bool otpRequired = true;
 
   /// Debounced auto account-name lookup: fires 600ms after the user types a
   /// complete 10-digit account number (or picks a bank with one entered).
@@ -147,6 +152,7 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
     selectedWalletType = widget.initialWalletType;
     _fetchWallets();
     _fetchBanks();
+    _fetchOtpRequirement();
   }
 
   @override
@@ -182,6 +188,22 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
       }
     } catch (e) {
       debugPrint('Failed to fetch wallet data: $e');
+    }
+  }
+
+  /// Reads the live OTP-for-transactions configuration so the form only
+  /// shows the OTP step when the server actually requires it.
+  Future<void> _fetchOtpRequirement() async {
+    try {
+      final response = await ApiService().getOtpEnabled();
+      final data = response.data;
+      if (mounted && data is Map && data['success'] == true) {
+        setState(() => otpRequired = data['otpEnabled'] as bool? ?? true);
+      }
+    } catch (e) {
+      // Keep the safe default (OTP required) — the backend enforces the
+      // authoritative setting at transfer time anyway.
+      debugPrint('Failed to load OTP setting: $e');
     }
   }
 
@@ -435,6 +457,17 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
     }
   }
 
+  /// The form's single submit entry point: routes to the OTP request step
+  /// when the configuration requires OTP verification, otherwise submits
+  /// the transfer directly (PIN only).
+  void _handleSubmitTransfer() {
+    if (otpRequired) {
+      handleRequestOtp();
+    } else {
+      handleInitiateTransfer();
+    }
+  }
+
   Future<void> handleRequestOtp() async {
     final wallet = selectedWalletType == 'user' ? wallets['user_wallet'] : wallets['business_wallet'];
     if (wallet == null) {
@@ -483,6 +516,21 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
 
     setState(() => isOtpLoading = true);
     try {
+      // Re-check the live configuration at submit time — the value cached
+      // on open may be stale (e.g. the user toggled the setting on the web
+      // or on another device in the meantime).
+      final otpStatus = await ApiService().getOtpEnabled();
+      final statusData = otpStatus.data;
+      final liveOtpRequired = (statusData is Map && statusData['success'] == true)
+          ? (statusData['otpEnabled'] as bool? ?? true)
+          : true;
+      if (mounted) setState(() => otpRequired = liveOtpRequired);
+      if (!liveOtpRequired) {
+        // OTP verification is switched off — skip straight to the
+        // transaction-PIN-confirmed submission.
+        await handleInitiateTransfer();
+        return;
+      }
       // suppressToast: false → the request method surfaces provider errors;
       // we also catch locally so the user ALWAYS sees why OTP failed
       // (previously errors were only debugPrint'ed and the flow stalled).
@@ -515,7 +563,7 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
       return;
     }
 
-    if (amount.isEmpty || otpCode.isEmpty || (double.tryParse(amount) ?? 0) <= 0) {
+    if (amount.isEmpty || (otpRequired && otpCode.isEmpty) || (double.tryParse(amount) ?? 0) <= 0) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Please fill all fields')),
@@ -559,7 +607,8 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
         'account_name': accountName,
         'amount': double.tryParse(amount) ?? 0,
         'remark': remark,
-        'otp': otpCode,
+        // Only send the OTP when the configuration requires one.
+        if (otpRequired) 'otp': otpCode,
         'pin': pin,
         'wallet_id': wallet['id'],
       };
@@ -1444,10 +1493,10 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: (isOtpLoading || (_isIntlTransfer ? !_intlBeneficiaryComplete : accountName.isEmpty)) ? null : handleRequestOtp,
+              onPressed: (isOtpLoading || (_isIntlTransfer ? !_intlBeneficiaryComplete : accountName.isEmpty)) ? null : _handleSubmitTransfer,
               child: isOtpLoading
                   ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : const Text('Send OTP'),
+                  : Text(otpRequired ? 'Send OTP' : 'Confirm Transfer'),
             ),
           ),
         ],
