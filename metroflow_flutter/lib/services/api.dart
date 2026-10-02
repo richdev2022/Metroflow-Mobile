@@ -469,6 +469,36 @@ class ApiService {
     return await _dio.patch('/team/$id/role', data: {'role': role});
   }
 
+  /// Assign a custom workspace role (Role Management) to a member.
+  Future<Response> updateMemberRoleById(String id, String roleId) async {
+    return await _dio.patch('/team/$id/role', data: {'roleId': roleId});
+  }
+
+  // Team Roles & Permissions API (mirror of the web app Role Management)
+  Future<Response> getRoles() async {
+    return await _dio.get('/roles');
+  }
+
+  Future<Response> getRolePermissions() async {
+    return await _dio.get('/roles/permissions');
+  }
+
+  Future<Response> getMyTeamRole() async {
+    return await _dio.get('/roles/me');
+  }
+
+  Future<Response> createRole(Map<String, dynamic> data) async {
+    return await _dio.post('/roles', data: data);
+  }
+
+  Future<Response> updateRole(String id, Map<String, dynamic> data) async {
+    return await _dio.put('/roles/$id', data: data);
+  }
+
+  Future<Response> deleteRole(String id) async {
+    return await _dio.delete('/roles/$id');
+  }
+
   Future<Response> deleteMember(String id) async {
     return await _dio.delete('/team/$id');
   }
