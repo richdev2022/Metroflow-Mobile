@@ -19,11 +19,16 @@ class DisputeSheet extends StatefulWidget {
   final double amount;
   final String currency;
 
+  /// Optional pre-selected category (e.g. 'failed_transfer' when opened from
+  /// a failed transfer's receipt).
+  final String? initialCategory;
+
   const DisputeSheet({
     super.key,
     required this.reference,
     required this.amount,
     required this.currency,
+    this.initialCategory,
   });
 
   /// Convenience opener.
@@ -32,6 +37,7 @@ class DisputeSheet extends StatefulWidget {
     required String reference,
     required double amount,
     required String currency,
+    String? initialCategory,
   }) {
     return showModalBottomSheet<void>(
       context: context,
@@ -43,6 +49,7 @@ class DisputeSheet extends StatefulWidget {
         reference: reference,
         amount: amount,
         currency: currency,
+        initialCategory: initialCategory,
       ),
     );
   }
@@ -69,6 +76,15 @@ class _DisputeSheetState extends State<DisputeSheet> {
   String? _attachmentName;
   bool _submitting = false;
   bool _done = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final valid = widget.initialCategory;
+    if (valid != null && _categories.any((c) => c.$1 == valid)) {
+      _category = valid;
+    }
+  }
 
   @override
   void dispose() {

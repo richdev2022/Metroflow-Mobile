@@ -132,15 +132,28 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       if (response.data['success'] == true) {
         if (!mounted) return;
         final data = response.data['data'] is List ? response.data['data'] as List : <dynamic>[];
-        setState(() {
-          _teamMembers = data
-              .whereType<Map>()
-              .map((json) => User.fromJson(Map<String, dynamic>.from(json)))
-              .toList();
-        });
+        // Per-row tolerant parse: ONE malformed row must never blank the
+        // whole participant picker again (the old all-or-nothing .map left
+        // the New-Conversation dialog empty whenever any row failed).
+        final members = <User>[];
+        for (final row in data) {
+          if (row is! Map) continue;
+          try {
+            members.add(User.fromJson(Map<String, dynamic>.from(row)));
+          } catch (rowError) {
+            Logger.error('Skipping malformed team member row: $rowError');
+          }
+        }
+        if (!mounted) return;
+        setState(() => _teamMembers = members);
       }
     } catch (e) {
       Logger.error('Error loading team members: $e');
+      if (!mounted) return;
+      // Surface the failure instead of leaving a silently-empty picker.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Couldn\'t load teammates: ${ApiService.extractErrorMessage(e)}')),
+      );
     }
   }
 
@@ -701,12 +714,40 @@ class _CreateConversationDialogState extends State<_CreateConversationDialog> {
                 ),
               ),
               const SizedBox(height: 8),
-              SizedBox(
-                height: 200,
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: availableMembers.length,
-                  itemBuilder: (context, index) {
+              if (availableMembers.isEmpty)
+                // Empty state — the picker used to render a silent blank box
+                // here when the team list failed to load or only the current
+                // user exists. Give the user an actual explanation + action.
+                Container(
+                  height: 200,
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.group_add_rounded, size: 44, color: colors.textSecondary),
+                      const SizedBox(height: 12),
+                      Text(
+                        'No teammates to chat with yet',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: colors.text),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Invite your team from the More → Team screen, then start a conversation here.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 12.5, height: 1.4, color: colors.textSecondary),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                SizedBox(
+                  height: 200,
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: availableMembers.length,
+                    itemBuilder: (context, index) {
                     final member = availableMembers[index];
                     final isSelected = _selectedMemberIds.contains(member.id);
                     return CheckboxListTile(
@@ -733,8 +774,8 @@ class _CreateConversationDialogState extends State<_CreateConversationDialog> {
                       },
                     );
                   },
+                  ),
                 ),
-              ),
             ],
           ),
         ),
