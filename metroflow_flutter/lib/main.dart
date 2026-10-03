@@ -13,6 +13,7 @@ import 'services/api.dart';
 import 'services/app_badge_service.dart';
 import 'services/biometrics.dart';
 import 'services/push_notification_service.dart';
+import 'screens/permission_primer.dart';
 import 'services/socket_service.dart';
 import 'utils/app_feedback.dart';
 import 'utils/app_timezone.dart';
@@ -269,10 +270,11 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
           if (path.startsWith('/onboarding') ||
               path == '/login' ||
               path == '/register' ||
-              path == '/verify-otp' ||
-              path == '/forgot-password' ||
-              path == '/verify-reset-otp' ||
-              path == '/reset-password') {
+              path == '/verify-otp') {
+            // NOTE: /forgot-password, /verify-reset-otp and /reset-password are
+            // deliberately NOT bounced — an authenticated user may legitimately
+            // start the email password-reset flow from Settings > Change
+            // Password, and bouncing here also broke the back stack.
             // Check if we have a last route to navigate to
             final lastRoute = await _storage.getLastRoute();
             if (lastRoute != null && lastRoute.isNotEmpty && lastRoute != '/login') {
@@ -378,7 +380,12 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
             GoRoute(
               name: 'single-transfer',
               path: 'single-transfer',
-              builder: (context, state) => const SingleTransferScreen(),
+              builder: (context, state) {
+                final extra = state.extra;
+                final prefill =
+                    extra is Map<String, dynamic> ? extra : null;
+                return SingleTransferScreen(prefill: prefill);
+              },
             ),
             GoRoute(
               path: 'create-task',
@@ -654,6 +661,18 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
         // Refresh the launcher badge against the live unread counts.
         _syncLauncherBadge();
+
+        // PERMISSION RE-CHECK (user requirement): every time the app comes
+        // back to the foreground with a signed-in user, make sure the push
+        // notification permission is actually granted — if not, surface the
+        // primer (or the OS settings deep-link when permanently denied). The
+        // primer self-snoozes so this never nags, and it never covers an
+        // incoming call.
+        final resumeState = ref.read(authProvider);
+        final ringingNow = ref.read(callProvider).isRinging;
+        if (resumeState.isAuthenticated && !ringingNow) {
+          unawaited(PermissionPrimer.recheckOnResume());
+        }
       }
     }
     

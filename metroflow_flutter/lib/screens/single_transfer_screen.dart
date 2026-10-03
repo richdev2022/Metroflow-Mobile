@@ -7,8 +7,14 @@ import '../widgets/single_transfer_sheet.dart';
 /// Standalone "New Transfer" page hosting the shared [SingleTransferSheet]
 /// form (same flow as the wallet's Send Money modal, but as a routed page —
 /// reachable from the Transfers screen's "Make New Transfer" entry point).
+///
+/// Accepts an OPTIONAL `extra` map with "repeat transaction" prefill
+/// (bank_code / account_number / account_name / amount / remark) pushed from
+/// a transaction receipt's Repeat action.
 class SingleTransferScreen extends StatelessWidget {
-  const SingleTransferScreen({super.key});
+  const SingleTransferScreen({super.key, this.prefill});
+
+  final Map<String, dynamic>? prefill;
 
   @override
   Widget build(BuildContext context) {
@@ -36,7 +42,7 @@ class SingleTransferScreen extends StatelessWidget {
           ),
         ),
       ),
-      body: const SingleTransferSheet(asPage: true),
+      body: SingleTransferSheet(asPage: true, prefill: prefill),
     );
   }
 }
