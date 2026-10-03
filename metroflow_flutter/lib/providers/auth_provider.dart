@@ -23,6 +23,10 @@ class AuthState {
   final bool biometricsEnabled;
   final bool hasSeenOnboarding;
   final bool skippedKyc;
+  /// SSO onboarding gate: false while the business profile (real name,
+  /// industry, phone, logo) is still incomplete — clients route those users
+  /// to the profile-completion screen before the dashboard. Null = unknown.
+  final bool? profileCompleted;
 
   AuthState({
     required this.isAuthenticated,
@@ -38,6 +42,7 @@ class AuthState {
     required this.biometricsEnabled,
     required this.hasSeenOnboarding,
     this.skippedKyc = false,
+    this.profileCompleted,
   });
 
   AuthState copyWith({
@@ -54,6 +59,7 @@ class AuthState {
     bool? biometricsEnabled,
     bool? hasSeenOnboarding,
     bool? skippedKyc,
+    bool? profileCompleted,
   }) {
     return AuthState(
       isAuthenticated: isAuthenticated ?? this.isAuthenticated,
@@ -69,6 +75,7 @@ class AuthState {
       biometricsEnabled: biometricsEnabled ?? this.biometricsEnabled,
       hasSeenOnboarding: hasSeenOnboarding ?? this.hasSeenOnboarding,
       skippedKyc: skippedKyc ?? this.skippedKyc,
+      profileCompleted: profileCompleted ?? this.profileCompleted,
     );
   }
 }
@@ -138,7 +145,7 @@ class AuthNotifier extends Notifier<AuthState> {
       final requiresPasswordSetup = await _storageService.getRequiresPasswordSetup();
       final authProvider = await _storageService.getAuthProvider();
       final hasPassword = await _storageService.getHasPassword();
-      final biometricsEnabled = await BiometricService.isEnabled();
+      final biometricsEnabled = await BiometricService.isEnabled(userId);
       final hasSeenOnboarding = await _storageService.getHasSeenOnboarding();
 
       var isTokenValid = token != null;
@@ -210,8 +217,14 @@ class AuthNotifier extends Notifier<AuthState> {
         _storageService.setUserName(userName),
       ]);
 
+      // PER-ACCOUNT biometrics: the switch belongs to the account that just
+      // logged in — a NEW account starts with biometrics OFF (and gets the
+      // activation prompt on the login screen), it never inherits the
+      // previous account's opt-in.
+      final biometricsForAccount = await BiometricService.isEnabled(userId);
+
       // Save biometrics credentials if enabled
-      if (state.biometricsEnabled) {
+      if (biometricsForAccount) {
         await _storageService.setBiometricsCredentials(
           token: token,
           userId: userId,
@@ -231,6 +244,7 @@ class AuthNotifier extends Notifier<AuthState> {
         businessId: businessId,
         userName: userName,
         isAuthenticated: true,
+        biometricsEnabled: biometricsForAccount,
       );
       resetIdleTimer();
 
@@ -287,6 +301,9 @@ class AuthNotifier extends Notifier<AuthState> {
               ? user['authProvider'].toString()
               : 'google';
       final requiresPasswordSetup = data['requiresPasswordSetup'] == true;
+      // SSO onboarding gate — server says whether the business profile is
+      // complete (real name, industry, phone, logo).
+      final profileCompleted = data['profileCompleted'] == true;
 
       // Same session persistence path as password login.
       await _storageService.setToken(token.toString());
@@ -296,9 +313,15 @@ class AuthNotifier extends Notifier<AuthState> {
       await _storageService.setAvatarUrl(avatarUrl);
       await _storageService.setAuthProvider(authProvider);
       await _storageService.setRequiresPasswordSetup(requiresPasswordSetup);
+      await _storageService.setProfileCompleted(profileCompleted);
+
+      // PER-ACCOUNT biometrics (same contract as password login): read the
+      // flag for the account that just signed in — never inherit the
+      // previous account's switch.
+      final biometricsForAccount = await BiometricService.isEnabled(userId);
 
       // Save biometrics credentials if enabled (same as password login).
-      if (state.biometricsEnabled && userId != null && businessId != null) {
+      if (biometricsForAccount && userId != null && businessId != null) {
         await _storageService.setBiometricsCredentials(
           token: token.toString(),
           userId: userId,
@@ -321,6 +344,8 @@ class AuthNotifier extends Notifier<AuthState> {
         authProvider: authProvider,
         requiresPasswordSetup: requiresPasswordSetup,
         isAuthenticated: true,
+        biometricsEnabled: biometricsForAccount,
+        profileCompleted: profileCompleted,
       );
       resetIdleTimer();
 
@@ -706,8 +731,17 @@ class AuthNotifier extends Notifier<AuthState> {
         userName: userName,
       );
 
-      await _storageService.setBiometricsEnabled(true);
+      // PER-ACCOUNT opt-in: the switch is written for the signed-in account
+      // (legacy device-wide flag mirrored for old code paths).
+      if (userId.isNotEmpty) {
+        await _storageService.setBiometricsEnabledForAccount(userId, true);
+      } else {
+        await _storageService.setBiometricsEnabled(true);
+      }
       state = state.copyWith(biometricsEnabled: true);
+      if (userId.isNotEmpty) {
+        await BiometricService.markPromptAsShown(userId);
+      }
       debugPrint('Biometric unlock enabled successfully');
       resetIdleTimer();
       return const BiometricResult(success: true);
@@ -725,6 +759,11 @@ class AuthNotifier extends Notifier<AuthState> {
   Future<void> disableBiometrics() async {
     try {
       await _revokeBiometricEnrollment();
+      // PER-ACCOUNT: flip the switch off for the signed-in account only.
+      final userId = state.userId ?? await _storageService.getUserId();
+      if (userId != null && userId.isNotEmpty) {
+        await _storageService.setBiometricsEnabledForAccount(userId, false);
+      }
       state = state.copyWith(biometricsEnabled: false);
       resetIdleTimer();
     } catch (e) {
@@ -746,8 +785,15 @@ class AuthNotifier extends Notifier<AuthState> {
       if (deviceId != null && deviceId.isNotEmpty) {
         await _storageService.clearBiometricToken(deviceId);
       }
+      // PER-ACCOUNT: clear the opt-in for the account being wiped.
+      final flaggedUserId = state.userId ?? await _storageService.getUserId();
+      if (flaggedUserId != null && flaggedUserId.isNotEmpty) {
+        await _storageService.setBiometricsEnabledForAccount(flaggedUserId, false);
+      }
       await BiometricService.disableBiometrics();
-      await BiometricService.resetPromptStatus();
+      if (flaggedUserId != null) {
+        await BiometricService.resetPromptStatusFor(flaggedUserId);
+      }
       await _storageService.clearBiometricsCredentials();
     } catch (e) {
       debugPrint('Failed to revoke biometric enrollment: $e');
@@ -870,6 +916,9 @@ class AuthNotifier extends Notifier<AuthState> {
             businessId: businessId,
             userName: userName,
             isAuthenticated: true,
+            // PER-ACCOUNT: sync the switch with the account the token belongs
+            // to (the enrollment maps to exactly one account).
+            biometricsEnabled: await BiometricService.isEnabled(userId),
           );
           resetIdleTimer();
           unawaited(getMe());
@@ -902,6 +951,17 @@ class AuthNotifier extends Notifier<AuthState> {
 
   Future<bool> checkBiometricsAvailable() async {
     return await BiometricService.isAvailable();
+  }
+
+  /// Clears the SSO profile-completion gate after the business profile was
+  /// successfully submitted (POST /settings/business/complete).
+  Future<void> markProfileCompleted() async {
+    try {
+      await _storageService.setProfileCompleted(true);
+      state = state.copyWith(profileCompleted: true);
+    } catch (e) {
+      debugPrint('Failed to mark profile completed: $e');
+    }
   }
 
   Future<void> completeOnboarding() async {

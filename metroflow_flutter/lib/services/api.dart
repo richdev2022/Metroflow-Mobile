@@ -960,6 +960,35 @@ class ApiService {
     return await _dio.get('/disputes/mine');
   }
 
+  // ---------------------------------------------------------------------------
+  // SSO profile completion (business name / industry / phone / logo)
+  // ---------------------------------------------------------------------------
+
+  /// POST /settings/business/complete — one-call SSO onboarding completion.
+  /// [logoPath] is a local image file picked by the user (multipart 'logo').
+  Future<Response> completeBusinessProfile({
+    required String name,
+    required String industry,
+    required String phoneNumber,
+    String? logoPath,
+  }) async {
+    if (logoPath != null && logoPath.isNotEmpty) {
+      final fileName = logoPath.split(Platform.pathSeparator).last;
+      final formData = FormData.fromMap(<String, dynamic>{
+        'name': name,
+        'industry': industry,
+        'phone_number': phoneNumber,
+        'logo': await MultipartFile.fromFile(logoPath, filename: fileName),
+      });
+      return await _dio.post('/settings/business/complete', data: formData);
+    }
+    return await _dio.post('/settings/business/complete', data: {
+      'name': name,
+      'industry': industry,
+      'phone_number': phoneNumber,
+    });
+  }
+
 
   /// International payout quote (USD payouts funded from an NGN wallet).
   /// GET /transfers/quote?amount=&source_currency=&destination_currency=
@@ -2018,6 +2047,64 @@ class StorageService {
   Future<void> removeBiometricsEnabled() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('biometricsEnabled');
+  }
+
+  // ------------------------------------------------------------------
+  // PER-ACCOUNT biometric switch + prompt tracking.
+  //
+  // The legacy global flags above are DEVICE-wide: once account A enabled
+  // biometrics (or dismissed the setup prompt) account B was never asked and
+  // silently inherited A's switch. Biometrics is now keyed by ACCOUNT:
+  //   biometricsEnabled_<userId>       — per-account opt-in
+  //   biometricsPromptShown_<userId>   — per-account setup-prompt memory
+  // The legacy keys stay in sync so older code paths (and a rollback) keep
+  // working; the per-account value always wins when present.
+  // ------------------------------------------------------------------
+
+  Future<void> setBiometricsEnabledForAccount(String userId, bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('biometricsEnabled_$userId', enabled);
+    await prefs.setBool('biometricsEnabled', enabled); // legacy mirror
+  }
+
+  Future<bool> getBiometricsEnabledForAccount(String userId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final perAccount = prefs.getBool('biometricsEnabled_$userId');
+    if (perAccount != null) return perAccount;
+    // Migration: first read for an existing install falls back to the
+    // device-wide flag, so nobody who already opted in loses the feature.
+    return prefs.getBool('biometricsEnabled') ?? false;
+  }
+
+  Future<void> setBiometricsPromptShownForAccount(String userId, bool shown) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('biometricsPromptShown_$userId', shown);
+    if (shown) await prefs.setBool('biometricsPromptShown', true); // legacy mirror
+  }
+
+  Future<bool> getBiometricsPromptShownForAccount(String userId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final perAccount = prefs.getBool('biometricsPromptShown_$userId');
+    if (perAccount != null) return perAccount;
+    return prefs.getBool('biometricsPromptShown') ?? false;
+  }
+
+  // SSO onboarding gate — persisted copy of the server's profileCompleted
+  // flag so the completion screen can be shown right after a cold restart
+  // too (until GET /auth/me refreshes the authoritative value).
+  Future<void> setProfileCompleted(bool completed) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('profileCompleted', completed);
+  }
+
+  Future<bool?> getProfileCompleted() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('profileCompleted');
+  }
+
+  Future<void> removeProfileCompleted() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('profileCompleted');
   }
 
   Future<void> setBiometricsPromptShown(bool shown) async {
