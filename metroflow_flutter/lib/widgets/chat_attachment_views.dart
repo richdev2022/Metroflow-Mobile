@@ -481,7 +481,19 @@ class _FullScreenVideoPlayerScreenState extends State<FullScreenVideoPlayerScree
                         aspectRatio: controller.value.aspectRatio == 0
                             ? 16 / 9
                             : controller.value.aspectRatio,
-                        child: VideoPlayer(controller),
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            VideoPlayer(controller),
+                            // Buffering spinner: while the stream is still
+                            // filling, show WHY the frame is frozen instead
+                            // of a silent black box (perceived slowness fix).
+                            if (!controller.value.isPlaying &&
+                                controller.value.isBuffering)
+                              const CircularProgressIndicator(
+                                  color: Colors.white70),
+                          ],
+                        ),
                       ),
                       const SizedBox(height: 16),
                       Padding(

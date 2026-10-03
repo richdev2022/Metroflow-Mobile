@@ -9,6 +9,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../screens/chat_detail_screen.dart';
 import '../utils/app_feedback.dart';
 import '../utils/logger.dart';
 import 'api.dart';
@@ -682,6 +683,14 @@ class PushNotificationService {
           _navigate('/main/calls');
           break;
         case 'chat_message':
+          // Deep-link into the EXACT conversation (not just the chat list).
+          try {
+            final conversationId =
+                (data['conversation_id'] ?? data['conversationId'] ?? '').toString();
+            if (conversationId.isNotEmpty) {
+              ChatDetailScreen.pendingOpenConversationId = conversationId;
+            }
+          } catch (_) {}
           _navigate('/main/chat');
           break;
         default:

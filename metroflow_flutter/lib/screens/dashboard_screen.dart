@@ -7,6 +7,7 @@ import '../models/task.dart';
 import '../providers/auth_provider.dart';
 import '../providers/user_profile_provider.dart';
 import '../utils/app_timezone.dart';
+import '../utils/kyc_gate.dart';
 import '../widgets/app_tour.dart';
 import '../widgets/avatar_with_initials.dart';
 import '../widgets/modern_ui.dart';
@@ -261,6 +262,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     } catch (e) {
       debugPrint('Failed to open task: $e');
     }
+  }
+
+  /// KYC-gated navigation for every finance surface on the home page (Fund
+  /// pill, money row, quick actions, "Get Paid" hub). Mirrors MainScreen's
+  /// gate: Tier-1 KYC (BVN OR NIN) required — a fresh, unverified account
+  /// is routed to /kyc-prompt instead of the destination.
+  Future<void> _pushFinance(String route, {Map<String, dynamic>? extra}) async {
+    if (!await KycGate.canUseFinance(context)) return;
+    if (!mounted) return;
+    context.push(route, extra: extra);
   }
 
   String _walletBalanceLabel() {
@@ -561,7 +572,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(14),
                 child: InkWell(
-                  onTap: () => context.push('/main/fund-wallet',
+                  onTap: () => _pushFinance('/main/fund-wallet',
                       extra: {'walletType': _primaryWalletType}),
                   borderRadius: BorderRadius.circular(14),
                   child: const Padding(
@@ -658,19 +669,19 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         icon: Icons.receipt_long_outlined,
         label: 'New Invoice',
         tint: const Color(0xFF059669),
-        onTap: () => context.push('/main/invoices'),
+        onTap: () => _pushFinance('/main/invoices'),
       ),
       _QuickActionData(
         icon: Icons.link_rounded,
         label: 'Payment Link',
         tint: const Color(0xFF2563EB),
-        onTap: () => context.push('/main/payment-links'),
+        onTap: () => _pushFinance('/main/payment-links'),
       ),
       _QuickActionData(
         icon: Icons.storefront_outlined,
         label: 'Add Product',
         tint: const Color(0xFFEA580C),
-        onTap: () => context.push('/main/store'),
+        onTap: () => _pushFinance('/main/store'),
       ),
       // 8th tile: completes the 4x2 grid (was 7 items -> ragged gap on row 2).
       _QuickActionData(
@@ -721,7 +732,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         tint: const Color(0xFF2563EB),
         count: _linkCount,
         countNoun: 'link',
-        onTap: () => context.push('/main/payment-links'),
+        onTap: () => _pushFinance('/main/payment-links'),
       ),
       _GetPaidData(
         icon: Icons.receipt_long_rounded,
@@ -730,7 +741,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         tint: const Color(0xFF059669),
         count: _invoiceCount,
         countNoun: 'invoice',
-        onTap: () => context.push('/main/invoices'),
+        onTap: () => _pushFinance('/main/invoices'),
       ),
       _GetPaidData(
         icon: Icons.storefront_rounded,
@@ -739,7 +750,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         tint: const Color(0xFFEA580C),
         count: _productCount,
         countNoun: 'product',
-        onTap: () => context.push('/main/store'),
+        onTap: () => _pushFinance('/main/store'),
       ),
       _GetPaidData(
         icon: Icons.autorenew_rounded,
@@ -748,7 +759,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         tint: const Color(0xFF7C3AED),
         count: _planCount,
         countNoun: 'plan',
-        onTap: () => context.push('/main/subscriptions'),
+        onTap: () => _pushFinance('/main/subscriptions'),
       ),
     ];
 
@@ -794,7 +805,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         icon: Icons.swap_horiz_rounded,
         label: 'Transfers',
         tint: const Color(0xFF0891B2),
-        onTap: () => context.push('/main/transfers'),
+        onTap: () => _pushFinance('/main/transfers'),
       ),
       _MoneyTileData(
         icon: Icons.payments_rounded,
@@ -808,7 +819,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         label: 'Fund Wallet',
         tint: colors.success,
         // Same wallet as the hero overview card (business-first there).
-        onTap: () => context.push('/main/fund-wallet',
+        onTap: () => _pushFinance('/main/fund-wallet',
             extra: {'walletType': _primaryWalletType}),
       ),
     ];

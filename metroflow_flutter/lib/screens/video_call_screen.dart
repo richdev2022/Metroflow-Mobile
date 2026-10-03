@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
@@ -17,6 +18,8 @@ import '../services/calling/livekit_engine.dart';
 import '../services/captions_service.dart';
 import '../services/socket_service.dart';
 import '../services/api.dart' show ApiService, StorageService;
+import '../models/user.dart';
+import '../theme/app_theme.dart';
 import '../utils/app_feedback.dart';
 import '../utils/logger.dart';
 import '../widgets/captions_overlay.dart';
@@ -1725,10 +1728,6 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
               ),
             if (_showChat) _buildChatPanel(),
             if (_showJoinRetry && !_isWaitingForAdmission) _buildJoinRetryBanner(),
-            // Live captions overlay — bottom of the room, above the control
-            // dock. Only rendered while the user toggled captions on.
-            if (_showCaptions && !_isWaitingForAdmission)
-              CaptionsOverlay(controller: _captions),
             // Bottom control bar — SafeArea(bottom) guarantees the hang-up
             // button is NEVER clipped by gesture bars / home indicators, and
             // the Wrap layout keeps every control reachable down to 320dp.
@@ -1744,6 +1743,12 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                 ),
               ),
             ),
+            // Live captions overlay — painted AFTER the control dock so the
+            // dock can never cover it (it used to render beneath a 2-row
+            // dock on narrow screens and vanish behind the buttons), and
+            // raised clear above the dock's worst-case height.
+            if (_showCaptions && !_isWaitingForAdmission)
+              CaptionsOverlay(controller: _captions, bottom: 205),
             // Waiting room (rooms with waiting_room_enabled): covers everything
             // until the host admits us (or we cancel & leave).
             if (_isWaitingForAdmission) _buildWaitingRoomOverlay(),
@@ -2515,6 +2520,15 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                 active: _showChat,
                 onPressed: () => setState(() => _showChat = !_showChat),
               ),
+            // Add people / copy invite (meetings + group calls): opens the
+            // invite sheet with the FULL meeting link and the participant
+            // picker. Previously missing entirely on mobile — adding a
+            // participant from inside the room was impossible.
+            _dockButton(
+              icon: Icons.person_add_alt_1_rounded,
+              active: true,
+              onPressed: _showInviteSheet,
+            ),
             _dockButton(
               icon: _showCaptions ? Icons.closed_caption : Icons.closed_caption_off,
               active: _showCaptions,
@@ -2530,6 +2544,315 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Invite sheet: full shareable link + team picker + guest emails
+  // -------------------------------------------------------------------------
+
+  /// Web-app base for shareable meeting/call links (mirrors the backend's
+  /// buildMeetingLink and the payment-links share URLs).
+  static const String _webAppBaseUrl = 'https://app.metricorex.com';
+
+  String get _inviteLink {
+    final section = widget.isMeeting ? 'meetings' : 'calls';
+    return '$_webAppBaseUrl/$section/${widget.roomId}';
+  }
+
+  Future<String> _resolvedInviteLink() async {
+    // Prefer the human share code (web routes /meetings/<code>) — resolve it
+    // from the API; fall back to whatever id we have.
+    try {
+      final response = widget.isMeeting
+          ? await ApiService().getMeetingDetail(widget.roomId)
+          : await ApiService().getCallDetail(widget.roomId);
+      final data = response.data;
+      final payload = data is Map && data['data'] is Map ? data['data'] as Map : null;
+      final code = (payload?['meetingCode'] ?? payload?['callCode'] ?? payload?['code'] ?? '')
+          .toString();
+      if (code.isNotEmpty) {
+        final section = widget.isMeeting ? 'meetings' : 'calls';
+        return '$_webAppBaseUrl/$section/$code';
+      }
+    } catch (_) {}
+    return _inviteLink;
+  }
+
+  /// "Add people" bottom sheet: the FULL invite link with a copy button, the
+  /// team roster (multi-select) and guest emails — submits to
+  /// POST /meetings|calls/:id/participants, which emails everyone added.
+  Future<void> _showInviteSheet() async {
+    final colors = AppTheme.colors;
+    final link = await _resolvedInviteLink();
+    if (!mounted) return;
+
+    List<User> teamMembers = [];
+    try {
+      final res = await ApiService().getTeam();
+      final payload = res.data;
+      final list = payload is Map
+          ? (payload['data'] is List
+              ? payload['data'] as List
+              : (payload['data'] is Map && payload['data']['members'] is List
+                  ? payload['data']['members'] as List
+                  : <dynamic>[]))
+          : <dynamic>[];
+      teamMembers = list
+          .whereType<Map>()
+          .map((e) => User.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+    } catch (_) {}
+
+    if (!mounted) return;
+    final selectedIds = <String>{};
+    final guestEmails = <String>{};
+    final emailController = TextEditingController();
+    var submitting = false;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: colors.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        void addEmailFromInput() {
+          final value = emailController.text.trim().toLowerCase();
+          if (value.isEmpty) return;
+          final valid = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(value);
+          if (valid && !guestEmails.contains(value)) {
+            guestEmails.add(value);
+          }
+          emailController.clear();
+        }
+
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            Future<void> submit() async {
+              if (selectedIds.isEmpty && guestEmails.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    content: Text('Pick a teammate or add a guest email first')));
+                return;
+              }
+              setSheetState(() => submitting = true);
+              try {
+                final response = widget.isMeeting
+                    ? await ApiService().addMeetingParticipants(
+                        widget.roomId,
+                        participantIds: selectedIds.toList(),
+                        emails: guestEmails.toList(),
+                      )
+                    : await ApiService().addCallParticipants(
+                        widget.roomId,
+                        participantIds: selectedIds.toList(),
+                        emails: guestEmails.toList(),
+                      );
+                final ok = response.data is Map && response.data['success'] == true;
+                if (sheetContext.mounted) Navigator.pop(sheetContext);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                    content: Text(ok
+                        ? 'Invitations sent — they will also arrive by email'
+                        : ApiService.extractErrorMessage(response.data)),
+                  ));
+                }
+              } catch (e) {
+                if (sheetContext.mounted) {
+                  ScaffoldMessenger.of(sheetContext).showSnackBar(SnackBar(
+                      content: Text(ApiService.extractErrorMessage(e))));
+                  setSheetState(() => submitting = false);
+                }
+              }
+            }
+
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.only(
+                  left: 16,
+                  right: 16,
+                  top: 16,
+                  bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 16,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.person_add_alt_1_rounded,
+                            size: 20, color: colors.primary),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text('Add people',
+                              style: TextStyle(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w800,
+                                  color: colors.text)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    // FULL invite link (fix: the room used to copy only the
+                    // bare room code).
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: colors.primaryBg,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: colors.border),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              link,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  fontSize: 12.5, color: colors.text),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton(
+                            tooltip: 'Copy link',
+                            icon: Icon(Icons.copy_rounded,
+                                size: 18, color: colors.primary),
+                            onPressed: () {
+                              Clipboard.setData(ClipboardData(text: link));
+                              ScaffoldMessenger.of(sheetContext).showSnackBar(
+                                  const SnackBar(
+                                      content:
+                                          Text('Meeting link copied')));
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    if (teamMembers.isNotEmpty) ...[
+                      Text('Team members',
+                          style: TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                              color: colors.textSecondary)),
+                      const SizedBox(height: 6),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxHeight: 220),
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: teamMembers.length,
+                          itemBuilder: (context, index) {
+                            final member = teamMembers[index];
+                            final selected = selectedIds.contains(member.id);
+                            return ListTile(
+                              dense: true,
+                              visualDensity: VisualDensity.compact,
+                              leading: CircleAvatar(
+                                radius: 16,
+                                backgroundColor: colors.primaryBg,
+                                child: Text(
+                                  member.name.isNotEmpty
+                                      ? member.name[0].toUpperCase()
+                                      : '?',
+                                  style: TextStyle(
+                                      fontSize: 13, color: colors.primary),
+                                ),
+                              ),
+                              title: Text(member.name,
+                                  style: TextStyle(
+                                      fontSize: 14, color: colors.text)),
+                              subtitle: member.email.isNotEmpty
+                                  ? Text(member.email,
+                                      style: TextStyle(
+                                          fontSize: 11.5,
+                                          color: colors.textSecondary))
+                                  : null,
+                              trailing: Checkbox(
+                                value: selected,
+                                activeColor: colors.primary,
+                                onChanged: (value) => setSheetState(() {
+                                  value == true
+                                      ? selectedIds.add(member.id)
+                                      : selectedIds.remove(member.id);
+                                }),
+                              ),
+                              onTap: () => setSheetState(() {
+                                selected
+                                    ? selectedIds.remove(member.id)
+                                    : selectedIds.add(member.id);
+                              }),
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                    TextField(
+                      controller: emailController,
+                      keyboardType: TextInputType.emailAddress,
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: (_) => setSheetState(addEmailFromInput),
+                      decoration: InputDecoration(
+                        labelText: 'Invite by email',
+                        hintText: 'name@company.com',
+                        prefixIcon:
+                            Icon(Icons.alternate_email, size: 18),
+                        border: const OutlineInputBorder(),
+                        isDense: true,
+                        suffixIcon: IconButton(
+                          icon: Icon(Icons.add_rounded,
+                              size: 20, color: colors.primary),
+                          onPressed: () => setSheetState(addEmailFromInput),
+                        ),
+                      ),
+                    ),
+                    if (guestEmails.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: guestEmails
+                              .map((email) => Chip(
+                                    label: Text(email,
+                                        style: const TextStyle(fontSize: 11.5)),
+                                    visualDensity: VisualDensity.compact,
+                                    onDeleted: () =>
+                                        setSheetState(() => guestEmails.remove(email)),
+                                  ))
+                              .toList(),
+                        ),
+                      ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: submitting ? null : submit,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: colors.primary,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                        child: submitting
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white))
+                            : const Text('Send invitations',
+                                style: TextStyle(fontWeight: FontWeight.w700)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -2581,7 +2904,10 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     return Positioned(
       top: 0,
       right: 0,
-      bottom: 0,
+      // bottom: 120 — the panel previously ran the FULL height (bottom: 0),
+      // so the composer row sat underneath the control dock and the send
+      // button was unreachable. Lift the panel clear above the dock.
+      bottom: 120,
       width: 320,
       child: SafeArea(
         child: Container(
