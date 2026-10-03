@@ -178,7 +178,7 @@ class _PinInputBoxesState extends State<PinInputBoxes> {
   }
 
   KeyEventResult _handleKey(int index, FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent && event is! RepeatKeyEvent) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
     if (event.logicalKey == LogicalKeyboardKey.backspace) {
       final box = _boxControllers[index];
       if (box.text.isEmpty && index > 0) {
