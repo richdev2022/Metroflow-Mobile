@@ -69,6 +69,9 @@ class Meeting {
   final DateTime createdAt;
   final DateTime updatedAt;
   final List<MeetingAttendee> attendees;
+  /// Guest (external email) participants — parse from the backend's `guests`
+  /// array so the EDIT dialog can seed the same list it will re-send.
+  final List<String> guests;
   /// Raw recurrence rule JSON string (series meetings only) — e.g.
   /// '{"frequency":"WEEKLY","interval":1}'. Empty for one-off meetings.
   final String recurrenceRule;
@@ -97,6 +100,7 @@ class Meeting {
     required this.createdAt,
     required this.updatedAt,
     required this.attendees,
+    this.guests = const [],
     this.recurrenceRule = '',
     this.meetingUrl = '',
   });
@@ -129,8 +133,17 @@ class Meeting {
           .whereType<Map>()
           .map((e) => MeetingAttendee.fromJson(Map<String, dynamic>.from(e)))
           .toList(),
+      guests: ((json['guests'] as List<dynamic>?) ?? [])
+          .map((e) {
+            if (e is Map) return (e['email'] ?? '').toString();
+            return e.toString();
+          })
+          .where((email) => email.isNotEmpty)
+          .toList(),
       recurrenceRule: (json['recurrenceRule'] ?? json['recurrence_rule'] ?? '').toString(),
-      meetingUrl: (json['meetingUrl'] ?? json['meeting_url'] ?? '').toString(),
+      // The backend enriches rows with `meetingLink` (NOT meetingUrl) — read
+      // both so the share/copy actions always get a real URL.
+      meetingUrl: (json['meetingUrl'] ?? json['meeting_url'] ?? json['meetingLink'] ?? json['meeting_link'] ?? '').toString(),
     );
   }
 

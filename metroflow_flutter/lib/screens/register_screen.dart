@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../components/google_sign_in_button.dart';
 import '../providers/auth_provider.dart';
-import '../services/api.dart';
 import '../theme/app_theme.dart';
 import '../widgets/auth_ui.dart';
 
@@ -482,32 +481,14 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     return message;
   }
 
-  /// Mirrors the login screen's post-login routing: KYC tier 1 not verified
-  /// → /kyc-prompt, otherwise /main.
+  /// Post-Google-auth routing: always straight to the dashboard. KYC is no
+  /// longer an onboarding step — main_screen's finance gate demands BVN/NIN
+  /// only when the user tries to use wallet/transfers/payroll/payment links/
+  /// subscriptions.
   Future<void> _routeAfterGoogleAuth() async {
-    try {
-      final response = await ApiService().getKycStatus();
-      final data = response.data;
-      final user = data['user'] as Map<String, dynamic>?;
-
-      if (user == null && data['bvn_verified'] == null && data['nin_verified'] == null) {
-        if (mounted) context.go('/main');
-        return;
-      }
-
-      final bvnVerified = user?['bvnStatus'] == 'verified' ||
-          user?['bvn_status'] == 'verified' ||
-          data['bvn_verified'] == true;
-      final ninVerified = user?['ninStatus'] == 'verified' ||
-          user?['nin_status'] == 'verified' ||
-          data['nin_verified'] == true;
-      final isTier1Verified = bvnVerified || ninVerified;
-
-      if (mounted) context.go(isTier1Verified ? '/main' : '/kyc-prompt');
-    } catch (_) {
-      if (mounted) context.go('/main');
-    }
+    if (mounted) context.go('/main');
   }
+
   @override
   Widget build(BuildContext context) {
     final colors = AppTheme.colors;

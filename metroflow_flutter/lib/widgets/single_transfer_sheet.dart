@@ -91,6 +91,19 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
   final TextEditingController _stateController = TextEditingController();
   final TextEditingController _postalController = TextEditingController();
   final TextEditingController _pinController = TextEditingController();
+  // Controllers for the NGN fields: "Repeat transaction" prefill MUST write
+  // through controllers — a bare setState on the backing strings does NOT
+  // update already-mounted TextFields (they keep their own internal text),
+  // which is exactly why repeats showed the name but an empty account box.
+  final TextEditingController _accountNumberController = TextEditingController();
+  final TextEditingController _amountController = TextEditingController();
+  final TextEditingController _remarkController = TextEditingController();
+
+  // Recent beneficiaries (GET /transfers/beneficiaries) — one-tap chips that
+  // fill bank + account + name. The backend auto-saves recipients on every
+  // transfer, so this list grows itself; failures here are cosmetic.
+  List<Map<String, dynamic>> beneficiaries = [];
+  bool beneficiariesLoading = false;
 
   /// OpenStreetMap Nominatim address autocomplete (keyless public API): as the
   /// user picks the country and types the street address, debounced queries
@@ -159,6 +172,11 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
     _fetchWallets();
     _fetchBanks();
     _fetchOtpRequirement();
+    _fetchBeneficiaries();
+    // Apply the prefill immediately too — if the bank list is slow, the
+    // account number / amount / remark still appear instantly (the bank
+    // picker re-applies the code once the list arrives).
+    _applyPrefill();
   }
 
   @override
@@ -171,6 +189,9 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
     _stateController.dispose();
     _postalController.dispose();
     _pinController.dispose();
+    _accountNumberController.dispose();
+    _amountController.dispose();
+    _remarkController.dispose();
     super.dispose();
   }
 
@@ -232,7 +253,8 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
 
   /// Apply the [SingleTransferSheet.prefill] map ("repeat transaction" from a
   /// receipt). Runs after the bank list loads so the bank picker can resolve
-  /// the saved code into a visible bank name.
+  /// the saved code into a visible bank name. Writes through the TextEditing
+  /// controllers (state-only updates never repaint mounted TextFields).
   void _applyPrefill() {
     final p = widget.prefill;
     if (p == null || !mounted) return;
@@ -241,11 +263,63 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
       if (bankCode.isNotEmpty && banks.any((b) => b.code == bankCode)) {
         selectedBankCode = bankCode;
       }
-      accountNumber = p['account_number']?.toString() ?? accountNumber;
-      accountName = p['account_name']?.toString() ?? accountName;
-      amount = p['amount']?.toString() ?? amount;
-      remark = p['remark']?.toString() ?? remark;
+      final acct = p['account_number']?.toString() ?? '';
+      if (acct.isNotEmpty) {
+        accountNumber = acct;
+        _accountNumberController.text = acct;
+      }
+      final name = p['account_name']?.toString() ?? '';
+      if (name.isNotEmpty) accountName = name;
+      final amt = p['amount']?.toString() ?? '';
+      if (amt.isNotEmpty && amt != '0') {
+        amount = amt;
+        _amountController.text = amt;
+      }
+      final rem = p['remark']?.toString() ?? '';
+      if (rem.isNotEmpty && rem.toLowerCase() != 'with') {
+        remark = rem;
+        _remarkController.text = rem;
+      }
     });
+    // The prefilled number is complete → verify it right away so the user
+    // sees the resolved name without tapping Verify.
+    _scheduleAccountLookup();
+  }
+
+  /// GET /transfers/beneficiaries — recent recipients for the chip row.
+  Future<void> _fetchBeneficiaries() async {
+    if (beneficiariesLoading) return;
+    setState(() => beneficiariesLoading = true);
+    try {
+      final response = await ApiService().getBeneficiaries();
+      if (mounted && response.data['success'] == true) {
+        final list = response.data['data'];
+        setState(() {
+          beneficiaries = list is List
+              ? list.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList()
+              : <Map<String, dynamic>>[];
+        });
+      }
+    } catch (_) {
+      // Cosmetic-only — the form works fully without the chips.
+    } finally {
+      if (mounted) setState(() => beneficiariesLoading = false);
+    }
+  }
+
+  /// One-tap beneficiary: fills bank + account + name and verifies.
+  void _applyBeneficiary(Map<String, dynamic> b) {
+    final bankCode = (b['bankCode'] ?? b['bank_code'] ?? '').toString();
+    final acct = (b['accountNumber'] ?? b['account_number'] ?? '').toString();
+    final name = (b['accountName'] ?? b['account_name'] ?? '').toString();
+    if (!mounted) return;
+    setState(() {
+      if (bankCode.isNotEmpty) selectedBankCode = bankCode;
+      accountNumber = acct;
+      _accountNumberController.text = acct;
+      if (name.isNotEmpty) accountName = name;
+    });
+    _scheduleAccountLookup();
   }
 
   // -----------------------------------------------------------------------
@@ -875,9 +949,87 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
     );
   }
 
-  /// NGN (local) fields: bank select + account number with provider lookup.
+  /// Recent-recipients chip row (WhatsApp-style): tap a chip to fill the
+  /// whole recipient block. Long-press removes the saved beneficiary.
+  List<Widget> _buildBeneficiaryChips(ThemeColors colors) {
+    return [
+      _buildField('Recent Beneficiaries', SizedBox(
+        height: 78,
+        child: beneficiariesLoading
+            ? Center(
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: colors.primary),
+                ),
+              )
+            : ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: beneficiaries.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (context, index) {
+                  final b = beneficiaries[index];
+                  final name = (b['accountName'] ?? '').toString();
+                  final acct = (b['accountNumber'] ?? '').toString();
+                  final bank = (b['bankName'] ?? b['bankCode'] ?? '').toString();
+                  return GestureDetector(
+                    onTap: () => _applyBeneficiary(b),
+                    onLongPress: () async {
+                      final id = (b['id'] ?? '').toString();
+                      if (id.isEmpty) return;
+                      try {
+                        await ApiService().deleteBeneficiary(id);
+                        if (mounted) setState(() => beneficiaries.removeAt(index));
+                      } catch (_) {}
+                    },
+                    child: Container(
+                      width: 148,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: colors.primaryBg,
+                        border: Border.all(color: colors.border),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            name.isEmpty ? acct : name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: colors.text,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            acct.isEmpty ? bank : '$acct • $bank',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: colors.textSecondary,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+      )),
+      const SizedBox(height: 20),
+    ];
+  }
+
+  /// NGN (local) fields: recent-beneficiary chips + bank select + account
+  /// number with provider lookup.
   List<Widget> _buildNgnTransferFields(ThemeColors colors) {
     return [
+      if (beneficiaries.isNotEmpty) ..._buildBeneficiaryChips(colors),
       _buildField('Select Bank', GestureDetector(
         onTap: () => setState(() => showBankSearchModal = true),
         child: Container(
@@ -904,6 +1056,7 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
         children: [
           Expanded(
             child: TextField(
+              controller: _accountNumberController,
               decoration: InputDecoration(
                 hintText: 'Enter 10-digit account number',
                 hintStyle: TextStyle(color: colors.textSecondary),
@@ -1498,6 +1651,7 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
           if (_isIntlTransfer) ..._buildIntlTransferFields(colors),
           const SizedBox(height: 20),
           _buildField('Amount (${_isIntlTransfer ? '$transferCurrency — amount recipient receives' : 'NGN'})', TextField(
+            controller: _amountController,
             decoration: InputDecoration(
               hintText: _isIntlTransfer ? 'e.g. 500' : 'Enter amount',
               hintStyle: TextStyle(color: colors.textSecondary),
@@ -1516,6 +1670,7 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
           ],
           const SizedBox(height: 20),
           _buildField('Remark (Optional)', TextField(
+            controller: _remarkController,
             decoration: InputDecoration(hintText: 'Add a remark', hintStyle: TextStyle(color: colors.textSecondary)),
             style: TextStyle(color: colors.text, fontSize: 16),
             onChanged: (value) => setState(() => remark = value),

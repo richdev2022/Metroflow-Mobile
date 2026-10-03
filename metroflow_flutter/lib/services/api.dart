@@ -862,6 +862,65 @@ class ApiService {
     return await _dio.post('/transfers/$id/verify');
   }
 
+  /// GET /transfers/beneficiaries — recent transfer recipients (chips row).
+  Future<Response> getBeneficiaries() async {
+    return await _dio.get('/transfers/beneficiaries');
+  }
+
+  /// DELETE /transfers/beneficiaries/:id — remove a saved recipient.
+  Future<Response> deleteBeneficiary(String id) async {
+    return await _dio.delete('/transfers/beneficiaries/$id');
+  }
+
+  /// POST /transfers/:id/force-reversal — customer-triggered self-heal for a
+  /// failed transfer whose money has not come back yet (idempotent).
+  Future<Response> forceTransferReversal(String idOrReference) async {
+    return await _dio.post('/transfers/$idOrReference/force-reversal');
+  }
+
+  /// POST /meetings/:meetingIdOrCode/participants — invite people to a live
+  /// meeting (call-room "Add people"). Accepts the meeting UUID OR its code;
+  /// the backend emails every newly-added participant/guest.
+  Future<Response> addMeetingParticipants(
+    String meetingIdOrCode, {
+    List<String> participantIds = const [],
+    List<String> emails = const [],
+  }) async {
+    return await _dio.post(
+      '/meetings/$meetingIdOrCode/participants',
+      data: {'participantIds': participantIds, 'emails': emails},
+    );
+  }
+
+  /// POST /calls/:callId/participants — invite people to a live call.
+  Future<Response> addCallParticipants(
+    String callIdOrCode, {
+    List<String> participantIds = const [],
+    List<String> emails = const [],
+  }) async {
+    return await _dio.post(
+      '/calls/$callIdOrCode/participants',
+      data: {'participantIds': participantIds, 'emails': emails},
+    );
+  }
+
+  /// GET /meetings/:id (accepts UUID or code) — used by the call-room invite
+  /// sheet to resolve the shareable meeting code.
+  Future<Response> getMeetingDetail(String idOrCode) async {
+    return await _dio.get(
+      '/meetings/$idOrCode',
+      options: Options(extra: {'suppressToast': true}),
+    );
+  }
+
+  /// GET /calls/:id (accepts UUID or code) — same as above for calls.
+  Future<Response> getCallDetail(String idOrCode) async {
+    return await _dio.get(
+      '/calls/$idOrCode',
+      options: Options(extra: {'suppressToast': true}),
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Transaction disputes
   // ---------------------------------------------------------------------------
