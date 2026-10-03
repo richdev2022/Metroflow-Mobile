@@ -15,14 +15,32 @@ class User {
     required this.role,
   });
 
+  /// DEFENSIVE on purpose — this model feeds the chat "New Conversation"
+  /// participant picker, the team screens and call pickers.
+  ///
+  /// HISTORY: `json['phone'] as String` threw a TypeError for EVERY backend
+  /// /team row (the API returns `phoneNumber`, not `phone`), the exception
+  /// aborted the whole `.map()` in _loadTeamMembers, the silent catch left
+  /// the member list EMPTY, and the New-Conversation dialog showed a blank
+  /// "Select Participants" box. One strict cast broke the entire picker —
+  /// every field is now null-safe and accepts both spellings.
   factory User.fromJson(Map<String, dynamic> json) {
+    String asString(dynamic v, [String fallback = '']) {
+      if (v == null) return fallback;
+      return v.toString();
+    }
+
     return User(
-      id: json['id'] as String,
-      email: json['email'] as String,
-      name: json['name'] as String,
-      phone: json['phone'] as String,
-      kycStatus: json['kyc_status'] as String,
-      role: json['role'] as String,
+      id: asString(json['id'] ?? json['user_id']),
+      email: asString(json['email']),
+      name: asString(
+        (json['name'] as String?)?.isNotEmpty == true
+            ? json['name']
+            : (json['email'] ?? 'Teammate'),
+      ),
+      phone: asString(json['phone'] ?? json['phoneNumber'] ?? json['phone_number']),
+      kycStatus: asString(json['kyc_status'] ?? json['kycStatus'], 'pending'),
+      role: asString(json['role'], 'member'),
     );
   }
 

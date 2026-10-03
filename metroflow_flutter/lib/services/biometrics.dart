@@ -3,6 +3,7 @@ import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:local_auth/local_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'api.dart';
 
 class BiometricResult {
@@ -208,10 +209,16 @@ class BiometricService {
     }
   }
 
-  static Future<bool> isEnabled() async {
+  /// Biometrics enabled — PER-ACCOUNT when a userId is given (falls back to
+  /// the legacy device-wide flag for installs that never stored a per-account
+  /// value). Without a userId this is the raw legacy flag.
+  static Future<bool> isEnabled([String? userId]) async {
     try {
-      final enabled = await StorageService().getBiometricsEnabled();
-      debugPrint('Biometrics enabled: $enabled');
+      final storage = StorageService();
+      final enabled = (userId != null && userId.isNotEmpty)
+          ? await storage.getBiometricsEnabledForAccount(userId)
+          : await storage.getBiometricsEnabled();
+      debugPrint('Biometrics enabled${userId != null ? ' for account $userId' : ''}: $enabled');
       return enabled;
     } catch (e) {
       debugPrint('Failed to check biometrics enabled status: $e');
@@ -242,7 +249,7 @@ class BiometricService {
     return result.success;
   }
 
-  static Future<BiometricResult> enableBiometricsWithResult() async {
+  static Future<BiometricResult> enableBiometricsWithResult([String? userId]) async {
     try {
       debugPrint('Attempting to enable biometrics...');
       final isAvailable = await BiometricService.isAvailable();
@@ -256,13 +263,17 @@ class BiometricService {
       }
 
       final authResult = await BiometricService.authenticate('Enable biometric login');
-      
+
       if (authResult.success) {
-        await StorageService().setBiometricsEnabled(true);
+        if (userId != null && userId.isNotEmpty) {
+          await StorageService().setBiometricsEnabledForAccount(userId, true);
+        } else {
+          await StorageService().setBiometricsEnabled(true);
+        }
         debugPrint('Biometrics enabled successfully');
         return const BiometricResult(success: true);
       }
-      
+
       debugPrint('Biometric authentication failed during enable: ${authResult.error}');
       return authResult;
     } catch (e) {
@@ -280,18 +291,26 @@ class BiometricService {
     }
   }
 
-  static Future<bool> hasPromptBeenShown() async {
+  static Future<bool> hasPromptBeenShown([String? userId]) async {
     try {
-      return await StorageService().getBiometricsPromptShown();
+      final storage = StorageService();
+      return (userId != null && userId.isNotEmpty)
+          ? await storage.getBiometricsPromptShownForAccount(userId)
+          : await storage.getBiometricsPromptShown();
     } catch (e) {
       debugPrint('Failed to check prompt status: $e');
       return false;
     }
   }
 
-  static Future<void> markPromptAsShown() async {
+  static Future<void> markPromptAsShown([String? userId]) async {
     try {
-      await StorageService().setBiometricsPromptShown(true);
+      final storage = StorageService();
+      if (userId != null && userId.isNotEmpty) {
+        await storage.setBiometricsPromptShownForAccount(userId, true);
+      } else {
+        await storage.setBiometricsPromptShown(true);
+      }
     } catch (e) {
       debugPrint('Failed to mark prompt as shown: $e');
     }
@@ -302,6 +321,17 @@ class BiometricService {
       await StorageService().removeBiometricsPromptShown();
     } catch (e) {
       debugPrint('Failed to reset prompt status: $e');
+    }
+  }
+
+  /// Per-account prompt reset — used when an enrollment is wiped so the
+  /// NEXT login for THIS account offers the setup prompt again.
+  static Future<void> resetPromptStatusFor(String userId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('biometricsPromptShown_$userId');
+    } catch (e) {
+      debugPrint('Failed to reset per-account prompt status: $e');
     }
   }
 }
