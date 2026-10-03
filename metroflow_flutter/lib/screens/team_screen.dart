@@ -25,6 +25,11 @@ class _TeamScreenState extends State<TeamScreen> {
   bool _isInviting = false;
   String _inviteRole = 'member';
   String? _inviteRoleId; // non-null => custom role selected
+  // Complete employee information (invite form)
+  final _phoneController = TextEditingController();
+  final _jobTitleController = TextEditingController();
+  final _departmentController = TextEditingController();
+  String _inviteEmploymentType = '';
 
   @override
   void initState() {
@@ -37,6 +42,9 @@ class _TeamScreenState extends State<TeamScreen> {
   void dispose() {
     _nameController.dispose();
     _emailController.dispose();
+    _phoneController.dispose();
+    _jobTitleController.dispose();
+    _departmentController.dispose();
     super.dispose();
   }
 
@@ -111,6 +119,12 @@ class _TeamScreenState extends State<TeamScreen> {
         'name': name,
         'email': email,
         'role': _inviteRole,
+        // Complete employee information — persisted on the member record.
+        'phone_number': _phoneController.text.trim(),
+        'job_title': _jobTitleController.text.trim(),
+        'department': _departmentController.text.trim(),
+        if (_inviteEmploymentType.isNotEmpty)
+          'employment_type': _inviteEmploymentType,
       };
       // Custom workspace role wins over the legacy role when selected.
       if (_inviteRoleId != null) {
@@ -120,6 +134,10 @@ class _TeamScreenState extends State<TeamScreen> {
       Fluttertoast.showToast(msg: 'Invitation sent successfully');
       _nameController.clear();
       _emailController.clear();
+      _phoneController.clear();
+      _jobTitleController.clear();
+      _departmentController.clear();
+      _inviteEmploymentType = '';
       if (mounted) Navigator.of(context).pop();
       await _fetchTeam();
     } catch (e) {
@@ -238,194 +256,20 @@ class _TeamScreenState extends State<TeamScreen> {
   }
 
   void _showRoleModal(TeamMember member) {
-    String selectedRole = member.role;
-    String? selectedRoleId = member.roleId;
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            final colors = AppTheme.colors;
-            final customRoles = _roles;
-            return Padding(
-              padding: const EdgeInsets.all(24),
-              child: Container(
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  color: colors.surface,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            'Update Role',
-                            style: TextStyle(
-                              color: colors.text,
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          IconButton(
-                            icon: Icon(Icons.close, color: colors.text),
-                            onPressed: () => Navigator.of(context).pop(),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Select a new role for ${member.name}',
-                        style: TextStyle(
-                          color: colors.textSecondary,
-                          fontSize: 14,
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      ...['admin', 'manager', 'member'].map((role) {
-                        final selected =
-                            selectedRoleId == null && selectedRole == role;
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(10),
-                            onTap: () {
-                              setModalState(() {
-                                selectedRole = role;
-                                selectedRoleId = null;
-                              });
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                  vertical: 14, horizontal: 16),
-                              decoration: BoxDecoration(
-                                color: selected
-                                    ? colors.primary.withValues(alpha: 0.12)
-                                    : colors.background,
-                                border: Border.all(
-                                  color: selected
-                                      ? colors.primary
-                                      : colors.border,
-                                ),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(_getRoleIcon(role),
-                                      color: selected
-                                          ? colors.primary
-                                          : colors.textSecondary,
-                                      size: 20),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Text(
-                                      _titleCase(role),
-                                      style: TextStyle(
-                                        color: selected
-                                            ? colors.primary
-                                            : colors.text,
-                                        fontWeight: selected
-                                            ? FontWeight.w500
-                                            : FontWeight.normal,
-                                      ),
-                                    ),
-                                  ),
-                                  if (selected)
-                                    Icon(Icons.check_circle,
-                                        color: colors.primary),
-                                ],
-                              ),
-                            ),
-                          ),
-                        );
-                      }),
-                      if (customRoles.isNotEmpty) ...[
-                        const SizedBox(height: 8),
-                        Text(
-                          'Custom roles',
-                          style: TextStyle(
-                            color: colors.text,
-                            fontSize: 13.5,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        ...customRoles.map((role) {
-                          final roleId = role['id'] as String?;
-                          final roleName = (role['name'] as String?) ?? '';
-                          final selected = selectedRoleId != null &&
-                              selectedRoleId == roleId;
-                          return Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(10),
-                              onTap: () {
-                                setModalState(() {
-                                  selectedRoleId = roleId;
-                                });
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                    vertical: 14, horizontal: 16),
-                                decoration: BoxDecoration(
-                                  color: selected
-                                      ? colors.primary.withValues(alpha: 0.12)
-                                      : colors.background,
-                                  border: Border.all(
-                                    color: selected
-                                        ? colors.primary
-                                        : colors.border,
-                                  ),
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.shield_outlined,
-                                        color: selected
-                                            ? colors.primary
-                                            : colors.textSecondary,
-                                        size: 20),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Text(
-                                        roleName,
-                                        style: TextStyle(
-                                          color: selected
-                                              ? colors.primary
-                                              : colors.text,
-                                          fontWeight: selected
-                                              ? FontWeight.w500
-                                              : FontWeight.normal,
-                                        ),
-                                      ),
-                                    ),
-                                    if (selected)
-                                      Icon(Icons.check_circle,
-                                          color: colors.primary),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          );
-                        }),
-                      ],
-                      const SizedBox(height: 24),
-                      ElevatedButton(
-                        onPressed: () => _handleUpdateRole(
-                            member, selectedRoleId, selectedRole),
-                        child: const Text('Update Role'),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
+      builder: (sheetContext) {
+        return _RolePickerSheet(
+          title: 'Update Role',
+          subtitle: 'Search and select a new role for ${member.name}',
+          roles: _roles,
+          initialRoleId: member.roleId,
+          initialLegacyRole: member.role,
+          onConfirm: (roleId, legacyRole) {
+            Navigator.of(sheetContext).pop();
+            _handleUpdateRole(member, roleId, legacyRole);
           },
         );
       },
@@ -530,202 +374,148 @@ class _TeamScreenState extends State<TeamScreen> {
   }
 
   void _showInviteModal() {
-    // Reset the custom-role selection each time the sheet opens.
+    // Reset the role selection each time the sheet opens (employee fields
+    // keep their values so a corrected re-send is cheap).
     _inviteRoleId = null;
     _inviteRole = 'member';
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            final colors = AppTheme.colors;
-            final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-            final customRoles = _roles;
-            return Padding(
-              padding: EdgeInsets.fromLTRB(24, 24, 24, bottomInset + 24),
-              child: Container(
-                constraints: BoxConstraints(
-                  maxHeight: MediaQuery.of(context).size.height * 0.85,
-                ),
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  color: colors.surface,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: SingleChildScrollView(
-                  child: Column(
+      builder: (sheetContext) {
+        final colors = AppTheme.colors;
+        final bottomInset = MediaQuery.of(sheetContext).viewInsets.bottom;
+        return Padding(
+          padding: EdgeInsets.only(left: 20, right: 20, top: 20, bottom: bottomInset + 20),
+          child: Container(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(sheetContext).size.height * 0.88,
+            ),
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: colors.surface,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: SingleChildScrollView(
+              child: StatefulBuilder(
+                builder: (context, setModalState) {
+                  return Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'Invite Team Member',
-                          style: TextStyle(
-                            color: colors.text,
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        IconButton(
-                          icon: Icon(Icons.close, color: colors.text),
-                          onPressed: () => Navigator.of(context).pop(),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: _nameController,
-                      decoration: const InputDecoration(hintText: 'Name'),
-                    ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: _emailController,
-                      decoration: const InputDecoration(hintText: 'Email'),
-                      keyboardType: TextInputType.emailAddress,
-                      textCapitalization: TextCapitalization.none,
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Role',
-                      style: TextStyle(
-                        color: colors.text,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: ['admin', 'manager', 'member'].map((role) {
-                        final selected =
-                            _inviteRoleId == null && _inviteRole == role;
-                        return Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(10),
-                              onTap: () {
-                                setState(() {
-                                  _inviteRole = role;
-                                  _inviteRoleId = null;
-                                });
-                                setModalState(() {});
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(vertical: 10),
-                                decoration: BoxDecoration(
-                                  color: selected
-                                      ? colors.primary.withValues(alpha: 0.12)
-                                      : colors.background,
-                                  border: Border.all(
-                                    color: selected ? colors.primary : colors.border,
-                                  ),
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                child: Text(
-                                  _titleCase(role),
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    color: selected ? colors.primary : colors.textSecondary,
-                                    fontWeight: selected ? FontWeight.w500 : FontWeight.normal,
-                                  ),
-                                ),
-                              ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'Invite Team Member',
+                            style: TextStyle(
+                              color: colors.text,
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
                             ),
                           ),
-                        );
-                      }).toList(),
-                    ),
-                    if (customRoles.isNotEmpty) ...[
+                          IconButton(
+                            icon: Icon(Icons.close, color: colors.text),
+                            onPressed: () => Navigator.of(sheetContext).pop(),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: _nameController,
+                        decoration: const InputDecoration(hintText: 'Full name *'),
+                        textCapitalization: TextCapitalization.words,
+                      ),
                       const SizedBox(height: 12),
-                      Text(
-                        'Custom roles (defined in Roles & Permissions)',
-                        style: TextStyle(
-                          color: colors.text,
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w700,
+                      TextField(
+                        controller: _emailController,
+                        decoration: const InputDecoration(hintText: 'Email address *'),
+                        keyboardType: TextInputType.emailAddress,
+                        textCapitalization: TextCapitalization.none,
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _phoneController,
+                        decoration: const InputDecoration(hintText: 'Phone number'),
+                        keyboardType: TextInputType.phone,
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _jobTitleController,
+                        decoration: const InputDecoration(hintText: 'Job title'),
+                        textCapitalization: TextCapitalization.words,
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _departmentController,
+                        decoration: const InputDecoration(hintText: 'Department'),
+                        textCapitalization: TextCapitalization.words,
+                      ),
+                      const SizedBox(height: 12),
+                      // Employment type
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: colors.border),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<String>(
+                            value: _inviteEmploymentType.isEmpty
+                                ? null
+                                : _inviteEmploymentType,
+                            hint: Text(
+                              'Employment type',
+                              style: TextStyle(color: colors.textSecondary, fontSize: 15),
+                            ),
+                            isExpanded: true,
+                            dropdownColor: colors.surface,
+                            icon: Icon(Icons.expand_more, color: colors.textSecondary),
+                            items: const [
+                              DropdownMenuItem(value: 'full_time', child: Text('Full-time')),
+                              DropdownMenuItem(value: 'part_time', child: Text('Part-time')),
+                              DropdownMenuItem(value: 'contract', child: Text('Contract')),
+                              DropdownMenuItem(value: 'internship', child: Text('Internship')),
+                            ],
+                            onChanged: (value) {
+                              setModalState(() => _inviteEmploymentType = value ?? '');
+                            },
+                          ),
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: customRoles.map((role) {
-                          final roleId = role['id'] as String?;
-                          final roleName = (role['name'] as String?) ?? '';
-                          final selected =
-                              _inviteRoleId != null && _inviteRoleId == roleId;
-                          return InkWell(
-                            borderRadius: BorderRadius.circular(10),
-                            onTap: () {
-                              setState(() => _inviteRoleId = roleId);
-                              setModalState(() {});
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                  vertical: 8, horizontal: 12),
-                              decoration: BoxDecoration(
-                                color: selected
-                                    ? colors.primary.withValues(alpha: 0.12)
-                                    : colors.background,
-                                border: Border.all(
-                                  color: selected ? colors.primary : colors.border,
+                      const SizedBox(height: 18),
+                      // SEARCHABLE all-roles picker (workspace + defaults).
+                      _RolePickerList(
+                        roles: _roles,
+                        selectedRoleId: _inviteRoleId,
+                        selectedLegacyRole: _inviteRoleId == null ? _inviteRole : null,
+                        onSelect: (roleId, legacyRole) {
+                          setModalState(() {
+                            _inviteRoleId = roleId;
+                            if (roleId == null) _inviteRole = legacyRole;
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 22),
+                      ElevatedButton(
+                        onPressed: _isInviting ? null : _handleInvite,
+                        child: _isInviting
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
                                 ),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.shield_outlined,
-                                    size: 15,
-                                    color: selected
-                                        ? colors.primary
-                                        : colors.textSecondary,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    roleName,
-                                    style: TextStyle(
-                                      color: selected
-                                          ? colors.primary
-                                          : colors.textSecondary,
-                                      fontWeight: selected
-                                          ? FontWeight.w500
-                                          : FontWeight.normal,
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        }).toList(),
+                              )
+                            : const Text('Send Invitation'),
                       ),
                     ],
-                    const SizedBox(height: 24),
-                    ElevatedButton(
-                      onPressed: _isInviting ? null : _handleInvite,
-                      child: _isInviting
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Text('Send Invitation'),
-                    ),
-                    ],
-                  ),
-                ),
+                  );
+                },
               ),
-            );
-          },
+            ),
+          ),
         );
       },
     );
@@ -919,6 +709,19 @@ class _TeamScreenState extends State<TeamScreen> {
                   member.email,
                   style: TextStyle(color: colors.textSecondary, fontSize: 14),
                 ),
+                // Complete employee information captured at invite time.
+                if ((member.jobTitle != null && member.jobTitle!.trim().isNotEmpty) ||
+                    (member.department != null && member.department!.trim().isNotEmpty))
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      [member.jobTitle, member.department]
+                          .whereType<String>()
+                          .where((v) => v.trim().isNotEmpty)
+                          .join(' · '),
+                      style: TextStyle(color: colors.textSecondary, fontSize: 12.5),
+                    ),
+                  ),
                 const SizedBox(height: 8),
                 Wrap(
                   spacing: 16,
@@ -1054,6 +857,300 @@ class _TeamScreenState extends State<TeamScreen> {
           shape: BoxShape.circle,
         ),
         child: Icon(icon, size: 20, color: color),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Searchable ALL-roles picker (shared by invite + update-role flows)
+// ---------------------------------------------------------------------------
+
+/// One selectable option in the role picker: a custom workspace role (roleId
+/// non-null) or a legacy fixed role (admin/manager/member).
+class _RoleChoice {
+  final String? roleId;
+  final String legacyRole;
+  final String name;
+  final String hint;
+  final IconData icon;
+
+  const _RoleChoice({
+    this.roleId,
+    required this.legacyRole,
+    required this.name,
+    required this.hint,
+    required this.icon,
+  });
+}
+
+/// Builds the FULL role list: every workspace role from /roles (the seeded
+/// Manager/Member defaults included — they are real editable rows now) plus
+/// the legacy Admin default. Legacy `member` is intentionally hidden when a
+/// workspace 'Member' role row exists to avoid two identical entries.
+List<_RoleChoice> _buildRoleChoices(List<Map<String, dynamic>> roles) {
+  final choices = <_RoleChoice>[
+    for (final role in roles)
+      _RoleChoice(
+        roleId: role['id'] as String?,
+        legacyRole: 'member',
+        name: (role['name'] as String?) ?? 'Untitled role',
+        hint: 'Workspace role',
+        icon: Icons.shield_outlined,
+      ),
+  ];
+  final hasMemberRow =
+      roles.any((r) => ((r['name'] as String?) ?? '').toLowerCase() == 'member');
+  if (!hasMemberRow) {
+    choices.add(const _RoleChoice(
+      legacyRole: 'member',
+      name: 'Member',
+      hint: 'Default role — day-to-day work',
+      icon: Icons.person_outline,
+    ));
+  }
+  choices.add(const _RoleChoice(
+    legacyRole: 'manager',
+    name: 'Manager',
+    hint: 'Default role — everything except team management',
+    icon: Icons.people_outline,
+  ));
+  choices.add(const _RoleChoice(
+    legacyRole: 'admin',
+    name: 'Admin',
+    hint: 'Default role — full access',
+    icon: Icons.admin_panel_settings_outlined,
+  ));
+  return choices;
+}
+
+/// Inline searchable role list used INSIDE the invite sheet.
+class _RolePickerList extends StatefulWidget {
+  final List<Map<String, dynamic>> roles;
+  final String? selectedRoleId;
+  final String? selectedLegacyRole;
+  final void Function(String? roleId, String legacyRole) onSelect;
+
+  const _RolePickerList({
+    required this.roles,
+    required this.selectedRoleId,
+    required this.selectedLegacyRole,
+    required this.onSelect,
+  });
+
+  @override
+  State<_RolePickerList> createState() => _RolePickerListState();
+}
+
+class _RolePickerListState extends State<_RolePickerList> {
+  String _query = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppTheme.colors;
+    final all = _buildRoleChoices(widget.roles);
+    final q = _query.trim().toLowerCase();
+    final filtered = q.isEmpty
+        ? all
+        : all.where((c) => ('${c.name} ${c.hint}').toLowerCase().contains(q)).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'Role *',
+          style: TextStyle(
+            color: colors.text,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          onChanged: (value) => setState(() => _query = value),
+          decoration: InputDecoration(
+            hintText: 'Search roles…',
+            prefixIcon: Icon(Icons.search, size: 20, color: colors.textSecondary),
+            isDense: true,
+          ),
+        ),
+        const SizedBox(height: 8),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 220),
+          child: filtered.isEmpty
+              ? Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 18),
+                  child: Center(
+                    child: Text(
+                      'No roles match your search',
+                      style: TextStyle(color: colors.textSecondary, fontSize: 13),
+                    ),
+                  ),
+                )
+              : ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: filtered.length,
+                  itemBuilder: (context, index) {
+                    final choice = filtered[index];
+                    final selected = choice.roleId != null
+                        ? choice.roleId == widget.selectedRoleId
+                        : widget.selectedRoleId == null &&
+                            choice.legacyRole == widget.selectedLegacyRole;
+                    return InkWell(
+                      borderRadius: BorderRadius.circular(10),
+                      onTap: () => widget.onSelect(choice.roleId, choice.legacyRole),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                        margin: const EdgeInsets.only(bottom: 6),
+                        decoration: BoxDecoration(
+                          color: selected
+                              ? colors.primary.withValues(alpha: 0.12)
+                              : colors.background,
+                          border: Border.all(
+                            color: selected ? colors.primary : colors.border,
+                          ),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              choice.icon,
+                              size: 18,
+                              color: selected ? colors.primary : colors.textSecondary,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    choice.name,
+                                    style: TextStyle(
+                                      color: selected ? colors.primary : colors.text,
+                                      fontWeight:
+                                          selected ? FontWeight.w600 : FontWeight.w500,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                  Text(
+                                    choice.hint,
+                                    style: TextStyle(
+                                      color: colors.textSecondary,
+                                      fontSize: 11.5,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (selected)
+                              Icon(Icons.check_circle, color: colors.primary, size: 20),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Bottom-sheet version used by the update-role flow on a member card.
+class _RolePickerSheet extends StatefulWidget {
+  final String title;
+  final String subtitle;
+  final List<Map<String, dynamic>> roles;
+  final String? initialRoleId;
+  final String initialLegacyRole;
+  final void Function(String? roleId, String legacyRole) onConfirm;
+
+  const _RolePickerSheet({
+    required this.title,
+    required this.subtitle,
+    required this.roles,
+    required this.initialRoleId,
+    required this.initialLegacyRole,
+    required this.onConfirm,
+  });
+
+  @override
+  State<_RolePickerSheet> createState() => _RolePickerSheetState();
+}
+
+class _RolePickerSheetState extends State<_RolePickerSheet> {
+  String? _selectedRoleId;
+  late String _selectedLegacyRole;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedRoleId = widget.initialRoleId;
+    _selectedLegacyRole = widget.initialLegacyRole;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppTheme.colors;
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: colors.surface,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Text(
+                      widget.title,
+                      style: TextStyle(
+                        color: colors.text,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.close, color: colors.text),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                widget.subtitle,
+                style: TextStyle(color: colors.textSecondary, fontSize: 14),
+              ),
+              const SizedBox(height: 18),
+              _RolePickerList(
+                roles: widget.roles,
+                selectedRoleId: _selectedRoleId,
+                selectedLegacyRole: _selectedRoleId == null ? _selectedLegacyRole : null,
+                onSelect: (roleId, legacyRole) {
+                  setState(() {
+                    _selectedRoleId = roleId;
+                    if (roleId == null) _selectedLegacyRole = legacyRole;
+                  });
+                },
+              ),
+              const SizedBox(height: 22),
+              ElevatedButton(
+                onPressed: () =>
+                    widget.onConfirm(_selectedRoleId, _selectedLegacyRole),
+                child: const Text('Update Role'),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

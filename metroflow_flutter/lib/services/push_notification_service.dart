@@ -120,6 +120,13 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       );
       return;
     }
+    if (type == 'call_cancelled') {
+      // SILENT cleanup: the caller hung up while this device was still
+      // ringing. Kill the full-screen ring notification — no banner, no
+      // badge (the missed-call push, if any, carries the user-facing notice).
+      await PushNotificationService.cancelCallNotification();
+      return;
+    }
     if (type == 'chat_message') {
       await PushNotificationService.showChatNotification(
         senderName: (data['sender_name'] ?? data['senderName'] ?? 'New message').toString(),
@@ -170,6 +177,10 @@ class PushNotificationService {
   /// Hook that clears the in-app ringing overlay (callProvider) when a
   /// missed-call / ended push proves the call is gone. Wired from main.dart.
   void Function()? dismissIncomingCallHook;
+
+  /// Hook for `call-cancelled` pushes: receives the cancelled callId so the
+  /// ringing overlay is dismissed only when THAT call is the one ringing.
+  void Function(String callId)? callCancelledHook;
 
   SharedPreferences? _prefs;
   StreamSubscription<String>? _tokenRefreshSub;
@@ -536,6 +547,16 @@ class PushNotificationService {
           }
           AppBadgeService.instance.addUnread(
             exact: int.tryParse((data['badge'] ?? '').toString()),
+          );
+          break;
+        case 'call_cancelled':
+          // SILENT cleanup for "caller hung up while we were still ringing":
+          // stop the ring, clear the in-app overlay (only if THIS call is the
+          // one ringing) and kill the full-screen notification. No banner.
+          AppFeedback.stopRingtone();
+          unawaited(cancelCallNotification());
+          callCancelledHook?.call(
+            (data['callId'] ?? data['call_id'] ?? data['id'] ?? '').toString(),
           );
           break;
         case 'chat_message':

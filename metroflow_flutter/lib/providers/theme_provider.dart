@@ -47,11 +47,10 @@ class ThemeNotifier extends Notifier<ThemeState> {
   }
 
   Future<void> toggleTheme(ThemeMode mode) async {
-    state = state.copyWith(isLoading: true);
-    
-    // Add a small delay to show the spinner
-    await Future.delayed(const Duration(milliseconds: 300));
-    
+    // APPLY INSTANTLY: the MaterialApp carries a ValueKey(themeMode) so the
+    // whole tree (including the static AppTheme.colors readers that do not
+    // depend on the inherited Theme) remounts on this state change — no
+    // manual refresh, no artificial spinner delay.
     state = state.copyWith(mode: mode, isLoading: false);
     AppTheme.setThemeMode(mode);
     final prefs = await SharedPreferences.getInstance();
