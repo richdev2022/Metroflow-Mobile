@@ -8,9 +8,8 @@ import '../providers/auth_provider.dart';
 import '../providers/notifications_provider.dart';
 import '../providers/badge_provider.dart';
 import '../providers/user_profile_provider.dart';
-import '../services/api.dart';
 import '../services/app_update_service.dart';
-import '../utils/app_toast.dart';
+import '../utils/kyc_gate.dart';
 import '../widgets/app_tour.dart';
 import '../widgets/avatar_with_initials.dart';
 import 'dashboard_screen.dart';
@@ -32,7 +31,6 @@ class MainScreen extends ConsumerStatefulWidget {
 class _MainScreenState extends ConsumerState<MainScreen> {
   late int _selectedIndex;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
-  bool _checkingProtectedTab = false;
 
   // NOTE on ordering: the bottom-nav shows [Home, Tasks, Chat, Meetings, More]
   // — so index 2 MUST be the ChatScreen and index 3 the MeetingsScreen.
@@ -99,7 +97,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   bool _tourPrompted = false;
 
   Future<void> _onItemTapped(int index) async {
-    if ((index == 5 || index == 6) && !await _canAccessWalletOrPayroll()) {
+    if ((index == 5 || index == 6) && !await _canAccessFinanceFeature()) {
       return;
     }
     // Viewing the Meetings tab clears its "new invite" dot
@@ -173,138 +171,7 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     );
   }
 
-  Future<bool> _canAccessWalletOrPayroll() async {
-    if (_checkingProtectedTab) return false;
-    setState(() => _checkingProtectedTab = true);
-    try {
-      final response = await ApiService().getKycStatus();
-      if (!mounted) return false;
-      final status = _KycGateStatus.fromResponse(response.data);
-
-      if (!status.bvnVerified && !status.ninVerified) {
-        context.go('/kyc-prompt');
-        return false;
-      }
-
-      if (status.bvnVerified && status.ninVerified) return true;
-
-      await _showMissingKycModal(status);
-      return false;
-    } catch (e) {
-      AppToast.show('Unable to confirm KYC status. Please try again.');
-      return false;
-    } finally {
-      if (mounted) setState(() => _checkingProtectedTab = false);
-    }
-  }
-
-  Future<void> _showMissingKycModal(_KycGateStatus status) async {
-    final missingType = status.bvnVerified ? 'nin' : 'bvn';
-    final verifiedLabel = status.bvnVerified ? 'BVN' : 'NIN';
-    final missingLabel = missingType.toUpperCase();
-    final documentLabel = missingType == 'nin'
-        ? 'National Identity Number (NIN)'
-        : 'Bank Verification Number (BVN)';
-    final controller = TextEditingController();
-    var isSubmitting = false;
-
-    String? submittedNumber;
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, setDialogState) {
-          final colors = AppTheme.colors;
-          return AlertDialog(
-            backgroundColor: colors.surface,
-            title: const Text('Identity Verification Required'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text('Please verify your $missingLabel to continue.'),
-                const SizedBox(height: 20),
-                const Text('Document Type', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-                const SizedBox(height: 8),
-                InputDecorator(
-                  decoration: InputDecoration(
-                    border: const OutlineInputBorder(),
-                    filled: true,
-                    fillColor: colors.surfaceVariant,
-                    suffixIcon: const Icon(Icons.keyboard_arrow_down),
-                  ),
-                  child: Text(documentLabel),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '$verifiedLabel verified. Please verify $missingLabel.',
-                  style: TextStyle(fontSize: 12, color: colors.textSecondary),
-                ),
-                const SizedBox(height: 16),
-                Text('$missingLabel Number', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: controller,
-                  keyboardType: TextInputType.number,
-                  maxLength: 11,
-                  decoration: InputDecoration(
-                    counterText: '',
-                    hintText: 'Enter 11-digit $missingLabel',
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  OutlinedButton(
-                    onPressed: isSubmitting ? null : () => Navigator.of(dialogContext).pop(),
-                    child: const Text('Cancel'),
-                  ),
-                  const SizedBox(height: 8),
-                  ElevatedButton(
-                    onPressed: isSubmitting
-                        ? null
-                        : () async {
-                            final number = controller.text.replaceAll(RegExp(r'\D'), '');
-                            if (number.length != 11) {
-                              AppToast.show('Please enter a valid 11-digit $missingLabel');
-                              return;
-                            }
-                            setDialogState(() => isSubmitting = true);
-                            try {
-                              await ApiService().initiateKyc(missingType, number);
-                              submittedNumber = number;
-                              if (dialogContext.mounted) Navigator.of(dialogContext).pop();
-                            } catch (e) {
-                              debugPrint('Failed to initiate KYC: $e');
-                            } finally {
-                              if (dialogContext.mounted) setDialogState(() => isSubmitting = false);
-                            }
-                          },
-                    child: isSubmitting
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                          )
-                        : const Text('Verify Identity'),
-                  ),
-                ],
-              ),
-            ],
-          );
-        },
-      ),
-    );
-    controller.dispose();
-    if (!mounted || submittedNumber == null) return;
-    context.go('/kyc-otp?type=$missingType', extra: {
-      'type': missingType,
-      'number': submittedNumber,
-    });
-  }
+  Future<bool> _canAccessFinanceFeature() => KycGate.canUseFinance(context);
 
   @override
   Widget build(BuildContext context) {
@@ -616,6 +483,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       title: 'Transfers',
                       colors: colors,
                       onTap: () async {
+                        if (!await _canAccessFinanceFeature()) return;
+                        if (!context.mounted) return;
                         context.push('/main/transfers');
                       },
                     ),
@@ -624,6 +493,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       title: 'Payment Links',
                       colors: colors,
                       onTap: () async {
+                        if (!await _canAccessFinanceFeature()) return;
+                        if (!context.mounted) return;
                         context.push('/main/payment-links');
                       },
                     ),
@@ -632,6 +503,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       title: 'Invoices',
                       colors: colors,
                       onTap: () async {
+                        if (!await _canAccessFinanceFeature()) return;
+                        if (!context.mounted) return;
                         context.push('/main/invoices');
                       },
                     ),
@@ -640,6 +513,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       title: 'Store',
                       colors: colors,
                       onTap: () async {
+                        if (!await _canAccessFinanceFeature()) return;
+                        if (!context.mounted) return;
                         context.push('/main/store');
                       },
                     ),
@@ -648,6 +523,8 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                       title: 'Subscriptions',
                       colors: colors,
                       onTap: () async {
+                        if (!await _canAccessFinanceFeature()) return;
+                        if (!context.mounted) return;
                         context.push('/main/subscriptions');
                       },
                     ),
@@ -1044,8 +921,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                         icon: Icons.swap_horiz_outlined,
                         label: 'Transfers',
                         colors: colors,
-                        onTap: () {
+                        onTap: () async {
                           Navigator.of(sheetContext).pop();
+                          if (!await _canAccessFinanceFeature()) return;
+                          if (!mounted) return;
                           context.push('/main/transfers');
                         },
                       ),
@@ -1074,8 +953,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                         icon: Icons.link_outlined,
                         label: 'Pay Links',
                         colors: colors,
-                        onTap: () {
+                        onTap: () async {
                           Navigator.of(sheetContext).pop();
+                          if (!await _canAccessFinanceFeature()) return;
+                          if (!mounted) return;
                           context.push('/main/payment-links');
                         },
                       ),
@@ -1083,8 +964,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                         icon: Icons.receipt_long_outlined,
                         label: 'Invoices',
                         colors: colors,
-                        onTap: () {
+                        onTap: () async {
                           Navigator.of(sheetContext).pop();
+                          if (!await _canAccessFinanceFeature()) return;
+                          if (!mounted) return;
                           context.push('/main/invoices');
                         },
                       ),
@@ -1092,8 +975,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                         icon: Icons.storefront_outlined,
                         label: 'Store',
                         colors: colors,
-                        onTap: () {
+                        onTap: () async {
                           Navigator.of(sheetContext).pop();
+                          if (!await _canAccessFinanceFeature()) return;
+                          if (!mounted) return;
                           context.push('/main/store');
                         },
                       ),
@@ -1101,8 +986,10 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                         icon: Icons.autorenew_outlined,
                         label: 'Subscriptions',
                         colors: colors,
-                        onTap: () {
+                        onTap: () async {
                           Navigator.of(sheetContext).pop();
+                          if (!await _canAccessFinanceFeature()) return;
+                          if (!mounted) return;
                           context.push('/main/subscriptions');
                         },
                       ),
@@ -1223,26 +1110,6 @@ class _MainScreenState extends ConsumerState<MainScreen> {
   }
 }
 
-class _KycGateStatus {
-  final bool bvnVerified;
-  final bool ninVerified;
-
-  const _KycGateStatus({required this.bvnVerified, required this.ninVerified});
-  factory _KycGateStatus.fromResponse(dynamic data) {
-    final root = data is Map<String, dynamic> ? data : <String, dynamic>{};
-    final user = root['user'] is Map<String, dynamic> ? root['user'] as Map<String, dynamic> : null;
-    return _KycGateStatus(
-      bvnVerified: user?['bvnStatus'] == 'verified' ||
-          user?['bvn_status'] == 'verified' ||
-          root['bvn_verified'] == true,
-      ninVerified: user?['ninStatus'] == 'verified' ||
-          user?['nin_status'] == 'verified' ||
-          root['nin_verified'] == true,
-    );
-  }
-}
-
-/// Section label used inside the navigation drawer.
 class _DrawerSectionLabel extends StatelessWidget {
   final String label;
   const _DrawerSectionLabel(this.label);

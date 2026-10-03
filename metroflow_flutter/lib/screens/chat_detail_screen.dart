@@ -37,6 +37,11 @@ class ChatDetailScreen extends ConsumerStatefulWidget {
   /// suppress banners/sounds for the conversation the user is looking at.
   static String? activeConversationId;
 
+  /// Set by the push-notification tap handler (chat_message) right before
+  /// navigating to '/main/chat' — ChatScreen consumes it once the
+  /// conversations list arrives and opens THIS conversation directly.
+  static String? pendingOpenConversationId;
+
   @override
   ConsumerState<ChatDetailScreen> createState() => _ChatDetailScreenState();
 }
@@ -50,6 +55,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   final AudioRecorder _voiceRecorder = AudioRecorder();
   List<Message> _messages = [];
   bool _isLoading = true;
+  /// Non-null when loading messages FAILED (dead session / network / 500).
+  /// The empty state then shows the real reason + a retry, instead of the
+  /// misleading "No messages yet".
+  String? _loadError;
   bool _isSending = false;
   String? _currentUserId;
   String? _peerTypingName;
@@ -461,6 +470,12 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       }
     } catch (e) {
       Logger.error('Error loading messages: $e');
+      // A silent catch here rendered the EMPTY STATE for every failure (403
+      // dead session, 500, network) — users concluded "the chat is empty"
+      // while messages existed server-side. Surface the real reason.
+      if (mounted) {
+        setState(() => _loadError = ApiService.extractErrorMessage(e));
+      }
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -544,6 +559,9 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
           _replyTo = null;
         });
         _scrollToBottom();
+        // Outgoing-message blip (WhatsApp-style). Voice notes played their own
+        // sound on the recorder path; this covers text/sticker/GIF/attachment.
+        AppFeedback.playSentSound();
       }
     } catch (e) {
       Logger.error('Error sending message: $e');
@@ -1334,17 +1352,41 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                                 color: colors.primaryBg,
                                 shape: BoxShape.circle,
                               ),
-                              child: Icon(Icons.chat_bubble_outline_rounded,
+                              child: Icon(
+                                  _loadError != null
+                                      ? Icons.cloud_off_rounded
+                                      : Icons.chat_bubble_outline_rounded,
                                   size: 38, color: colors.primary),
                             ),
                             const SizedBox(height: 16),
-                            Text('No messages yet',
+                            Text(
+                                _loadError != null
+                                    ? 'Couldn\'t load messages'
+                                    : 'No messages yet',
                                 style: TextStyle(
                                     fontWeight: FontWeight.w600,
                                     color: colors.text)),
                             const SizedBox(height: 6),
-                            Text('Say hello — send the first message!',
+                            Text(
+                                _loadError != null
+                                    ? _loadError!
+                                    : 'Say hello — send the first message!',
+                                textAlign: TextAlign.center,
                                 style: TextStyle(color: colors.textSecondary)),
+                            if (_loadError != null) ...[
+                              const SizedBox(height: 14),
+                              OutlinedButton.icon(
+                                onPressed: () {
+                                  setState(() {
+                                    _isLoading = true;
+                                    _loadError = null;
+                                  });
+                                  _loadMessages();
+                                },
+                                icon: const Icon(Icons.refresh_rounded, size: 18),
+                                label: const Text('Try again'),
+                              ),
+                            ],
                           ],
                         ),
                       )

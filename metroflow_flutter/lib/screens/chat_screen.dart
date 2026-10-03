@@ -55,6 +55,27 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       });
     };
     _socket.onConversationCreated = _conversationCreatedHandler;
+    // Deep link from a chat push tap: open the exact conversation once the
+    // list arrives (see ChatDetailScreen.pendingOpenConversationId, set by
+    // the push notification tap handler).
+    WidgetsBinding.instance.addPostFrameCallback((_) => _consumePendingDeepLink());
+  }
+
+  void _consumePendingDeepLink() {
+    final pendingId = ChatDetailScreen.pendingOpenConversationId;
+    if (pendingId == null || pendingId.isEmpty) return;
+    if (_isLoading) {
+      // List still loading — retry shortly.
+      Future.delayed(const Duration(milliseconds: 400), _consumePendingDeepLink);
+      return;
+    }
+    ChatDetailScreen.pendingOpenConversationId = null;
+    final match = _conversations.where((c) => c.id == pendingId).toList();
+    if (!mounted || match.isEmpty) return; // unknown/stale conversation — list view is fine
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => ChatDetailScreen(conversation: match.first)),
+    ).then((_) => _loadConversations());
   }
 
   @override

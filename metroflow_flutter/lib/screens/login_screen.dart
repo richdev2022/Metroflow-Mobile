@@ -109,41 +109,24 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _checkKycAndNavigate() async {
+    // ONBOARDING CHANGE: a freshly-registered (or not-yet-KYC'd) account now
+    // goes STRAIGHT to the dashboard. BVN/NIN/proof-of-address are no longer
+    // part of the login journey — KYC is only demanded when the user tries to
+    // USE a financial feature (wallet, transfers, payroll, payment links,
+    // subscriptions...), which main_screen's finance gate enforces.
     try {
-      final api = ApiService();
-      final response = await api.getKycStatus();
-      final data = response.data;
-      final user = data['user'] as Map<String, dynamic>?;
+      final promptShown = await BiometricService.hasPromptBeenShown();
+      final isEnabled = await BiometricService.isEnabled();
+      final canAuth = await BiometricService.canAuthenticate();
 
-      if (user == null && data['bvn_verified'] == null && data['nin_verified'] == null) {
-        if (mounted) context.go('/main');
-        return;
-      }
-
-      final bvnVerified = user?['bvnStatus'] == 'verified' ||
-          user?['bvn_status'] == 'verified' ||
-          data['bvn_verified'] == true;
-      final ninVerified = user?['ninStatus'] == 'verified' ||
-          user?['nin_status'] == 'verified' ||
-          data['nin_verified'] == true;
-      final isTier1Verified = bvnVerified || ninVerified;
-
-      if (!isTier1Verified) {
-        if (mounted) context.go('/kyc-prompt');
-      } else {
-        final promptShown = await BiometricService.hasPromptBeenShown();
-        final isEnabled = await BiometricService.isEnabled();
-        final canAuth = await BiometricService.canAuthenticate();
-
-        if (canAuth && !promptShown && !isEnabled) {
-          if (mounted) {
-            setState(() {
-              _showBiometricsSetupModal = true;
-            });
-          }
-        } else {
-          if (mounted) context.go('/main');
+      if (canAuth && !promptShown && !isEnabled) {
+        if (mounted) {
+          setState(() {
+            _showBiometricsSetupModal = true;
+          });
         }
+      } else {
+        if (mounted) context.go('/main');
       }
     } catch (e) {
       if (mounted) context.go('/main');
