@@ -62,6 +62,7 @@ class _TransferDetailScreenState extends State<TransferDetailScreen> {
   Map<String, String>? _bankNames; // code -> name
   String _status = '';
   bool _verifying = false;
+  bool _reversing = false;
 
   @override
   void initState() {
@@ -125,6 +126,33 @@ class _TransferDetailScreenState extends State<TransferDetailScreen> {
     }
   }
 
+  /// Customer-triggered self-heal: the transfer is FAILED but the money has
+  /// not visibly come back (e.g. the failure webhook arrived while the server
+  /// ran an older build). Idempotent server-side — safe to tap repeatedly.
+  Future<void> _forceReversal() async {
+    if (_reversing) return;
+    setState(() => _reversing = true);
+    try {
+      final id = widget.transfer.id.isNotEmpty ? widget.transfer.id : widget.transfer.reference;
+      final response = await ApiService().forceTransferReversal(id);
+      final data = response.data;
+      final ok = data is Map && data['success'] == true;
+      final message = (data is Map ? data['message'] ?? data['error'] : null)?.toString() ??
+          (ok ? 'Reversal completed' : 'Reversal failed');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(ApiService.extractErrorMessage(e))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _reversing = false);
+    }
+  }
+
   Future<Uint8List?> _captureReceipt() async {
     try {
       final boundary = _receiptKey.currentContext?.findRenderObject()
@@ -185,10 +213,12 @@ class _TransferDetailScreenState extends State<TransferDetailScreen> {
   void _openDispute() {
     final t = widget.transfer;
     if (_status.toLowerCase() == 'failed') {
-      // Failed transfers self-reverse automatically — nothing to dispute.
+      // Failed transfers self-reverse automatically — use the "Reverse now"
+      // action below (the money is credited by reverseFailedTransfer; this
+      // gate only stops disputes for money that was never lost).
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text(
-            'Failed transfers are reversed to your wallet automatically. Disputes are for debits that went through.'),
+            'Failed transfers are reversed to your wallet automatically — tap "Money not back yet? Reverse now" below if the amount has not arrived.'),
       ));
       return;
     }
@@ -601,6 +631,22 @@ class _TransferDetailScreenState extends State<TransferDetailScreen> {
               ],
             ),
             const SizedBox(height: 10),
+            if (_status.toLowerCase() == 'failed') ...[
+              OutlinedButton.icon(
+                onPressed: _reversing ? null : _forceReversal,
+                icon: _reversing
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: AppColors.primary))
+                    : const Icon(Icons.currency_exchange_rounded, size: 18),
+                label: Text(_reversing
+                    ? 'Reversing…'
+                    : 'Money not back yet? Reverse now'),
+              ),
+              const SizedBox(height: 10),
+            ],
             Row(
               children: [
                 Expanded(

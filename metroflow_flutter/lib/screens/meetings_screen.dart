@@ -168,11 +168,30 @@ class _MeetingsScreenState extends ConsumerState<MeetingsScreen> {
   }
 
   Future<void> _showCreateMeetingDialog([Meeting? meeting, DateTime? initialDate]) async {
+    Meeting? editable = meeting;
+    // EDIT: re-fetch the meeting right before opening the form. Editing from
+    // a stale list object used to silently REVERT flags/participants that
+    // were changed elsewhere (call-room "Add people", web edits) — the user
+    // saw waiting-room/recording toggles flip back off and invited people
+    // disappear on save.
+    if (editable != null) {
+      try {
+        final fresh = await _api.getMeetingDetail(editable.id);
+        if (fresh.data['success'] == true && fresh.data['data'] is Map && mounted) {
+          editable = Meeting.fromJson(
+            Map<String, dynamic>.from(fresh.data['data'] as Map),
+          );
+        }
+      } catch (_) {
+        // Fall back to the (possibly stale) list object.
+      }
+    }
+    if (!mounted) return;
     showDialog(
       context: context,
       builder: (context) => _MeetingDialog(
         teamMembers: _teamMembers,
-        meeting: meeting,
+        meeting: editable,
         initialDate: initialDate,
         onSaved: (updatedMeeting) {
           setState(() {
@@ -255,12 +274,18 @@ class _MeetingsScreenState extends ConsumerState<MeetingsScreen> {
     }
   }
 
+  /// Copy the FULL shareable meeting link (https://app.metricorex.com/
+  /// meetings/<code>). The old fallback pasted the bare 6-char code — useless
+  /// outside the app — because `meetingUrl` was empty (the backend field is
+  /// `meetingLink`, now also mapped by the model).
   void _copyMeetingLink(Meeting meeting) {
     final link = meeting.meetingUrl.isNotEmpty
         ? meeting.meetingUrl
-        : (meeting.meetingCode.isNotEmpty ? meeting.meetingCode : meeting.id);
+        : (meeting.meetingCode.isNotEmpty
+            ? 'https://app.metricorex.com/meetings/${meeting.meetingCode}'
+            : 'https://app.metricorex.com/meetings/${meeting.id}');
     Clipboard.setData(ClipboardData(text: link));
-    AppToast.show('Meeting link copied to clipboard');
+    AppToast.show('Meeting link copied');
   }
 
   void _openMeetingNotes(Meeting meeting) {
@@ -826,6 +851,10 @@ class _MeetingDialogState extends State<_MeetingDialog> {
       _recordingEnabled = widget.meeting!.recordingEnabled;
       _screenSharingEnabled = widget.meeting!.screenSharingEnabled;
       _selectedAttendeeIds.addAll(widget.meeting!.attendees.map((a) => a.userId));
+      // Seed existing guest (external email) participants so the edit form
+      // shows AND re-sends exactly what exists — previously guests were
+      // invisible on edit and silently dropped on save.
+      _guestEmails.addAll(widget.meeting!.guests);
     } else if (widget.initialDate != null) {
       // Pre-fill from a tapped calendar day: 09:00 (next full hour for today).
       final d = widget.initialDate!;
@@ -944,7 +973,10 @@ class _MeetingDialogState extends State<_MeetingDialog> {
         'recordingEnabled': _recordingEnabled,
         'screenSharingEnabled': _screenSharingEnabled,
         'attendeeIds': _selectedAttendeeIds,
-        if (widget.meeting == null && _guestEmails.isNotEmpty) 'guestEmails': _guestEmails,
+        // Guests are sent on BOTH create and update: the backend diffs them
+        // and only emails newly-added ones, so re-sending the existing list
+        // never spams duplicate invitations.
+        if (_guestEmails.isNotEmpty) 'guestEmails': _guestEmails,
         if (widget.meeting == null && !_isInstant && _frequency != 'NONE')
           'recurrence': {
             'frequency': _frequency,

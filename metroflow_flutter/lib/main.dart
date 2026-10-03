@@ -76,6 +76,12 @@ import 'screens/metric_ai_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // RAM HYGIENE: Flutter's default image cache holds up to 1000 entries /
+  // 100 MB of decoded bitmaps. On 2-4 GB devices that alone can push the
+  // app into swap and get the process killed mid-use. Tighten both limits —
+  // still comfortably large for chat media, avatars and product images.
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 48 << 20; // 48 MB
+  PaintingBinding.instance.imageCache.maximumSize = 400;
   await dotenv.load(fileName: ".env");
   // Load the stored business timezone BEFORE the first frame renders so all
   // screens format dates consistently from the start.
@@ -761,7 +767,24 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
           builder: (context, child) {
             return Stack(
               children: [
-                child ?? const SizedBox.shrink(),
+                // GLOBAL KEYBOARD DISMISS: tapping ANY non-input surface
+                // closes the keyboard (users expected this everywhere —
+                // chat, transfers, search...). GestureDetector wrapping the
+                // whole app: only the tapping OUTSIDE an editable field
+                // reaches here because text fields consume their own taps.
+                GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onTap: () {
+                    final focus = FocusManager.instance.primaryFocus;
+                    if (focus != null && focus.hasFocus) {
+                      focus.unfocus();
+                    }
+                  },
+                  child: child ?? const SizedBox.shrink(),
+                ),
+                // "Hide keyboard" pill: floats just above the keyboard on
+                // every screen that has one open (explicit one-tap close).
+                const _KeyboardDismissPill(),
                 const IncomingCallDialog(),
               ],
             );
@@ -792,6 +815,58 @@ class _IdleTimeoutHandlerState extends ConsumerState<IdleTimeoutHandler> {
       onPointerMove: (_) => authNotifier.resetIdleTimer(),
       onPointerUp: (_) => authNotifier.resetIdleTimer(),
       child: widget.child,
+    );
+  }
+}
+
+/// Floating "Hide keyboard" pill — appears on EVERY screen while the
+/// keyboard is open (bottom-right, just above the keyboard inset). One tap
+/// closes it. Sits above the app content but below the incoming-call overlay.
+class _KeyboardDismissPill extends StatelessWidget {
+  const _KeyboardDismissPill();
+
+  @override
+  Widget build(BuildContext context) {
+    final insets = MediaQuery.of(context).viewInsets.bottom;
+    // Only show while a keyboard is actually open (~ any inset above 80dp
+    // filters out gesture-bar-only insets).
+    if (insets < 80) return const SizedBox.shrink();
+    return Positioned(
+      right: 16,
+      bottom: insets + 8,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(999),
+          onTap: () {
+            final focus = FocusManager.instance.primaryFocus;
+            focus?.unfocus();
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.72),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: Colors.white24),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.keyboard_hide_rounded, size: 16, color: Colors.white),
+                SizedBox(width: 6),
+                Text(
+                  'Hide keyboard',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
