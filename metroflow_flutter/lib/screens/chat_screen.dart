@@ -575,6 +575,9 @@ class _CreateConversationDialogState extends State<_CreateConversationDialog> {
       final response = await _api.createConversation({
         if (type == 'group' && _nameController.text.isNotEmpty) 'name': _nameController.text,
         'type': type,
+        // camelCase matches the backend contract (snake_case kept for older
+        // deployed backends that were taught the other spelling).
+        'participantIds': _selectedMemberIds,
         'participant_ids': _selectedMemberIds,
       });
       if (response.data['success'] == true) {

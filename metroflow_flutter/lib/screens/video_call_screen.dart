@@ -23,6 +23,27 @@ import '../widgets/captions_overlay.dart';
 import 'meeting_notes_screen.dart';
 
 class VideoCallScreen extends StatefulWidget {
+  // -----------------------------------------------------------------------
+  // ACTIVE CALL REGISTRY (call waiting)
+  // A new incoming call may arrive while the user is ALREADY on a call.
+  // Accepting it must END the previous call for everyone first. The global
+  // IncomingCallDialog consults [activeCallRoomId] and calls [endActiveCall]
+  // before pushing the new call screen — the screen's own _leave() emits
+  // call:leave + call:end and pops itself, so there is exactly one teardown
+  // path no matter how the previous call started.
+  // -----------------------------------------------------------------------
+  static String? activeCallRoomId;
+  static void Function()? _activeLeaver;
+
+  /// Ends (or leaves) the call screen that is currently open, if any.
+  static void endActiveCall() {
+    try {
+      _activeLeaver?.call();
+    } catch (_) {}
+    _activeLeaver = null;
+    activeCallRoomId = null;
+  }
+
   final String roomId;
   final String title;
   final bool isMeeting;
@@ -240,6 +261,17 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     super.initState();
     _isVideoEnabled = widget.enableVideo;
     _isCallHost = widget.isHost;
+    // Register this screen as the ACTIVE call (call-waiting teardown target).
+    // Accepting a NEW call while this one is open: meetings are left, calls
+    // are ended for everyone (per the call-waiting requirement).
+    VideoCallScreen.activeCallRoomId = widget.roomId;
+    VideoCallScreen._activeLeaver = () {
+      if (widget.isMeeting) {
+        _leave();
+      } else {
+        _leave(endForEveryone: true);
+      }
+    };
     _captions.attach(_socket, roomId: widget.roomId);
     _elapsedTicker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
@@ -250,6 +282,11 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
   @override
   void dispose() {
+    // Only unregister OUR registration — a replacement screen (call-waiting
+    // accept) may already have taken the slot.
+    if (VideoCallScreen.activeCallRoomId == widget.roomId) {
+      VideoCallScreen.activeCallRoomId = null;
+    }
     _stopCaptionBroadcast();
     unawaited(_cleanup());
     _chatController.dispose();

@@ -884,6 +884,12 @@ class ApiService {
     }, options: Options(extra: {'suppressToast': suppressToast}));
   }
 
+  /// Add one or more employees to the payroll directory.
+  /// POST /payroll/employees/import { employees: [row] }
+  Future<Response> importPayrollEmployees(List<Map<String, dynamic>> employees) async {
+    return await _dio.post('/payroll/employees/import', data: {'employees': employees});
+  }
+
   // -------------------------------------------------------------------------
   // Push notifications (FCM device registration)
   // -------------------------------------------------------------------------

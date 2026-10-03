@@ -25,6 +25,24 @@ class _PayrollScreenState extends State<PayrollScreen> {
   bool _showEmployeeDetailModal = false;
   bool _showEditEmployeeModal = false;
   bool _showPlanUpgradeModal = false;
+  bool _showAddEmployeeModal = false;
+  // Employee directory verification (parity with web): id -> verification_status
+  Map<String, String> _verificationStatus = {};
+  String? _verifyingRowId;
+  bool _isVerifyingAll = false;
+  // Add-employee form state
+  final _addNameController = TextEditingController();
+  final _addEmailController = TextEditingController();
+  final _addPhoneController = TextEditingController();
+  final _addJobTitleController = TextEditingController();
+  final _addDepartmentController = TextEditingController();
+  final _addSalaryController = TextEditingController();
+  final _addAccountNumberController = TextEditingController();
+  final _addAccountNameController = TextEditingController();
+  String _addCurrency = 'NGN';
+  String _addEmploymentType = '';
+  String _addBankCode = '';
+  bool _isAddingEmployee = false;
   bool _planUpgradeRequired = false;
   List<dynamic> _adjustments = [];
   String _salaryInterval = 'monthly';
@@ -81,6 +99,20 @@ class _PayrollScreenState extends State<PayrollScreen> {
     _editContractStartController.dispose();
     _bankSearchController.dispose();
     super.dispose();
+  }
+
+  void _clearAddEmployeeForm() {
+    _addNameController.clear();
+    _addEmailController.clear();
+    _addPhoneController.clear();
+    _addJobTitleController.clear();
+    _addDepartmentController.clear();
+    _addSalaryController.clear();
+    _addAccountNumberController.clear();
+    _addAccountNameController.clear();
+    _addCurrency = 'NGN';
+    _addEmploymentType = '';
+    _addBankCode = '';
   }
 
   Future<void> _fetchBanks() async {
@@ -203,6 +235,9 @@ class _PayrollScreenState extends State<PayrollScreen> {
       final results = await Future.wait([
         api.getPayrollSummary(params: summaryParams),
         api.getPayrollConfig(),
+        // Employee directory — the verification-status source of truth
+        // (GET /payroll/employees). Non-fatal when unavailable.
+        api.getPayrollEmployees(params: {'page': 1, 'limit': 200}),
       ]);
 
       final summaryRes = results[0];
@@ -224,6 +259,30 @@ class _PayrollScreenState extends State<PayrollScreen> {
             });
           }
         }
+      }
+
+      // Verification map (directory endpoint).
+      try {
+        final dirRes = results[2];
+        if (dirRes.statusCode == 200 && mounted) {
+          final dirData = dirRes.data;
+          final dirList = dirData is Map
+              ? (dirData['data'] is List
+                  ? dirData['data'] as List
+                  : (dirData['data'] is Map && dirData['data']['employees'] is List
+                      ? dirData['data']['employees'] as List
+                      : const []))
+              : const [];
+          final map = <String, String>{};
+          for (final row in dirList.whereType<Map>()) {
+            final id = (row['id'] ?? row['user_id'] ?? row['userId'] ?? '')?.toString() ?? '';
+            final status = (row['verification_status'] ?? row['verificationStatus'] ?? '')?.toString() ?? '';
+            if (id.isNotEmpty && status.isNotEmpty) map[id] = status;
+          }
+          setState(() => _verificationStatus = map);
+        }
+      } catch (e) {
+        debugPrint('Directory fetch (verification map) failed: $e');
       }
 
       final configRes = results[1];
@@ -512,6 +571,71 @@ class _PayrollScreenState extends State<PayrollScreen> {
     return const [];
   }
 
+  String? _verificationFor(String employeeId) => _verificationStatus[employeeId];
+
+  Future<void> _verifySingleEmployee(Employee emp) async {
+    if (_verifyingRowId != null) return;
+    setState(() => _verifyingRowId = emp.id);
+    try {
+      final res = await ApiService().verifyPayrollEmployee(emp.id, suppressToast: true);
+      final data = res.data;
+      final status = data is Map
+          ? ((data['data'] is Map ? data['data']['verification_status'] : null) ??
+                  data['verification_status'] ??
+                  '')
+              .toString()
+          : '';
+      if (mounted) {
+        setState(() {
+          _verificationStatus[emp.id] = status;
+          _verifyingRowId = null;
+        });
+        final verified = status.toLowerCase() == 'verified';
+        AppToast.show(
+          verified
+              ? 'Account verified${data is Map && data['data'] is Map && (data['data']['account_name'] ?? '').toString().isNotEmpty ? ' — ${data['data']['account_name']}' : ''}'
+              : 'Verification failed — check the bank details',
+          type: verified ? AppToastType.success : AppToastType.error,
+        );
+      }
+    } catch (e) {
+      if (mounted) setState(() => _verifyingRowId = null);
+      AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
+    }
+  }
+
+  Future<void> _verifyAllPending() async {
+    if (_isVerifyingAll) return;
+    setState(() => _isVerifyingAll = true);
+    try {
+      final res = await ApiService().verifyPayrollEmployeesBulk(suppressToast: true);
+      final data = res.data is Map ? res.data['data'] : null;
+      final verified = data is Map ? (data['verified'] as num?)?.toInt() ?? 0 : 0;
+      final failed = data is Map ? (data['failed'] as num?)?.toInt() ?? 0 : 0;
+      // Pull the fresh statuses.
+      final results = data is Map ? (data['results'] as List? ?? const []) : const [];
+      if (mounted) {
+        setState(() {
+          for (final row in results.whereType<Map>()) {
+            final id = (row['employee_id'] ?? row['id'] ?? '')?.toString() ?? '';
+            final status = (row['verification_status'] ?? row['status'] ?? '')?.toString() ?? '';
+            if (id.isNotEmpty && status.isNotEmpty) _verificationStatus[id] = status;
+          }
+          _isVerifyingAll = false;
+        });
+        AppToast.show('Verification complete — $verified verified, $failed failed',
+            type: failed > 0 ? AppToastType.warning : AppToastType.success);
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isVerifyingAll = false);
+      AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
+    }
+  }
+
+  int get _pendingVerificationCount => _employees
+      .where((e) => (_verificationStatus[e.id] ?? '').toLowerCase() != 'verified')
+      .length;
+
   void _dismissPlanUpgrade() {
     if (!mounted) return;
     setState(() => _showPlanUpgradeModal = false);
@@ -635,9 +759,245 @@ class _PayrollScreenState extends State<PayrollScreen> {
             if (_showEmployeeDetailModal) _buildEmployeeDetailModal(),
             if (_showAdjustmentModal) _buildAdjustmentModal(),
             if (_showEditEmployeeModal) _buildEditEmployeeModal(),
+            if (_showAddEmployeeModal) _buildAddEmployeeModal(),
             if (_showPlanUpgradeModal) _buildPlanUpgradeModal(),
           ],
         ),
+      ),
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // ADD EMPLOYEE (parity with the web EmployeeFormDialog): complete employee
+  // information -> POST /payroll/employees/import { employees: [row] }.
+  // -------------------------------------------------------------------------
+
+  Future<void> _handleAddEmployee() async {
+    final name = _addNameController.text.trim();
+    final email = _addEmailController.text.trim();
+    if (name.isEmpty || email.isEmpty) {
+      AppToast.show('Name and email are required', type: AppToastType.error);
+      return;
+    }
+    if (_addSalaryController.text.trim().isEmpty) {
+      AppToast.show('Enter the employee salary', type: AppToastType.error);
+      return;
+    }
+    setState(() => _isAddingEmployee = true);
+    try {
+      final row = <String, dynamic>{
+        'name': name,
+        'email': email,
+        'salary': _addSalaryController.text.trim(),
+        'salary_currency': _addCurrency,
+        'employment_type': _addEmploymentType,
+        if (_addPhoneController.text.trim().isNotEmpty)
+          'phone_number': _addPhoneController.text.trim(),
+        if (_addJobTitleController.text.trim().isNotEmpty)
+          'job_title': _addJobTitleController.text.trim(),
+        if (_addDepartmentController.text.trim().isNotEmpty)
+          'department': _addDepartmentController.text.trim(),
+        if (_addBankCode.isNotEmpty) 'bank_code': _addBankCode,
+        if (_addAccountNumberController.text.trim().isNotEmpty)
+          'account_number': _addAccountNumberController.text.trim(),
+        if (_addAccountNameController.text.trim().isNotEmpty)
+          'account_name': _addAccountNameController.text.trim(),
+      };
+      final res = await ApiService().importPayrollEmployees([row]);
+      final ok = res.data is Map && res.data['success'] == true;
+      if (mounted) {
+        setState(() {
+          _isAddingEmployee = false;
+          if (ok) {
+            _showAddEmployeeModal = false;
+            _clearAddEmployeeForm();
+          }
+        });
+        if (ok) {
+          AppToast.show('Employee added to payroll', type: AppToastType.success);
+          await _fetchPayrollData(showLoader: false);
+        } else {
+          AppToast.show('Could not add the employee', type: AppToastType.error);
+        }
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isAddingEmployee = false);
+      AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
+    }
+  }
+
+  Widget _buildAddEmployeeModal() {
+    final colors = AppTheme.colors;
+    Widget field(TextEditingController controller, String hint,
+        {TextInputType keyboard = TextInputType.text, bool enabled = true}) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: TextField(
+          controller: controller,
+          enabled: enabled,
+          keyboardType: keyboard,
+          decoration: InputDecoration(hintText: hint, isDense: true),
+        ),
+      );
+    }
+
+    return Stack(
+      children: [
+        ModalBarrier(
+          color: Colors.black.withValues(alpha: 0.5),
+          onDismiss: () => setState(() => _showAddEmployeeModal = false),
+        ),
+        DraggableScrollableSheet(
+          initialChildSize: 0.85,
+          minChildSize: 0.6,
+          maxChildSize: 0.95,
+          builder: (context, scrollController) => Container(
+            decoration: BoxDecoration(
+              color: colors.background,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Add Employee',
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => setState(() => _showAddEmployeeModal = false),
+                      ),
+                    ],
+                  ),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Complete employee information for the payroll directory.',
+                      style: TextStyle(fontSize: 12.5, color: colors.textSecondary),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: ListView(
+                      controller: scrollController,
+                      children: [
+                        _addLabel('Full name *'),
+                        field(_addNameController, 'e.g. Ada Obi',
+                            enabled: !_isAddingEmployee),
+                        _addLabel('Email *'),
+                        field(_addEmailController, 'employee@company.com',
+                            keyboard: TextInputType.emailAddress,
+                            enabled: !_isAddingEmployee),
+                        _addLabel('Phone'),
+                        field(_addPhoneController, '+234 801 234 5678',
+                            keyboard: TextInputType.phone, enabled: !_isAddingEmployee),
+                        _addLabel('Job title'),
+                        field(_addJobTitleController, 'e.g. Sales Executive',
+                            enabled: !_isAddingEmployee),
+                        _addLabel('Department'),
+                        field(_addDepartmentController, 'e.g. Operations',
+                            enabled: !_isAddingEmployee),
+                        _addLabel('Monthly salary *'),
+                        field(_addSalaryController, 'e.g. 250000',
+                            keyboard:
+                                const TextInputType.numberWithOptions(decimal: true),
+                            enabled: !_isAddingEmployee),
+                        _addLabel('Salary currency'),
+                        DropdownButton<String>(
+                          value: _addCurrency,
+                          isExpanded: true,
+                          underline: const SizedBox.shrink(),
+                          dropdownColor: colors.surface,
+                          items: const [
+                            DropdownMenuItem(value: 'NGN', child: Text('NGN - Naira')),
+                            DropdownMenuItem(value: 'USD', child: Text('USD - Dollar')),
+                          ],
+                          onChanged: _isAddingEmployee
+                              ? null
+                              : (value) => setState(() => _addCurrency = value ?? 'NGN'),
+                        ),
+                        _addLabel('Employment type'),
+                        DropdownButton<String>(
+                          value: _addEmploymentType.isEmpty ? null : _addEmploymentType,
+                          hint: const Text('Select employment type'),
+                          isExpanded: true,
+                          underline: const SizedBox.shrink(),
+                          dropdownColor: colors.surface,
+                          items: const [
+                            DropdownMenuItem(value: 'full_time', child: Text('Full-time')),
+                            DropdownMenuItem(value: 'part_time', child: Text('Part-time')),
+                            DropdownMenuItem(value: 'contract', child: Text('Contract')),
+                            DropdownMenuItem(value: 'internship', child: Text('Internship')),
+                          ],
+                          onChanged: _isAddingEmployee
+                              ? null
+                              : (value) => setState(() => _addEmploymentType = value ?? ''),
+                        ),
+                        _addLabel('Bank'),
+                        DropdownButtonFormField<String>(
+                          value: _addBankCode.isEmpty ? null : _addBankCode,
+                          isExpanded: true,
+                          dropdownColor: colors.surface,
+                          decoration: const InputDecoration(
+                            hintText: 'Select bank',
+                            isDense: true,
+                            border: OutlineInputBorder(),
+                          ),
+                          items: _banks
+                              .where((b) => b.code.isNotEmpty)
+                              .map((bank) => DropdownMenuItem(
+                                    value: bank.code,
+                                    child: Text(
+                                      bank.name,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ))
+                              .toList(),
+                          onChanged: _isAddingEmployee
+                              ? null
+                              : (value) => setState(() => _addBankCode = value ?? ''),
+                        ),
+                        _addLabel('Account number'),
+                        field(_addAccountNumberController, '10-digit account number',
+                            keyboard: TextInputType.number, enabled: !_isAddingEmployee),
+                        const SizedBox(height: 24),
+                      ],
+                    ),
+                  ),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _isAddingEmployee ? null : _handleAddEmployee,
+                      icon: _isAddingEmployee
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white))
+                          : const Icon(Icons.person_add_alt),
+                      label: Text(_isAddingEmployee ? 'Saving...' : 'Save employee'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _addLabel(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 10, bottom: 4),
+      child: Text(
+        text,
+        style: TextStyle(
+            fontSize: 12.5, fontWeight: FontWeight.w600, color: AppTheme.colors.text),
       ),
     );
   }
@@ -1671,13 +2031,38 @@ class _PayrollScreenState extends State<PayrollScreen> {
                 ),
               ),
             ),
-            TextButton.icon(
-              onPressed: _clearPayrollFilters,
-              icon: const Icon(Icons.refresh_outlined, size: 18),
-              label: const Text('Clear'),
-              style: TextButton.styleFrom(
-                foregroundColor: colors.primary,
-              ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextButton.icon(
+                  onPressed: _pendingVerificationCount == 0 || _isVerifyingAll
+                      ? null
+                      : _verifyAllPending,
+                  icon: _isVerifyingAll
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          strokeWidth: 2,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.verified_outlined, size: 18),
+                  label: Text(
+                    _pendingVerificationCount > 0
+                        ? 'Verify ($_pendingVerificationCount)'
+                        : 'Verified',
+                  ),
+                  style: TextButton.styleFrom(
+                    foregroundColor: colors.primary,
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: () => setState(() => _showAddEmployeeModal = true),
+                  icon: const Icon(Icons.person_add_alt_1, size: 18),
+                  label: const Text('Add'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: colors.primary,
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -1749,6 +2134,25 @@ class _PayrollScreenState extends State<PayrollScreen> {
                                   label: '$adjustmentCount adjustment${adjustmentCount > 1 ? 's' : ''}',
                                   color: AppColors.warning,
                                   icon: Icons.tune,
+                                ),
+                              ],
+                              if ((emp.bankCode ?? '').isNotEmpty &&
+                                  (emp.bankAccountNumber ?? '').isNotEmpty) ...[
+                                const SizedBox(width: 8),
+                                ModernBadge(
+                                  label: _verificationFor(emp.id) == 'verified'
+                                      ? 'Verified'
+                                      : _verificationFor(emp.id) == 'failed'
+                                          ? 'Verify failed'
+                                          : 'Unverified',
+                                  color: _verificationFor(emp.id) == 'verified'
+                                      ? AppColors.success
+                                      : _verificationFor(emp.id) == 'failed'
+                                          ? AppColors.error
+                                          : AppColors.warning,
+                                  icon: _verificationFor(emp.id) == 'verified'
+                                      ? Icons.verified
+                                      : Icons.verified_outlined,
                                 ),
                               ],
                             ],
