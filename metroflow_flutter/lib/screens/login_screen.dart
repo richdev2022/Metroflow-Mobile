@@ -46,9 +46,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   /// Guarded silently: any failure keeps today's behaviour (never blocks).
   Future<void> _verifyBiometricEnrollmentThenAutoTrigger() async {
     try {
-      final enabled = await BiometricService.isEnabled();
+      // PER-ACCOUNT: the stored enrollment belongs to exactly one account —
+      // read the flag for THAT account, not the device-wide legacy one.
+      final storage = StorageService();
+      final creds = await storage.getBiometricsCredentials();
+      final enrolledUserId = creds?['userId']?.toString();
+      final enabled = await BiometricService.isEnabled(enrolledUserId);
       if (enabled) {
-        final storage = StorageService();
         final deviceId = await storage.getBiometricDeviceId();
         final token = (deviceId == null || deviceId.isEmpty)
             ? null
@@ -80,11 +84,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     await Future.delayed(Duration.zero);
     if (!mounted) return;
 
-    // BUGFIX: read from storage (source of truth), NOT the provider — on a
-    // cold start checkAuth() may not have finished yet, leaving the provider
-    // at its default (biometricsEnabled: false), so the auto-prompt silently
-    // never fired for users who had enabled biometrics.
-    final biometricsEnabled = await BiometricService.isEnabled();
+    // PER-ACCOUNT auto-prompt: only fire when the enrollment stored on this
+    // device belongs to the last signed-in account AND that account actually
+    // enabled biometrics — the device-wide flag no longer leaks across
+    // accounts (account B never auto-fingerprint-signs-in as account A).
+    final storage = StorageService();
+    final creds = await storage.getBiometricsCredentials();
+    final enrolledUserId = creds?['userId']?.toString();
+    final biometricsEnabled = await BiometricService.isEnabled(enrolledUserId);
     final canAuth = await BiometricService.canAuthenticate();
 
     if (biometricsEnabled && canAuth && mounted) {
@@ -114,12 +121,20 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     // part of the login journey — KYC is only demanded when the user tries to
     // USE a financial feature (wallet, transfers, payroll, payment links,
     // subscriptions...), which main_screen's finance gate enforces.
+    //
+    // PER-ACCOUNT BIOMETRIC PROMPT: the setup offer is keyed by the account
+    // that just signed in — every NEW account is asked to activate biometrics
+    // on its first login, even if a previous account on this device already
+    // enabled (or dismissed) it. The prompt re-appears for an account until
+    // it either enables biometrics or explicitly skips ONCE (remembered
+    // per-account, not device-wide).
     try {
-      final promptShown = await BiometricService.hasPromptBeenShown();
-      final isEnabled = await BiometricService.isEnabled();
+      final userId = ref.read(authProvider).userId ?? await StorageService().getUserId();
+      final isEnabled = await BiometricService.isEnabled(userId);
+      final promptShown = await BiometricService.hasPromptBeenShown(userId);
       final canAuth = await BiometricService.canAuthenticate();
 
-      if (canAuth && !promptShown && !isEnabled) {
+      if (canAuth && !isEnabled && !promptShown) {
         if (mounted) {
           setState(() {
             _showBiometricsSetupModal = true;
@@ -285,6 +300,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     try {
       final success = await ref.read(authProvider.notifier).loginWithGoogle();
       if (!success) return; // user cancelled — no error, stay on screen
+
+      // SSO PROFILE-COMPLETION GATE: Google sign-ups (and existing SSO
+      // accounts with an incomplete profile) MUST fill in the business name,
+      // industry, phone number and logo before reaching the dashboard.
+      final profileCompleted = ref.read(authProvider).profileCompleted;
+      if (profileCompleted == false) {
+        if (mounted) context.go('/profile-complete');
+        return;
+      }
+
       await _checkKycAndNavigate();
       // One-time permissions primer (never blocks — flag-gated inside).
       await PermissionPrimer.maybeShow();

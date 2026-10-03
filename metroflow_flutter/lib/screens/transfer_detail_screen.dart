@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/rendering.dart';
@@ -144,8 +145,25 @@ class _TransferDetailScreenState extends State<TransferDetailScreen> {
       }
     } catch (e) {
       if (mounted) {
+        // Diagnose instead of a bare "Something went wrong": a silent
+        // timeout / dead connection gets an explicit, actionable message.
+        String message = ApiService.extractErrorMessage(e);
+        if (e is DioException && message == 'Something went wrong') {
+          switch (e.type) {
+            case DioExceptionType.connectionTimeout:
+            case DioExceptionType.sendTimeout:
+            case DioExceptionType.receiveTimeout:
+              message = 'The reversal request timed out. The refund usually lands anyway — check your balance in a moment, then tap "Reverse now" again if the money is still missing.';
+              break;
+            case DioExceptionType.connectionError:
+              message = 'No connection to the server. Check your internet and tap "Reverse now" again.';
+              break;
+            default:
+              message = 'Reversal failed (${e.response?.statusCode ?? e.type.name}). Try again, or use Dispute below.';
+          }
+        }
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(ApiService.extractErrorMessage(e))),
+          SnackBar(content: Text(message)),
         );
       }
     } finally {
@@ -212,21 +230,23 @@ class _TransferDetailScreenState extends State<TransferDetailScreen> {
 
   void _openDispute() {
     final t = widget.transfer;
+    // Disputes are now allowed on FAILED transfers too: if the automatic
+    // reversal ever fails, the customer must still be able to reach support
+    // (the sheet pre-selects "Failed transfer" and the backend still only
+    // accepts debit transactions). The banner below keeps pointing at the
+    // faster self-service reversal.
     if (_status.toLowerCase() == 'failed') {
-      // Failed transfers self-reverse automatically — use the "Reverse now"
-      // action below (the money is credited by reverseFailedTransfer; this
-      // gate only stops disputes for money that was never lost).
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text(
-            'Failed transfers are reversed to your wallet automatically — tap "Money not back yet? Reverse now" below if the amount has not arrived.'),
+            'Failed transfers are reversed to your wallet automatically — if the amount has not arrived, file the dispute below and our team will step in.'),
       ));
-      return;
     }
     DisputeSheet.show(
       context,
       reference: t.reference,
       amount: t.amount,
       currency: t.currency,
+      initialCategory: _status.toLowerCase() == 'failed' ? 'failed_transfer' : null,
     );
   }
 

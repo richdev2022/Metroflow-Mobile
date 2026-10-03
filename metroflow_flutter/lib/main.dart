@@ -34,6 +34,7 @@ import 'screens/verify_reset_otp_screen.dart';
 import 'screens/reset_password_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'screens/kyc_prompt_screen.dart';
+import 'screens/profile_completion_screen.dart';
 import 'screens/kyc_initiate_screen.dart';
 import 'screens/kyc_otp_screen.dart';
 import 'screens/business_kyc_screen.dart';
@@ -355,6 +356,12 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         GoRoute(
           path: '/kyc-prompt',
           builder: (context, state) => const KycPromptScreen(),
+        ),
+        // SSO onboarding gate: Google sign-ups land here until the business
+        // profile (name / industry / phone / logo) is complete.
+        GoRoute(
+          path: '/profile-complete',
+          builder: (context, state) => const ProfileCompletionScreen(),
         ),
         GoRoute(
           path: '/kyc-initiate',
