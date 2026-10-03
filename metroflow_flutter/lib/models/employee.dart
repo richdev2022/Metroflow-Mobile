@@ -84,6 +84,9 @@ class Employee {
   final String? salaryCalculationStatus;
   final String? contractStartDate;
   final Adjustments? adjustments;
+  // Payroll directory verification (web parity)
+  final String? verificationStatus;
+  final String? jobTitle;
 
   Employee({
     required this.id,
@@ -125,6 +128,9 @@ class Employee {
       adjustments: json['adjustments'] != null
           ? Adjustments.fromJson(json['adjustments'] as Map<String, dynamic>)
           : null,
+      verificationStatus:
+          (json['verification_status'] ?? json['verificationStatus']) as String?,
+      jobTitle: (json['job_title'] ?? json['jobTitle']) as String?,
     );
   }
 
@@ -145,6 +151,8 @@ class Employee {
       'next_pay_date': nextPayDate,
       'salary_calculation_status': salaryCalculationStatus,
       'contract_start_date': contractStartDate,
+      'verification_status': verificationStatus,
+      'job_title': jobTitle,
       'adjustments': adjustments?.toJson(),
     };
   }
