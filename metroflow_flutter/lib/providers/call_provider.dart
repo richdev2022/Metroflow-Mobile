@@ -316,4 +316,16 @@ class CallNotifier extends Notifier<IncomingCallState> {
     AppFeedback.stopRingtone();
     state = IncomingCallState();
   }
+
+  /// Dismiss the ringing overlay ONLY if the matching call is the one currently
+  /// presented. Used by the `call-cancelled` push (caller hung up while the
+  /// callee's device was still ringing) so a NEW incoming call that arrives
+  /// right after is never swallowed.
+  void dismissIfCurrent(String callId) {
+    if (callId.isEmpty) return;
+    if (state.call?.id != callId) return;
+    _ringTimeout?.cancel();
+    AppFeedback.stopRingtone();
+    state = IncomingCallState();
+  }
 }

@@ -213,6 +213,15 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         Logger.error('dismissIncomingCallHook failed: $e');
       }
     };
+    // A call-cancelled push (caller hung up while we were ringing) clears the
+    // overlay only when THAT call is the one ringing.
+    PushNotificationService.instance.callCancelledHook = (callId) {
+      try {
+        ref.read(callProvider.notifier).dismissIfCurrent(callId);
+      } catch (e) {
+        Logger.error('callCancelledHook failed: $e');
+      }
+    };
     // Initialize after auth bootstrap (authProvider.checkAuth kicks off in
     // its build); token registration happens post-login via the auth
     // listener below and inside the service itself.
@@ -727,6 +736,13 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
           theme: AppTheme.lightTheme,
           darkTheme: AppTheme.darkTheme,
           themeMode: themeState.mode,
+          // AUTO-APPLY THEME: most screens read the STATIC AppTheme.colors
+          // (not the inherited Theme), so a plain themeMode change left stale
+          // colors on screen until the user force-refreshed. Keying the app on
+          // the mode remounts every widget with the fresh palette the moment
+          // dark/light is toggled — no manual refresh. The GoRouter instance
+          // is untouched, so the current route is restored on the remount.
+          key: ValueKey<ThemeMode>('metricorex-theme-${themeState.mode}'),
           routerConfig: _router,
           // The global incoming-call overlay MUST live BELOW MaterialApp:
           // as a sibling in a raw Stack it had no Theme/Directionality/

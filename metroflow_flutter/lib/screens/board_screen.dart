@@ -238,423 +238,680 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
     );
   }
 
+  // -------------------------------------------------------------------------
+  // UI
+  // -------------------------------------------------------------------------
+
+  int get _totalTasks => taskStatuses.fold<int>(0, (sum, s) => sum + (s.tasks?.length ?? 0));
+
+  int get _overdueCount => taskStatuses.fold<int>(
+      0, (sum, s) => sum + (s.tasks?.where((t) => t.isOverdue).length ?? 0));
+
+  void _goBack() {
+    // GUARDED back: the board can be reached via context.go() (no stack) or
+    // pushed from Tasks. Pop when possible, otherwise return to the app shell.
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      context.go('/main/tasks');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = AppTheme.colors;
 
     if (isLoading) {
       return Scaffold(
+        backgroundColor: colors.background,
         body: Center(
-          child: CircularProgressIndicator(color: colors.primary),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(color: colors.primary),
+              const SizedBox(height: 16),
+              Text('Loading board…', style: TextStyle(color: colors.textSecondary, fontSize: 13)),
+            ],
+          ),
         ),
       );
     }
 
     return Scaffold(
+      backgroundColor: colors.background,
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => context.push('/main/create-task'),
+        backgroundColor: colors.primary,
+        foregroundColor: Colors.white,
+        elevation: 3,
+        icon: const Icon(Icons.add_task_rounded, size: 20),
+        label: const Text('New Task', style: TextStyle(fontWeight: FontWeight.w700)),
+      ),
       body: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // ------------------------------------------------ header
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Board',
-                        style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: colors.text),
-                      ),
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          Icon(Icons.touch_app, size: 14, color: colors.textSecondary),
-                          const SizedBox(width: 4),
-                          Text(
-                            'Swipe to scroll • Long press to drag tasks',
-                            style: TextStyle(fontSize: 12, color: colors.textSecondary),
-                          ),
-                        ],
-                      ),
-                    ],
+                  // Back button — was MISSING entirely (board used go() nav).
+                  _HeaderIconButton(
+                    icon: Icons.arrow_back_ios_new_rounded,
+                    color: colors,
+                    onTap: _goBack,
                   ),
-                  Row(
-                    children: [
-                      TextButton.icon(
-                        onPressed: showCreateStatusDialog,
-                        icon: const Icon(Icons.add, size: 18),
-                        label: const Text('Add Column'),
-                      ),
-                      const SizedBox(width: 8),
-                      GestureDetector(
-                        onTap: () => context.go('/main/create-task'),
-                        child: Container(
-                          width: 48,
-                          height: 48,
-                          decoration: BoxDecoration(
-                            color: colors.primary,
-                            shape: BoxShape.circle,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Board',
+                          style: TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.w800,
+                            color: colors.text,
+                            letterSpacing: -0.5,
                           ),
-                          child: const Icon(Icons.add, color: Colors.white, size: 24),
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 2),
+                        Text(
+                          '$_totalTasks task${_totalTasks == 1 ? '' : 's'} • long-press to drag',
+                          style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                        ),
+                      ],
+                    ),
+                  ),
+                  _HeaderIconButton(
+                    icon: Icons.refresh_rounded,
+                    color: colors,
+                    onTap: () => fetchData(),
+                  ),
+                  const SizedBox(width: 8),
+                  _HeaderIconButton(
+                    icon: Icons.view_column_outlined,
+                    color: colors,
+                    onTap: showCreateStatusDialog,
                   ),
                 ],
               ),
             ),
-            Expanded(
-              child: RefreshIndicator(
-                onRefresh: fetchData,
-                color: colors.primary,
-                child: ListView(
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-                  scrollDirection: Axis.horizontal,
+
+            // ------------------------------------------------ stats strip
+            if (_totalTasks > 0)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                child: Row(
                   children: [
-                    ...taskStatuses.map((status) {
-                      final statusTasks = status.tasks ?? [];
-                      final screenWidth = MediaQuery.of(context).size.width;
-                      final columnWidth = screenWidth * 0.85 < 280 ? 280.0 : screenWidth * 0.85;
-                      return Container(
-                        width: columnWidth,
-                        margin: const EdgeInsets.only(right: 16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: colors.surface,
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: colors.border),
+                    _StatChip(
+                      label: '$_totalTasks total',
+                      icon: Icons.assignment_rounded,
+                      background: colors.primary.withValues(alpha: 0.10),
+                      foreground: colors.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    if (_overdueCount > 0)
+                      _StatChip(
+                        label: '$_overdueCount overdue',
+                        icon: Icons.warning_amber_rounded,
+                        background: colors.error.withValues(alpha: 0.10),
+                        foreground: colors.error,
+                      ),
+                    const Spacer(),
+                    Text(
+                      '${taskStatuses.length} column${taskStatuses.length == 1 ? '' : 's'}',
+                      style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
+                    ),
+                  ],
+                ),
+              ),
+
+            // ------------------------------------------------ columns
+            Expanded(
+              child: taskStatuses.isEmpty
+                  ? _EmptyBoard(colors: colors, onAddColumn: showCreateStatusDialog)
+                  : RefreshIndicator(
+                      onRefresh: fetchData,
+                      color: colors.primary,
+                      backgroundColor: colors.surface,
+                      child: ListView(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+                        scrollDirection: Axis.horizontal,
+                        children: [
+                          ...taskStatuses.map((status) {
+                            final statusTasks = status.tasks ?? [];
+                            final screenWidth = MediaQuery.of(context).size.width;
+                            final columnWidth = screenWidth * 0.85 < 290 ? 290.0 : screenWidth * 0.85;
+                            final accent = getStatusColor(status.name);
+                            return Container(
+                              width: columnWidth,
+                              margin: const EdgeInsets.only(right: 14, bottom: 4),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  // Column header card
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                    decoration: BoxDecoration(
+                                      color: colors.surface,
+                                      borderRadius: BorderRadius.circular(14),
+                                      border: Border.all(color: colors.border),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          width: 34,
+                                          height: 34,
+                                          decoration: BoxDecoration(
+                                            color: accent.withValues(alpha: 0.15),
+                                            borderRadius: BorderRadius.circular(10),
+                                          ),
+                                          child: Center(
+                                            child: Container(
+                                              width: 10,
+                                              height: 10,
+                                              decoration: BoxDecoration(
+                                                color: accent,
+                                                shape: BoxShape.circle,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Expanded(
+                                          child: Text(
+                                            status.name,
+                                            style: TextStyle(
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.w700,
+                                              color: colors.text,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                                          decoration: BoxDecoration(
+                                            color: colors.primary.withValues(alpha: 0.10),
+                                            borderRadius: BorderRadius.circular(999),
+                                          ),
+                                          child: Text(
+                                            '${statusTasks.length}',
+                                            style: TextStyle(
+                                              color: colors.primary,
+                                              fontSize: 11.5,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Expanded(
+                                    child: DragTarget<Task>(
+                                      onWillAcceptWithDetails: (details) => details.data.status != status.name,
+                                      onAcceptWithDetails: (details) {
+                                        final task = details.data;
+                                        if (task.status != status.name) {
+                                          updateTaskStatus(task, status.name);
+                                        }
+                                      },
+                                      builder: (context, candidateData, rejectedData) {
+                                        final isTargeting = candidateData.isNotEmpty;
+                                        return AnimatedContainer(
+                                          duration: const Duration(milliseconds: 180),
+                                          constraints: const BoxConstraints.expand(),
+                                          decoration: BoxDecoration(
+                                            color: isTargeting
+                                                ? accent.withValues(alpha: 0.08)
+                                                : colors.surfaceVariant,
+                                            borderRadius: BorderRadius.circular(14),
+                                            border: Border.all(
+                                              color: isTargeting ? accent : colors.border,
+                                              width: isTargeting ? 1.6 : 1,
+                                            ),
+                                          ),
+                                          child: statusTasks.isEmpty
+                                              ? Center(
+                                                  child: Column(
+                                                    mainAxisAlignment: MainAxisAlignment.center,
+                                                    children: [
+                                                      Icon(Icons.outbound_rounded,
+                                                          color: colors.textSecondary.withValues(alpha: 0.7), size: 30),
+                                                      const SizedBox(height: 8),
+                                                      Text(
+                                                        isTargeting ? 'Drop here' : 'No tasks',
+                                                        style: TextStyle(
+                                                          color: isTargeting ? accent : colors.textSecondary,
+                                                          fontSize: 12.5,
+                                                          fontWeight: isTargeting ? FontWeight.w700 : FontWeight.w400,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                )
+                                              : ListView.builder(
+                                                  padding: const EdgeInsets.all(8),
+                                                  itemCount: statusTasks.length,
+                                                  itemBuilder: (context, index) {
+                                                    final task = statusTasks[index];
+                                                    return _BoardTaskCard(
+                                                      task: task,
+                                                      accent: accent,
+                                                      colors: colors,
+                                                      onTap: () => context.push('/main/task-detail', extra: task),
+                                                    );
+                                                  },
+                                                ),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                ],
                               ),
-                              child: Row(
+                            );
+                          }),
+                          // Add-column card
+                          GestureDetector(
+                            onTap: showCreateStatusDialog,
+                            child: Container(
+                              width: 130,
+                              decoration: BoxDecoration(
+                                color: colors.surface.withValues(alpha: 0.55),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: colors.border,
+                                  strokeAlign: BorderSide.strokeAlignInside,
+                                ),
+                              ),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
                                   Container(
-                                    width: 12,
-                                    height: 12,
-                                    margin: const EdgeInsets.only(right: 8),
+                                    width: 40,
+                                    height: 40,
                                     decoration: BoxDecoration(
-                                      color: getStatusColor(status.name),
+                                      color: colors.primary.withValues(alpha: 0.10),
                                       shape: BoxShape.circle,
                                     ),
+                                    child: Icon(Icons.add_rounded, size: 22, color: colors.primary),
                                   ),
-                                  Expanded(
-                                    child: Text(
-                                      status.name,
-                                      style: TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.bold,
-                                        color: colors.text,
-                                      ),
-                                    ),
-                                  ),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: colors.primary.withValues(alpha: 0.1),
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: Text(
-                                      statusTasks.length.toString(),
-                                      style: TextStyle(
-                                        color: colors.primary,
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.bold,
-                                      ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'Add Column',
+                                    style: TextStyle(
+                                      color: colors.textSecondary,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 12.5,
                                     ),
                                   ),
                                 ],
                               ),
                             ),
-                            const SizedBox(height: 12),
-                            Expanded(
-                              child: DragTarget<Task>(
-                                onWillAcceptWithDetails: (details) {
-                                  debugPrint('DragTarget ${status.name} onWillAcceptWithDetails: ${details.data.title}');
-                                  return true;
-                                },
-                                onAcceptWithDetails: (details) {
-                                  final task = details.data;
-                                  debugPrint('Dropped task: ${task.title} into status: ${status.name}');
-                                  if (task.status != status.name) {
-                                    updateTaskStatus(task, status.name);
-                                  }
-                                },
-                                onLeave: (data) {
-                                  debugPrint('DragTarget ${status.name} onLeave');
-                                },
-                                builder: (context, candidateData, rejectedData) {
-                                  return Container(
-                                    constraints: const BoxConstraints.expand(),
-                                    decoration: BoxDecoration(
-                                      color: candidateData.isNotEmpty
-                                          ? colors.primary.withValues(alpha: 0.05)
-                                          : colors.surfaceVariant,
-                                      borderRadius: BorderRadius.circular(12),
-                                      border: Border.all(
-                                        color: candidateData.isNotEmpty ? colors.primary : colors.border,
-                                        width: candidateData.isNotEmpty ? 2 : 1,
-                                      ),
-                                    ),
-                                    child: statusTasks.isEmpty
-                                        ? Center(
-                                            child: Column(
-                                              mainAxisAlignment: MainAxisAlignment.center,
-                                              children: [
-                                                Icon(Icons.inbox, color: colors.textSecondary, size: 32),
-                                                const SizedBox(height: 8),
-                                                Text(
-                                                  'No tasks',
-                                                  style: TextStyle(color: colors.textSecondary, fontSize: 12),
-                                                ),
-                                              ],
-                                            ),
-                                          )
-                                        : ListView.builder(
-                                            padding: const EdgeInsets.all(8),
-                                            itemCount: statusTasks.length,
-                                            itemBuilder: (context, index) {
-                                              final task = statusTasks[index];
-                                              return LongPressDraggable<Task>(
-                                                data: task,
-                                                onDragStarted: () {
-                                                  debugPrint('Drag started for task: ${task.title} (id: ${task.id})');
-                                                },
-                                                onDragEnd: (details) {
-                                                  debugPrint('Drag ended for task: ${task.title}');
-                                                },
-                                                onDragCompleted: () {
-                                                  debugPrint('Drag completed for task: ${task.title}');
-                                                },
-                                                onDraggableCanceled: (velocity, offset) {
-                                                  debugPrint('Drag canceled for task: ${task.title}');
-                                                },
-                                                feedback: Container(
-                                                  width: 280,
-                                                  margin: const EdgeInsets.only(bottom: 8),
-                                                  padding: const EdgeInsets.all(12),
-                                                  decoration: BoxDecoration(
-                                                    color: colors.surface,
-                                                    border: Border.all(color: colors.border),
-                                                    borderRadius: BorderRadius.circular(12),
-                                                    boxShadow: [
-                                                      BoxShadow(
-                                                        color: Colors.black.withValues(alpha: 0.1),
-                                                        blurRadius: 10,
-                                                        offset: const Offset(0, 4),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                  child: Text(
-                                                    task.title,
-                                                    style: TextStyle(
-                                                      fontSize: 14,
-                                                      fontWeight: FontWeight.w600,
-                                                      color: colors.text,
-                                                    ),
-                                                    maxLines: 1,
-                                                    overflow: TextOverflow.ellipsis,
-                                                  ),
-                                                ),
-                                                childWhenDragging: Container(
-                                                  height: 80,
-                                                  margin: const EdgeInsets.only(bottom: 8),
-                                                  decoration: BoxDecoration(
-                                                    color: colors.surface.withValues(alpha: 0.5),
-                                                    borderRadius: BorderRadius.circular(12),
-                                                    border: Border.all(color: colors.border, width: 2),
-                                                  ),
-                                                ),
-                                                child: GestureDetector(
-                                                  behavior: HitTestBehavior.translucent,
-                                                  onTap: () => context.go('/main/task-detail', extra: task),
-                                                  child: Container(
-                                                    margin: const EdgeInsets.only(bottom: 8),
-                                                    decoration: BoxDecoration(
-                                                      color: colors.surface,
-                                                      borderRadius: BorderRadius.circular(14),
-                                                      border: Border.all(
-                                                        color: task.isOverdue
-                                                            ? colors.error.withValues(alpha: 0.5)
-                                                            : colors.border,
-                                                      ),
-                                                      boxShadow: [
-                                                        BoxShadow(
-                                                          color: Colors.black.withValues(alpha: 0.04),
-                                                          blurRadius: 6,
-                                                          offset: const Offset(0, 2),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                    child: ClipRRect(
-                                                      borderRadius: BorderRadius.circular(13),
-                                                      child: Row(
-                                                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                                                        children: [
-                                                          Container(
-                                                            width: 4,
-                                                            color: task.isOverdue
-                                                                ? colors.error
-                                                                : getStatusColor(status.name),
-                                                          ),
-                                                          Expanded(
-                                                            child: Padding(
-                                                              padding: const EdgeInsets.all(12),
-                                                              child: Column(
-                                                                crossAxisAlignment: CrossAxisAlignment.start,
-                                                                mainAxisSize: MainAxisSize.min,
-                                                                children: [
-                                                                  Text(
-                                                                    task.title,
-                                                                    style: TextStyle(
-                                                                      fontSize: 14,
-                                                                      fontWeight: FontWeight.w600,
-                                                                      color: colors.text,
-                                                                    ),
-                                                                    maxLines: 2,
-                                                                    overflow: TextOverflow.ellipsis,
-                                                                  ),
-                                                                  if (task.description != null)
-                                                                    Padding(
-                                                                      padding: const EdgeInsets.only(top: 4),
-                                                                      child: Text(
-                                                                        task.description!,
-                                                                        style: TextStyle(
-                                                                          fontSize: 12,
-                                                                          color: colors.textSecondary,
-                                                                        ),
-                                                                        maxLines: 2,
-                                                                        overflow: TextOverflow.ellipsis,
-                                                                      ),
-                                                                    ),
-                                                                  const SizedBox(height: 8),
-                                                                  Row(
-                                                                    children: [
-                                                                      if (task.epic != null)
-                                                                        Flexible(
-                                                                          child: Text(
-                                                                            '📁 ${task.epic}',
-                                                                            style: TextStyle(
-                                                                              fontSize: 10,
-                                                                              color: colors.textSecondary,
-                                                                            ),
-                                                                            maxLines: 1,
-                                                                            overflow: TextOverflow.ellipsis,
-                                                                          ),
-                                                                        ),
-                                                                      const Spacer(),
-                                                                      Container(
-                                                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                                                        decoration: BoxDecoration(
-                                                                          color: task.isOverdue
-                                                                              ? colors.error.withValues(alpha: 0.12)
-                                                                              : colors.primary.withValues(alpha: 0.08),
-                                                                          borderRadius: BorderRadius.circular(999),
-                                                                        ),
-                                                                        child: Text(
-                                                                          formatDate(task.endDate),
-                                                                          style: TextStyle(
-                                                                            fontSize: 10,
-                                                                            fontWeight: FontWeight.w600,
-                                                                            color: task.isOverdue ? colors.error : colors.textSecondary,
-                                                                          ),
-                                                                        ),
-                                                                      ),
-                                                                    ],
-                                                                  ),
-                                                                  if (task.assignedTo != null && task.assignedTo!.isNotEmpty)
-                                                                    Padding(
-                                                                      padding: const EdgeInsets.only(top: 8),
-                                                                      child: Row(
-                                                                        children: [
-                                                                          for (int i = 0; i < task.assignedTo!.length && i < 3; i++)
-                                                                            Padding(
-                                                                              padding: EdgeInsets.only(left: i > 0 ? -6 : 0),
-                                                                              child: Container(
-                                                                                width: 24,
-                                                                                height: 24,
-                                                                                decoration: BoxDecoration(
-                                                                                  color: colors.primary,
-                                                                                  shape: BoxShape.circle,
-                                                                                  border: Border.all(color: colors.surface, width: 2),
-                                                                                ),
-                                                                                child: Center(
-                                                                                  child: Text(
-                                                                                    task.assignedTo![i][0].toUpperCase(),
-                                                                                    style: const TextStyle(
-                                                                                      color: Colors.white,
-                                                                                      fontSize: 10,
-                                                                                      fontWeight: FontWeight.w600,
-                                                                                    ),
-                                                                                  ),
-                                                                                ),
-                                                                              ),
-                                                                            ),
-                                                                          if (task.assignedTo!.length > 3)
-                                                                            Padding(
-                                                                              padding: const EdgeInsets.only(left: 8),
-                                                                              child: Text(
-                                                                                '+${task.assignedTo!.length - 3}',
-                                                                                style: TextStyle(
-                                                                                  fontSize: 10,
-                                                                                  color: colors.textSecondary,
-                                                                                ),
-                                                                              ),
-                                                                            ),
-                                                                        ],
-                                                                      ),
-                                                                    ),
-                                                                ],
-                                                              ),
-                                                            ),
-                                                          ),
-                                                        ],
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
-                                              );
-                                          },
-                                        ),
-                                  );
-                                },
+                          ),
+                        ],
+                      ),
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Board building blocks
+// ---------------------------------------------------------------------------
+
+class _HeaderIconButton extends StatelessWidget {
+  final IconData icon;
+  final dynamic colors;
+  final VoidCallback onTap;
+
+  const _HeaderIconButton({required this.icon, required this.colors, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: colors.surface,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: colors.border),
+          ),
+          child: Icon(icon, size: 18, color: colors.text),
+        ),
+      ),
+    );
+  }
+}
+
+class _StatChip extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color background;
+  final Color foreground;
+
+  const _StatChip({
+    required this.label,
+    required this.icon,
+    required this.background,
+    required this.foreground,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: foreground),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: foreground),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EmptyBoard extends StatelessWidget {
+  final dynamic colors;
+  final VoidCallback onAddColumn;
+
+  const _EmptyBoard({required this.colors, required this.onAddColumn});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 88,
+              height: 88,
+              decoration: BoxDecoration(
+                color: colors.primary.withValues(alpha: 0.08),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.view_kanban_outlined, size: 42, color: colors.primary),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'Your board is empty',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: colors.text),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Create your first status column to start\norganising tasks visually.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, height: 1.5, color: colors.textSecondary),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              onPressed: onAddColumn,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: colors.primary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              icon: const Icon(Icons.add_rounded, size: 18),
+              label: const Text('Add first column'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Draggable task card used inside every board column. Long-press starts the
+/// drag (feedback card mirrors the real one), tap opens the task detail.
+class _BoardTaskCard extends StatelessWidget {
+  final Task task;
+  final Color accent;
+  final dynamic colors;
+  final VoidCallback onTap;
+
+  const _BoardTaskCard({
+    required this.task,
+    required this.accent,
+    required this.colors,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final overdue = task.isOverdue;
+    return LongPressDraggable<Task>(
+      data: task,
+      dragAnchorStrategy: pointerDragAnchorStrategy,
+      feedback: Material(
+        color: Colors.transparent,
+        child: Container(
+          width: 250,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: colors.surface,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: accent.withValues(alpha: 0.6), width: 1.4),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.18),
+                blurRadius: 16,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 4,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: accent,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  task.title,
+                  style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: colors.text),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      childWhenDragging: Opacity(
+        opacity: 0.35,
+        child: Container(
+          height: 76,
+          margin: const EdgeInsets.only(bottom: 8),
+          decoration: BoxDecoration(
+            color: colors.surface.withValues(alpha: 0.6),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: accent, width: 1.4),
+          ),
+        ),
+      ),
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: onTap,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          decoration: BoxDecoration(
+            color: colors.surface,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: overdue ? colors.error.withValues(alpha: 0.45) : colors.border,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(13),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(width: 4, color: overdue ? colors.error : accent),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          task.title,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: colors.text,
+                            height: 1.25,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (task.description != null && task.description!.trim().isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              task.description!,
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                height: 1.35,
+                                color: colors.textSecondary,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            if (task.epic != null && task.epic!.trim().isNotEmpty)
+                              Flexible(
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: colors.primary.withValues(alpha: 0.07),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text(
+                                    task.epic!,
+                                    style: TextStyle(fontSize: 10, color: colors.textSecondary),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ),
+                            const Spacer(),
+                            if (overdue)
+                              Padding(
+                                padding: const EdgeInsets.only(right: 6),
+                                child: Icon(Icons.warning_amber_rounded, size: 13, color: colors.error),
+                              ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: overdue
+                                    ? colors.error.withValues(alpha: 0.12)
+                                    : colors.primary.withValues(alpha: 0.08),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                formatDate(task.endDate),
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: overdue ? colors.error : colors.textSecondary,
+                                ),
                               ),
                             ),
                           ],
                         ),
-                      );
-                    }),
-                    GestureDetector(
-                      onTap: showCreateStatusDialog,
-                      child: Container(
-                        width: 120,
-                        margin: const EdgeInsets.only(right: 16),
-                        decoration: BoxDecoration(
-                          color: colors.surface.withValues(alpha: 0.5),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: colors.border),
-                        ),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.add_circle_outline, size: 40, color: colors.textSecondary),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Add Column',
-                              style: TextStyle(color: colors.textSecondary, fontWeight: FontWeight.w500),
+                        if (task.assignedTo != null && task.assignedTo!.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Row(
+                              children: [
+                                for (int i = 0; i < task.assignedTo!.length && i < 3; i++)
+                                  Padding(
+                                    padding: EdgeInsets.only(left: i > 0 ? -6 : 0),
+                                    child: Container(
+                                      width: 22,
+                                      height: 22,
+                                      decoration: BoxDecoration(
+                                        color: i.isEven
+                                            ? colors.primary
+                                            : colors.primaryDark,
+                                        shape: BoxShape.circle,
+                                        border: Border.all(color: colors.surface, width: 2),
+                                      ),
+                                      child: Center(
+                                        child: Text(
+                                          task.assignedTo![i][0].toUpperCase(),
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                if (task.assignedTo!.length > 3)
+                                  Padding(
+                                    padding: const EdgeInsets.only(left: 6),
+                                    child: Text(
+                                      '+${task.assignedTo!.length - 3}',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w600,
+                                        color: colors.textSecondary,
+                                      ),
+                                    ),
+                                  ),
+                              ],
                             ),
-                          ],
-                        ),
-                      ),
+                          ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
-              ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );

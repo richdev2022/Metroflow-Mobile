@@ -131,6 +131,18 @@ class IncomingCallDialog extends ConsumerWidget {
                       // this overlay dialog — using `context` afterwards
                       // silently skipped opening the call screen.
                       final navContext = navigatorKey.currentContext;
+                      // CALL WAITING: if another call is already open, END it
+                      // for everyone first (its _leave emits call:leave +
+                      // call:end and pops its screen), then hand the audio
+                      // session to the new call.
+                      final hadPreviousCall =
+                          VideoCallScreen.activeCallRoomId != null &&
+                              VideoCallScreen.activeCallRoomId != call.id;
+                      if (hadPreviousCall) {
+                        VideoCallScreen.endActiveCall();
+                        // Give the previous screen one frame to pop + dispose.
+                        await Future<void>.delayed(const Duration(milliseconds: 350));
+                      }
                       Map<String, dynamic>? calling;
                       try {
                         calling = await callNotifier.acceptCall(call);
@@ -142,7 +154,9 @@ class IncomingCallDialog extends ConsumerWidget {
                         await VideoCallScreen.showModal(
                           context: navContext,
                           roomId: call.id,
-                          title: '$callType with $callerName',
+                          title: hadPreviousCall
+                              ? '$callType with $callerName (previous call ended)'
+                              : '$callType with $callerName',
                           isMeeting: false,
                           enableVideo: call.type == 'video',
                           isHost: false,

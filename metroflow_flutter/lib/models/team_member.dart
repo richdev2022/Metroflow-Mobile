@@ -22,6 +22,12 @@ class TeamMember {
   final String? roleName;
   final List<String> permissions;
 
+  // Complete employee information (invite form)
+  final String? phoneNumber;
+  final String? jobTitle;
+  final String? department;
+  final String? employmentType;
+
   TeamMember({
     required this.id,
     required this.name,
@@ -43,6 +49,10 @@ class TeamMember {
     this.roleId,
     this.roleName,
     this.permissions = const [],
+    this.phoneNumber,
+    this.jobTitle,
+    this.department,
+    this.employmentType,
   });
 
   factory TeamMember.fromJson(Map<String, dynamic> json) {
@@ -69,6 +79,11 @@ class TeamMember {
       permissions: (json['permissions'] as List<dynamic>? ?? const [])
           .map((p) => p.toString())
           .toList(),
+      phoneNumber: (json['phoneNumber'] ?? json['phone_number']) as String?,
+      jobTitle: (json['jobTitle'] ?? json['job_title']) as String?,
+      department: json['department'] as String?,
+      employmentType:
+          (json['employmentType'] ?? json['employment_type']) as String?,
     );
   }
 
@@ -94,6 +109,10 @@ class TeamMember {
       'roleId': roleId,
       'roleName': roleName,
       'permissions': permissions,
+      'phoneNumber': phoneNumber,
+      'jobTitle': jobTitle,
+      'department': department,
+      'employmentType': employmentType,
     };
   }
 }
