@@ -742,7 +742,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
           // the mode remounts every widget with the fresh palette the moment
           // dark/light is toggled — no manual refresh. The GoRouter instance
           // is untouched, so the current route is restored on the remount.
-          key: ValueKey<ThemeMode>('metricorex-theme-${themeState.mode}'),
+          key: ValueKey<ThemeMode>(themeState.mode),
           routerConfig: _router,
           // The global incoming-call overlay MUST live BELOW MaterialApp:
           // as a sibling in a raw Stack it had no Theme/Directionality/
