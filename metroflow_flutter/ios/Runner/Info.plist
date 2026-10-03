@@ -29,6 +29,12 @@
              on sign-in (hard crash — cannot be caught from Dart). -->
         <key>GIDClientID</key>
         <string>$(GOOGLE_IOS_CLIENT_ID)</string>
+        <!-- Belt-and-braces: the WEB client as the server client. ID tokens
+             minted against the WEB client are what the backend verifies;
+             native iOS tokens (aud = iOS client) are ALSO accepted server-side
+             (audience allowlist in metroflow-backend googleAuth.ts). -->
+        <key>GIDServerClientID</key>
+        <string>$(GOOGLE_WEB_CLIENT_ID)</string>
         <key>CFBundleURLTypes</key>
         <array>
                 <dict>

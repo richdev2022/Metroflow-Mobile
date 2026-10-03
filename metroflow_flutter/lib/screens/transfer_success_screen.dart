@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../models/transfer.dart';
+import '../services/api.dart';
 import '../theme/app_theme.dart';
 
-class TransferSuccessScreen extends StatelessWidget {
+class TransferSuccessScreen extends StatefulWidget {
   const TransferSuccessScreen({
     super.key,
     this.bulkResponse,
@@ -13,14 +16,75 @@ class TransferSuccessScreen extends StatelessWidget {
   final BulkTransferResponse? bulkResponse;
   final SingleTransferResponse? singleResponse;
 
+  @override
+  State<TransferSuccessScreen> createState() => _TransferSuccessScreenState();
+}
+
+class _TransferSuccessScreenState extends State<TransferSuccessScreen> {
+  // LIVE STATUS POLLING: users must see the REAL outcome, not a stuck
+  // "Processing". While the backend reports an indeterminate status, poll
+  // POST /transfers/:id/verify every 6s (max 10 rounds) and repaint.
+  Timer? _pollTimer;
+  int _pollCount = 0;
+  String? _liveStatus;
+
+  @override
+  void initState() {
+    super.initState();
+    final s = (widget.singleResponse?.data?.status ?? '').toLowerCase();
+    if (s == 'processing' || s == 'pending' || s == 'queued') {
+      _startPolling();
+    }
+  }
+
+  void _startPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(const Duration(seconds: 6), (timer) async {
+      _pollCount++;
+      final id = widget.singleResponse?.data?.id ?? '';
+      if (id.isEmpty || _pollCount > 10) {
+        timer.cancel();
+        return;
+      }
+      try {
+        final response = await ApiService().verifyTransfer(id);
+        final data = response.data;
+        final updated = data is Map && data['data'] is Map
+            ? data['data'] as Map
+            : null;
+        final newStatus = (updated?['status'] ?? '').toString().toLowerCase();
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
+        if (newStatus == 'success' || newStatus == 'failed') {
+          setState(() => _liveStatus = newStatus);
+          timer.cancel();
+        } else if (newStatus.isNotEmpty && newStatus != _status) {
+          setState(() => _liveStatus = newStatus);
+        }
+      } catch (_) {
+        // Network hiccup — keep polling until the cap.
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
+  }
+
   // Status-aware display: the backend can legitimately return a FAILED
   // transfer (provider rejection, processing error). Showing a green
   // "Transfer Successful" with the raw failure text was misleading.
   String get _status {
-    final s = (singleResponse?.data?.status ?? '').toLowerCase();
+    final live = (_liveStatus ?? '').toLowerCase();
+    if (live.isNotEmpty) return live;
+    final s = (widget.singleResponse?.data?.status ?? '').toLowerCase();
     if (s.isNotEmpty) return s;
-    if (bulkResponse != null) return 'queued';
-    return (singleResponse?.success ?? false) ? 'success' : 'failed';
+    if (widget.bulkResponse != null) return 'queued';
+    return (widget.singleResponse?.success ?? false) ? 'success' : 'failed';
   }
 
   bool get _isFailed => _status == 'failed';
@@ -36,7 +100,7 @@ class TransferSuccessScreen extends StatelessWidget {
   String get _headline {
     if (_isFailed) return 'Transfer Failed';
     if (_isProcessing) return 'Transfer Processing';
-    return bulkResponse?.message ?? singleResponse?.message ?? 'Transfer Initiated';
+    return widget.bulkResponse?.message ?? widget.singleResponse?.message ?? 'Transfer Initiated';
   }
 
   static String formatAmount(double amount, String currency) {
@@ -90,10 +154,10 @@ class TransferSuccessScreen extends StatelessWidget {
                   children: [
                     _buildHeader(colors),
                     const SizedBox(height: 16),
-                    if (bulkResponse != null)
-                      ..._buildBulkContent(colors, bulkResponse!)
-                    else if (singleResponse != null)
-                      ..._buildSingleContent(colors, singleResponse!),
+                    if (widget.bulkResponse != null)
+                      ..._buildBulkContent(colors, widget.bulkResponse!)
+                    else if (widget.singleResponse != null)
+                      ..._buildSingleContent(colors, widget.singleResponse!),
                   ],
                 ),
               ),
@@ -208,7 +272,7 @@ class TransferSuccessScreen extends StatelessWidget {
           _row('Amount', formatAmount(data.amount, data.currency)),
           _row('Fee', formatAmount(data.fee, data.currency)),
           _row('Total', formatAmount(data.total, data.currency)),
-          _row('Status', data.status.toUpperCase()),
+          _row('Status', _status.toUpperCase()),
           _row('Wallet ID', data.walletId),
           _row('Created At', formatDate(data.createdAt)),
           _row('Updated At', formatDate(data.updatedAt)),

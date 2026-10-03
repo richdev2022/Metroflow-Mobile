@@ -58,7 +58,9 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
                 TextButton(
                   onPressed: () {
                     Navigator.pop(context);
-                    context.go('/verify-reset-otp',
+                    // push (NOT go): preserve the stack so back buttons work
+                    // through the whole reset-password chain.
+                    context.push('/verify-reset-otp',
                         extra: _emailController.text);
                   },
                   child: const Text('OK'),

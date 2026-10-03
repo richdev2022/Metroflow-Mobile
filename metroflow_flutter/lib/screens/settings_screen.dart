@@ -1301,7 +1301,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     _settingItem(
                       icon: Icons.lock_outline,
                       title: 'Change Password',
-                      onTap: () => context.go('/forgot-password'),
+                      onTap: () => context.push('/forgot-password'), // push so back works
                     ),
                     _sectionTitle('Support'),
                     _settingItem(

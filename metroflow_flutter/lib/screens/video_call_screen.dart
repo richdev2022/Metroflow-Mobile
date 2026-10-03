@@ -2,12 +2,14 @@ import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 // speech_to_text 7.x does NOT re-export SpeechRecognitionResult from the
 // main library (only ListenMode/SpeechListenOptions are) — import it directly.
 import 'package:speech_to_text/speech_recognition_result.dart';
 
+import '../providers/call_provider.dart';
 import '../services/audio_route_service.dart';
 import '../services/mediasoup_room_service.dart';
 import '../services/calling/calling_engine.dart';
@@ -369,6 +371,19 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   void _onMediaConnected() {
     _mediaConnected = true;
     _cancelJoinWatchdog();
+    // THE CALL IS ALIVE — silence everything. Media connect is the ultimate
+    // ground truth (independent of call:accepted signaling): if anyone is
+    // really in the room, no ring (incoming or ringback) may survive, and a
+    // lingering incoming-call overlay must drop.
+    AppFeedback.stopRingtone();
+    AppFeedback.stopRingback();
+    // This screen is a plain StatefulWidget (no hook): reach the provider
+    // container through the ancestor ProviderScope instead of `ref`.
+    try {
+      final container = ProviderScope.containerOf(context, listen: false);
+      container.read(callProvider.notifier).stopOutboundRing();
+      container.read(callProvider.notifier).clearIncomingCall();
+    } catch (_) {}
     // (Re-)assert the audio output route: a fresh connect must seed the
     // per-call default (video → speaker, audio → earpiece) and a reconnect
     // must not silently fall back to the platform default once the user has
@@ -1662,11 +1677,15 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                   ),
                 ),
               ),
-            Positioned(
-              right: 16,
-              top: 96,
-              child: _buildLocalPreview(),
-            ),
+            // Self PiP: VIDEO calls only — a floating "You" avatar card on a
+            // pure audio call was pure noise (audio layout shows the local
+            // tile with its mic state in the stage grid instead).
+            if (widget.enableVideo)
+              Positioned(
+                right: 16,
+                top: 96,
+                child: _buildLocalPreview(),
+              ),
             if (_showChat) _buildChatPanel(),
             if (_showJoinRetry && !_isWaitingForAdmission) _buildJoinRetryBanner(),
             // Live captions overlay — bottom of the room, above the control
@@ -1971,15 +1990,23 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     }
 
     final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+    // AUDIO CALLS get a calmer stage: fewer columns when it reads better and
+    // a taller aspect so avatar tiles don't sprawl as empty squares.
+    final crossAxisCount = isLandscape
+        ? 2
+        : (participants.length <= 2
+            ? 1
+            : 2);
+    final childAspectRatio = isLandscape && participants.length == 2
+        ? 1.5
+        : (!widget.enableVideo ? 0.92 : 1.0);
     return GridView.builder(
       padding: const EdgeInsets.all(12),
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: isLandscape
-            ? 2
-            : (participants.length <= 2 ? 1 : 2),
+        crossAxisCount: crossAxisCount,
         mainAxisSpacing: 10,
         crossAxisSpacing: 10,
-        childAspectRatio: isLandscape && participants.length == 2 ? 1.5 : 1.0,
+        childAspectRatio: childAspectRatio,
       ),
       itemCount: participants.length,
       itemBuilder: (context, index) {
@@ -2437,11 +2464,14 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
               active: _audioRoute != AudioRoute.earpiece,
               onPressed: _switchingAudioRoute ? null : _showAudioRouteSheet,
             ),
-            _dockButton(
-              icon: _isScreenSharing ? Icons.stop_screen_share : Icons.screen_share,
-              active: _isScreenSharing,
-              onPressed: _isSwitchingScreenShare ? null : _toggleScreenShare,
-            ),
+            // Screen share is a VIDEO-call feature (an audio-only call has
+            // nothing to show for it) — hide it on audio calls.
+            if (widget.enableVideo)
+              _dockButton(
+                icon: _isScreenSharing ? Icons.stop_screen_share : Icons.screen_share,
+                active: _isScreenSharing,
+                onPressed: _isSwitchingScreenShare ? null : _toggleScreenShare,
+              ),
             if (widget.isMeeting)
               _dockButton(
                 icon: Icons.chat_bubble_outline_rounded,
