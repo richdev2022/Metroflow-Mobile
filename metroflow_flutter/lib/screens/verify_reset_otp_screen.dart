@@ -69,7 +69,8 @@ class _VerifyResetOtpScreenState extends ConsumerState<VerifyResetOtpScreen> {
 
       if (response.statusCode == 200) {
         if (mounted) {
-          context.go('/reset-password', extra: {
+          // push (NOT go): preserve the stack so the back arrow works.
+          context.push('/reset-password', extra: {
             'email': widget.email,
             'otp': _otpController.text,
           });

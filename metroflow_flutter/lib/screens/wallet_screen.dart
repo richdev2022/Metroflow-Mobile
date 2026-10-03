@@ -684,7 +684,8 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                           ),
                           const SizedBox(width: 12),
                           Expanded(
-                            child: _buildQuickAction(Icons.swap_horiz, 'View Transfers', () => context.go('/main/transfers')),
+                            child: _buildQuickAction(Icons.swap_horiz, 'View Transfers',
+                              () => context.push('/main/transfers')),
                           ),
                         ],
                       ),

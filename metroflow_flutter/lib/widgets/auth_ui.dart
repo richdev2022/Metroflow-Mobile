@@ -102,7 +102,19 @@ class _AuthScreenShellState extends State<AuthScreenShell>
                     if (widget.onBack != null)
                       Align(
                         alignment: Alignment.centerLeft,
-                        child: _PillBackButton(onTap: widget.onBack!),
+                        child: _PillBackButton(
+                          onTap: () {
+                            // GUARDED back: `context.go()` navigation (deep
+                            // links, post-register flows) leaves nothing to
+                            // pop — silently do nothing there. Fall back to
+                            // /login so the arrow ALWAYS does something sane.
+                            if (context.canPop()) {
+                              context.pop();
+                            } else {
+                              context.go('/login');
+                            }
+                          },
+                        ),
                       ),
                     ...widget.children,
                   ],

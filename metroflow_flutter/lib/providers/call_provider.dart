@@ -51,6 +51,10 @@ class CallNotifier extends Notifier<IncomingCallState> {
     _socketService.onCallAccepted = _handleCallAccepted;
     _socketService.onCallRejected = _handleCallRejected;
     _socketService.onCallEnded = _handleCallEnded;
+    // Belt-and-braces for "they joined but it keeps ringing": the moment ANY
+    // participant is confirmed joined (socket truth, independent of the
+    // call:accepted broadcast), every ring must die.
+    _socketService.onCallParticipantJoined = _handleParticipantJoined;
 
     ref.onDispose(() {
       _ringTimeout?.cancel();
@@ -88,7 +92,14 @@ class CallNotifier extends Notifier<IncomingCallState> {
   }
 
   static String? _callIdFromPayload(dynamic data) {
-    if (data is Map) return (data['callId'] ?? data['callID'] ?? '').toString();
+    if (data is Map) {
+      return (data['callId'] ??
+              data['callID'] ??
+              data['call_id'] ??
+              data['id'] ??
+              '')
+          .toString();
+    }
     if (data is String) return data;
     return null;
   }
@@ -176,11 +187,37 @@ class CallNotifier extends Notifier<IncomingCallState> {
     final current = state.call;
     if (current == null) return false;
     if (data is Map) {
-      final callId = (data['callId'] ?? data['callID'] ?? '').toString();
+      final callId = (data['callId'] ??
+              data['callID'] ??
+              data['call_id'] ??
+              data['id'] ??
+              '')
+          .toString();
       if (callId.isNotEmpty) return callId == current.id;
     }
     if (data is String && data.isNotEmpty) return data == current.id;
     return false;
+  }
+
+  /// Any confirmed participant join means the call is ALIVE — silence every
+  /// ring (incoming ring + outbound ringback) and drop the dialog. This is
+  /// the safety net that guarantees "users joined but the call kept ringing"
+  /// can never happen again, even if call:accepted is lost.
+  void _handleParticipantJoined(dynamic data) {
+    final joinedCallId = _callIdFromPayload(data);
+    final matchesCurrent = joinedCallId != null && joinedCallId.isNotEmpty;
+
+    // Outbound dialing: the join IS the answer.
+    if (_outboundCallId != null && joinedCallId == _outboundCallId) {
+      stopOutboundRing();
+    }
+
+    if ((matchesCurrent && joinedCallId == state.call?.id) ||
+        (state.isRinging && joinedCallId == state.call?.id)) {
+      _ringTimeout?.cancel();
+      AppFeedback.stopRingtone();
+      state = IncomingCallState();
+    }
   }
 
   void _handleCallAccepted(dynamic data) {

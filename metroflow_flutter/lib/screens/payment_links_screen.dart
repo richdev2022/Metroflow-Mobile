@@ -335,126 +335,233 @@ class _PaymentLinksScreenState extends State<PaymentLinksScreen> {
                       final isActive = link['is_active'] == true;
                       final isCustom = link['allow_custom_amount'] == true;
                       return Container(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        padding: const EdgeInsets.all(16),
+                        margin: const EdgeInsets.only(bottom: 14),
                         decoration: BoxDecoration(
                           color: colors.surface,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: colors.border),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    link['title']?.toString() ?? '',
-                                    style: TextStyle(
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w700,
-                                        color: colors.text),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 8, vertical: 3),
-                                  decoration: BoxDecoration(
-                                    color: isActive
-                                        ? colors.primaryBg
-                                        : colors.surfaceVariant,
-                                    borderRadius: BorderRadius.circular(999),
-                                  ),
-                                  child: Text(isActive ? 'Active' : 'Paused',
-                                      style: TextStyle(
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w600,
-                                          color: isActive
-                                              ? colors.primary
-                                              : colors.textSecondary)),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              isCustom
-                                  ? 'Open amount'
-                                  : _money(link['amount'],
-                                      link['currency']?.toString() ?? 'NGN'),
-                              style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: colors.text),
-                            ),
-                            const SizedBox(height: 8),
-                            Row(
-                              children: [
-                                Icon(Icons.visibility_outlined,
-                                    size: 14, color: colors.textSecondary),
-                                const SizedBox(width: 4),
-                                Text('${link['views'] ?? 0} views',
-                                    style: TextStyle(
-                                        fontSize: 12,
-                                        color: colors.textSecondary)),
-                                const SizedBox(width: 16),
-                                Icon(Icons.trending_up,
-                                    size: 14, color: colors.textSecondary),
-                                const SizedBox(width: 4),
-                                Expanded(
-                                  child: Text(
-                                    '${link['successful_payments'] ?? 0} paid · ${_money(link['total_collected'], link['currency']?.toString() ?? 'NGN')}',
-                                    style: TextStyle(
-                                        fontSize: 12,
-                                        color: colors.textSecondary),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: OutlinedButton.icon(
-                                    onPressed: () => _shareLink(link),
-                                    icon: const Icon(Icons.ios_share, size: 16),
-                                    label: const Text('Share',
-                                        style: TextStyle(fontSize: 13)),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                IconButton(
-                                  tooltip: 'Edit link',
-                                  onPressed: () => _openLinkSheet(link: link),
-                                  icon: Icon(Icons.edit_outlined,
-                                      color: colors.textSecondary),
-                                ),
-                                IconButton(
-                                  tooltip: isActive ? 'Pause' : 'Activate',
-                                  onPressed: () => _toggleActive(link),
-                                  icon: Icon(
-                                    isActive
-                                        ? Icons.pause_circle_outline
-                                        : Icons.play_circle_outline,
-                                    color: colors.textSecondary,
-                                  ),
-                                ),
-                                IconButton(
-                                  tooltip: 'Delete',
-                                  onPressed: () => _confirmDelete(link),
-                                  icon: Icon(Icons.delete_outline,
-                                      color: colors.error),
-                                ),
-                              ],
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: [
+                            BoxShadow(
+                              color: colors.text.withValues(alpha: 0.05),
+                              blurRadius: 14,
+                              offset: const Offset(0, 6),
                             ),
                           ],
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(20),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Gradient brand header strip: icon chip + title
+                              // + live status pill.
+                              Container(
+                                padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                                decoration: const BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: [Color(0xFF2563EB), Color(0xFF7C3AED)],
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      width: 38,
+                                      height: 38,
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withValues(alpha: 0.18),
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: const Icon(Icons.link_rounded,
+                                          color: Colors.white, size: 20),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Text(
+                                        link['title']?.toString() ?? '',
+                                        style: const TextStyle(
+                                            fontSize: 15.5,
+                                            fontWeight: FontWeight.w800,
+                                            color: Colors.white),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 10, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withValues(alpha: 0.18),
+                                        borderRadius: BorderRadius.circular(999),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Container(
+                                            width: 6,
+                                            height: 6,
+                                            decoration: BoxDecoration(
+                                              shape: BoxShape.circle,
+                                              color: isActive
+                                                  ? const Color(0xFF6EE7B7)
+                                                  : Colors.white
+                                                      .withValues(alpha: 0.6),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Text(
+                                              isActive ? 'Active' : 'Paused',
+                                              style: const TextStyle(
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.w700,
+                                                  color: Colors.white)),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      isCustom
+                                          ? 'Open amount'
+                                          : _money(link['amount'],
+                                              link['currency']?.toString() ?? 'NGN'),
+                                      style: TextStyle(
+                                          fontSize: 24,
+                                          fontWeight: FontWeight.w800,
+                                          letterSpacing: -0.5,
+                                          color: colors.primary),
+                                    ),
+                                    const SizedBox(height: 10),
+                                    // Stats as soft chips.
+                                    Wrap(
+                                      spacing: 8,
+                                      runSpacing: 8,
+                                      children: [
+                                        _statChip(colors,
+                                            Icons.visibility_outlined,
+                                            '${link['views'] ?? 0} views'),
+                                        _statChip(colors,
+                                            Icons.check_circle_outline,
+                                            '${link['successful_payments'] ?? 0} paid'),
+                                        _statChip(colors, Icons.account_balance_wallet_outlined,
+                                            _money(link['total_collected'],
+                                                link['currency']?.toString() ?? 'NGN')),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 14),
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Material(
+                                            color: colors.primary,
+                                            borderRadius: BorderRadius.circular(12),
+                                            child: InkWell(
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                              onTap: () => _shareLink(link),
+                                              child: const Padding(
+                                                padding: EdgeInsets.symmetric(
+                                                    vertical: 10),
+                                                child: Row(
+                                                  mainAxisAlignment:
+                                                      MainAxisAlignment.center,
+                                                  children: [
+                                                    Icon(Icons.ios_share_rounded,
+                                                        size: 16,
+                                                        color: Colors.white),
+                                                    SizedBox(width: 6),
+                                                    Text('Share',
+                                                        style: TextStyle(
+                                                            fontSize: 13,
+                                                            fontWeight:
+                                                                FontWeight.w800,
+                                                            color: Colors.white)),
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 6),
+                                        _iconAction(
+                                          tooltip: 'Edit link',
+                                          onTap: () => _openLinkSheet(link: link),
+                                          icon: Icons.edit_outlined,
+                                          color: colors.textSecondary,
+                                        ),
+                                        _iconAction(
+                                          tooltip: isActive ? 'Pause' : 'Activate',
+                                          onTap: () => _toggleActive(link),
+                                          icon: isActive
+                                              ? Icons.pause_circle_outline
+                                              : Icons.play_circle_outline,
+                                          color: colors.textSecondary,
+                                        ),
+                                        _iconAction(
+                                          tooltip: 'Delete',
+                                          onTap: () => _confirmDelete(link),
+                                          icon: Icons.delete_outline,
+                                          color: colors.error,
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       );
                     },
                   ),
                 ),
+    );
+  }
+
+  Widget _statChip(ThemeColors colors, IconData icon, String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: colors.primary.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: colors.primary),
+          const SizedBox(width: 5),
+          Text(label,
+              style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  color: colors.primary)),
+        ],
+      ),
+    );
+  }
+
+  Widget _iconAction({
+    required String tooltip,
+    required VoidCallback onTap,
+    required IconData icon,
+    required Color color,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Icon(icon, size: 20, color: color),
+        ),
+      ),
     );
   }
 }

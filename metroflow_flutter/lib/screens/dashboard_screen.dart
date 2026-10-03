@@ -47,6 +47,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   // Wallet balance strip — the primary wallet shown in the hero.
   Map<String, dynamic>? _primaryWallet;
   String _walletLabel = 'Wallet balance';
+  // Which wallet the hero card is showing — the Fund CTA MUST fund THIS
+  // wallet, not the router default ('user'), or business admins fund their
+  // personal wallet from the Business overview card.
+  String _primaryWalletType = 'user';
 
   // Anchors for the guided app tour (lib/widgets/app_tour.dart) — the tour
   // spotlights these regions on first launch.
@@ -152,12 +156,15 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             // Business-first: this is the business suite.
             _primaryWallet = business;
             _walletLabel = 'Business wallet';
+            _primaryWalletType = 'business';
           } else if (personal != null) {
             _primaryWallet = personal;
             _walletLabel = 'Wallet balance';
+            _primaryWalletType = 'user';
           } else if (business != null) {
             _primaryWallet = business;
             _walletLabel = 'Business wallet';
+            _primaryWalletType = 'business';
           }
         });
       }
@@ -548,11 +555,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               ),
               const SizedBox(width: 8),
               // Fund pill — the highest-frequency money action, one tap away.
+              // Passes the hero card's wallet type: the button sits on the
+              // Business wallet overview, so it funds the BUSINESS wallet.
               Material(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(14),
                 child: InkWell(
-                  onTap: () => context.push('/main/fund-wallet'),
+                  onTap: () => context.push('/main/fund-wallet',
+                      extra: {'walletType': _primaryWalletType}),
                   borderRadius: BorderRadius.circular(14),
                   child: const Padding(
                     padding:
@@ -797,7 +807,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         icon: Icons.savings_outlined,
         label: 'Fund Wallet',
         tint: colors.success,
-        onTap: () => context.push('/main/fund-wallet'),
+        // Same wallet as the hero overview card (business-first there).
+        onTap: () => context.push('/main/fund-wallet',
+            extra: {'walletType': _primaryWalletType}),
       ),
     ];
 

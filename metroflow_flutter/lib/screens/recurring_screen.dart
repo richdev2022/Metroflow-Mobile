@@ -580,25 +580,58 @@ class _RecurringScreenState extends State<RecurringScreen>
                         ),
                       ..._plans.map((p) {
                         final status = p['status']?.toString() ?? 'active';
+                        final colors = AppTheme.colors;
                         return Container(
-                          margin: const EdgeInsets.only(bottom: 12),
+                          margin: const EdgeInsets.only(bottom: 14),
                           decoration: BoxDecoration(
-                            color: AppTheme.colors.surface,
-                            borderRadius: BorderRadius.circular(16),
+                            color: colors.surface,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border(
+                              left: BorderSide(
+                                  width: 4,
+                                  color: status == 'active'
+                                      ? AppColors.primary
+                                      : colors.textSecondary
+                                          .withValues(alpha: 0.4)),
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: colors.text.withValues(alpha: 0.05),
+                                blurRadius: 14,
+                                offset: const Offset(0, 6),
+                              ),
+                            ],
                           ),
                           child: ListTile(
                             contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 16, vertical: 8),
-                            title: Text(p['name']?.toString() ?? '',
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w600)),
+                                horizontal: 16, vertical: 10),
+                            title: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(p['name']?.toString() ?? '',
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 15)),
+                                ),
+                              ],
+                            ),
                             subtitle: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const SizedBox(height: 2),
+                                const SizedBox(height: 4),
                                 Text(
-                                  '${_money(p['amount'], p['currency'] ?? 'NGN')} / ${_intervalLabel(p['interval']?.toString() ?? 'monthly')} · ${p['active_subscribers'] ?? 0} active subscriber(s)',
-                                  style: const TextStyle(fontSize: 12),
+                                  '${_money(p['amount'], p['currency'] ?? 'NGN')} / ${_intervalLabel(p['interval']?.toString() ?? 'monthly')}',
+                                  style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w800,
+                                      color: AppColors.primary),
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  '${p['active_subscribers'] ?? 0} active · ${p['total_subscribers'] ?? 0} total subscriber(s)',
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      color: colors.textSecondary),
                                 ),
                                 const SizedBox(height: 6),
                                 Row(children: [

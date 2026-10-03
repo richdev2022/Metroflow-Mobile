@@ -23,32 +23,83 @@ class PermissionPrimer {
   PermissionPrimer._();
 
   static const String _shownKey = 'permission_primer_shown';
+  static const String _snoozeKey = 'permission_primer_snoozed_at';
+  static const Duration _snoozeWindow = Duration(hours: 12);
   static const Color brand = Color(0xFF2563EB);
 
-  /// Call right after a successful login. Shows the sheet at most once per
-  /// install. Never throws, never blocks navigation.
-  static Future<void> maybeShow() async {
+  static Future<bool> _isSnoozed() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      if (prefs.getBool(_shownKey) == true) return;
+      final ms = prefs.getInt(_snoozeKey) ?? 0;
+      if (ms <= 0) return false;
+      return DateTime.now().difference(DateTime.fromMillisecondsSinceEpoch(ms)) <
+          _snoozeWindow;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> _snooze() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_snoozeKey, DateTime.now().millisecondsSinceEpoch);
+    } catch (_) {}
+  }
+
+  /// Internal: present the sheet on the root navigator.
+  static Future<void> _present() async {
+    final context = navigatorKey.currentContext;
+    if (context == null || !context.mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black54,
+      builder: (_) => const _PermissionPrimerSheet(),
+    );
+  }
+
+  /// Call right after a successful login. Shows the sheet whenever push
+  /// notifications are NOT yet granted (re-enforcement is the point), or
+  /// once per install for camera/mic/photos. Never throws, never blocks.
+  static Future<void> maybeShow() async {
+    try {
+      bool notifGranted = false;
+      try {
+        notifGranted = await Permission.notification.isGranted;
+      } catch (_) {}
+
+      final prefs = await SharedPreferences.getInstance();
+      final shownBefore = prefs.getBool(_shownKey) == true;
+
+      if (notifGranted && shownBefore) return;
+      if (!notifGranted && await _isSnoozed()) return;
       await prefs.setBool(_shownKey, true);
 
       // Give the post-login navigation a beat to settle so the sheet
       // attaches to the (now mounted) root navigator context.
       await Future<void>.delayed(const Duration(milliseconds: 900));
-      final context = navigatorKey.currentContext;
-      if (context == null || !context.mounted) return;
-
-      await showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        useSafeArea: true,
-        backgroundColor: Colors.transparent,
-        barrierColor: Colors.black54,
-        builder: (_) => const _PermissionPrimerSheet(),
-      );
+      await _present();
     } catch (e) {
       debugPrint('PermissionPrimer.maybeShow failed: $e');
+    }
+  }
+
+  /// App-resume re-check (user requirement): if the push-notification
+  /// permission is STILL missing, surface the primer again — snooze-aware so
+  /// it never nags. Called only while signed in and NOT while a call rings.
+  static Future<void> recheckOnResume() async {
+    try {
+      bool notifGranted = false;
+      try {
+        notifGranted = await Permission.notification.isGranted;
+      } catch (_) {}
+      if (notifGranted) return;
+      if (await _isSnoozed()) return;
+      await _present();
+    } catch (e) {
+      debugPrint('PermissionPrimer.recheckOnResume failed: $e');
     }
   }
 }
@@ -67,6 +118,7 @@ class _PermissionPrimerSheetState extends State<_PermissionPrimerSheet> {
   _PrimerStatus _camera = _PrimerStatus.waiting;
   _PrimerStatus _microphone = _PrimerStatus.waiting;
   _PrimerStatus _photos = _PrimerStatus.waiting;
+  bool _notifPermanentlyDenied = false;
   bool _busy = false;
 
   @override
@@ -78,6 +130,7 @@ class _PermissionPrimerSheetState extends State<_PermissionPrimerSheet> {
   Future<void> _readCurrentStatuses() async {
     try {
       final notif = await Permission.notification.isGranted;
+      final notifStatus = await Permission.notification.status;
       final cam = await Permission.camera.isGranted;
       final mic = await Permission.microphone.isGranted;
       final photos =
@@ -85,6 +138,7 @@ class _PermissionPrimerSheetState extends State<_PermissionPrimerSheet> {
       if (!mounted) return;
       setState(() {
         if (notif) _notifications = _PrimerStatus.granted;
+        _notifPermanentlyDenied = !notif && notifStatus.isPermanentlyDenied;
         if (cam) _camera = _PrimerStatus.granted;
         if (mic) _microphone = _PrimerStatus.granted;
         if (photos) _photos = _PrimerStatus.granted;
@@ -98,10 +152,20 @@ class _PermissionPrimerSheetState extends State<_PermissionPrimerSheet> {
     try {
       switch (row) {
         case _PrimerRow.notifications:
+          // Permanently denied: the OS will never show the prompt again —
+          // deep-link to the app settings page instead.
+          if (_notifPermanentlyDenied) {
+            await openAppSettings();
+            if (mounted) setState(() => _notifications = _PrimerStatus.denied);
+            break;
+          }
           final result = await Permission.notification.request();
           if (!mounted) return;
-          setState(() =>
-              _notifications = result.isGranted ? _PrimerStatus.granted : _PrimerStatus.denied);
+          setState(() {
+            _notifications =
+                result.isGranted ? _PrimerStatus.granted : _PrimerStatus.denied;
+            _notifPermanentlyDenied = result.isPermanentlyDenied;
+          });
           break;
         case _PrimerRow.camera:
           final result = await Permission.camera.request();
@@ -158,6 +222,14 @@ class _PermissionPrimerSheetState extends State<_PermissionPrimerSheet> {
       [_notifications, _camera, _microphone, _photos]
           .where((s) => s == _PrimerStatus.granted)
           .length;
+
+  Future<void> _snoozePrimer() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(
+          'permission_primer_snoozed_at', DateTime.now().millisecondsSinceEpoch);
+    } catch (_) {}
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -231,7 +303,9 @@ class _PermissionPrimerSheetState extends State<_PermissionPrimerSheet> {
                 icon: Icons.notifications_active_rounded,
                 iconColor: PermissionPrimer.brand,
                 title: 'Notifications',
-                description: 'Incoming-call rings and chat alerts — even when the app is closed.',
+                description: _notifPermanentlyDenied
+                    ? 'Previously denied — tap Allow to open Settings and enable calls & chat alerts.'
+                    : 'Incoming-call rings and chat alerts — even when the app is closed.',
                 status: _notifications,
                 busy: _busy,
                 onAllow: () => _request(_PrimerRow.notifications),
@@ -308,11 +382,16 @@ class _PermissionPrimerSheetState extends State<_PermissionPrimerSheet> {
               ),
               const SizedBox(height: 6),
               TextButton(
-                onPressed: () => Navigator.of(context).pop(),
+                onPressed: () {
+                  // Snooze: the primer stays quiet for 12h, but comes back
+                  // (login/resume) until notifications are actually granted.
+                  _snoozePrimer();
+                  Navigator.of(context).pop();
+                },
                 style: TextButton.styleFrom(foregroundColor: const Color(0xFF94A3B8)),
-                child: const Text(
-                  'Skip for now',
-                  style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600),
+                child: Text(
+                  _notifPermanentlyDenied ? 'Not now' : 'Skip for now',
+                  style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600),
                 ),
               ),
             ],
