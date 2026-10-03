@@ -52,20 +52,47 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
             }
 
             if (state.error != null) {
-              return Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(state.error!),
-                    const SizedBox(height: 16),
-                    ElevatedButton(
+              return ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.all(24),
+                children: [
+                  const SizedBox(height: 80),
+                  Icon(
+                    Icons.notifications_off_outlined,
+                    size: 56,
+                    color: colors.textSecondary,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Couldn\'t load notifications',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      color: colors.text,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    state.error!,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: colors.textSecondary,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Center(
+                    child: ElevatedButton.icon(
                       onPressed: () {
                         ref.read(notificationsProvider.notifier).fetchNotifications();
                       },
-                      child: const Text('Retry'),
+                      icon: const Icon(Icons.refresh_rounded, size: 18),
+                      label: const Text('Retry'),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               );
             }
 

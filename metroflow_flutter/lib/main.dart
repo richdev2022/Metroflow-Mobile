@@ -728,6 +728,17 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     ref.listen<int>(chatUnreadProvider, (_, __) => _syncLauncherBadge());
     ref.listen<NotificationsState>(notificationsProvider, (_, __) => _syncLauncherBadge());
 
+    // THEME DESYNC GUARD. The MaterialApp follows `themeState.mode` (the
+    // provider), but dozens of screens read the STATIC AppTheme.colors, which
+    // is only mutated by AppTheme.setThemeMode(). Those two used to be updated
+    // from different places — when they ever disagreed (hot-restart order,
+    // async storage load, provider rebuild), SOME screens (chat list, MetricAi
+    // room) rendered with the stale palette while the rest of the app was
+    // already dark/light. Re-syncing the static on every rebuild of THIS
+    // widget (which watches themeProvider) guarantees the static can never
+    // lag the state that drives MaterialApp.
+    AppTheme.setThemeMode(themeState.mode);
+
     return ErrorBoundary(
       child: IdleTimeoutHandler(
         child: MaterialApp.router(

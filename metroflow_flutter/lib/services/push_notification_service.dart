@@ -203,8 +203,24 @@ class PushNotificationService {
       _prefs = await SharedPreferences.getInstance();
     } catch (_) {}
 
-    // 1. Firebase — guarded. Without google-services.json / plist this throws
-    //    (no default Firebase options) and we disable the whole service.
+    // 1. Local notifications FIRST — deliberately BEFORE Firebase. On iOS the
+    //    Darwin initialization is what fires the ONE-TIME system permission
+    //    prompt; if we waited for Firebase (which throws when the native
+    //    GoogleService-Info.plist is missing) the prompt NEVER appeared, the
+    //    app had no Notifications row in iOS Settings at all, and push was
+    //    dead with zero user-visible signal. Running this first means:
+    //    - the permission is requested once, automatically, on first launch
+    //      (the "grant once" behaviour) — regardless of Firebase health;
+    //    - local notifications (in-app banners, rings) always work.
+    try {
+      await _initLocalNotifications();
+    } catch (e) {
+      Logger.error('PushNotificationService: local notifications init failed: $e');
+    }
+
+    // 2. Firebase — guarded. Without google-services.json / plist this throws
+    //    (no default Firebase options) and remote push stays off while the
+    //    rest of the service (local notifications, permission) keeps working.
     try {
       if (Firebase.apps.isEmpty) {
         await Firebase.initializeApp();
@@ -212,17 +228,20 @@ class PushNotificationService {
       _enabled = true;
     } catch (e) {
       _enabled = false;
-      Logger.error('PushNotificationService: Firebase unavailable, push disabled '
-          '(add google-services.json / GoogleService-Info.plist to enable): $e');
+      Logger.error(
+        'PushNotificationService: Firebase unavailable — REMOTE push disabled '
+        '(local notifications + permission still active). FIX: register the iOS '
+        'app in the Firebase console, download GoogleService-Info.plist and add '
+        'it to ios/Runner/ (Android already has google-services.json): $e',
+      );
       return;
     }
 
     try {
-      // 2. Local notifications (channels + tap handling).
-      await _initLocalNotifications();
-
-      // 3. Permissions — FCM is the single permission authority (the local
-      //    notifications plugin is initialised with request*Permission:false).
+      // 3. FCM permission — idempotent: when step 1 already prompted (iOS),
+      //    this just READS the granted status. It stays for Android 13+ (the
+      //    POST_NOTIFICATIONS runtime dialog) and for the criticalAlert=false
+      //    contract documented below.
       // NOTE: criticalAlert MUST stay false unless the app has been granted
       // Apple's "critical alerts" entitlement (a special request form; most
       // apps never get it). Requesting it without the entitlement makes
@@ -277,12 +296,17 @@ class PushNotificationService {
 
   Future<void> _initLocalNotifications() async {
     const androidInit = AndroidInitializationSettings('ic_notification');
-    // Permissions are requested once via FirebaseMessaging.requestPermission,
-    // so the Darwin init keeps its request flags off.
+    // iOS: the Darwin init REQUESTS the permission on first launch (alert +
+    // badge + sound, provisional:false so it is the real prompt). This is the
+    // path that used to be dead — Firebase failing meant NO prompt ever ran
+    // and the app never appeared under iOS Settings → Notifications. Request
+    // here unconditionally: when Firebase later also calls
+    // FirebaseMessaging.requestPermission the OS just returns the already-
+    // granted status (the system prompt only ever shows once).
     const darwinInit = DarwinInitializationSettings(
-      requestAlertPermission: false,
-      requestSoundPermission: false,
-      requestBadgePermission: false,
+      requestAlertPermission: true,
+      requestSoundPermission: true,
+      requestBadgePermission: true,
       requestCriticalPermission: false,
     );
     const initSettings = InitializationSettings(android: androidInit, iOS: darwinInit);
@@ -351,7 +375,16 @@ class PushNotificationService {
         _kCallNotificationId,
         'Incoming ${callType == 'audio' ? 'audio' : 'video'} call',
         callerName,
-        NotificationDetails(android: details, iOS: const DarwinNotificationDetails()),
+        NotificationDetails(
+          android: details,
+          iOS: const DarwinNotificationDetails(
+            presentAlert: true,
+            presentSound: true,
+            presentBanner: true,
+            presentList: true,
+            interruptionLevel: InterruptionLevel.timeSensitive,
+          ),
+        ),
         payload: _encodePayload(payload),
       );
     } catch (e) {
@@ -377,7 +410,15 @@ class PushNotificationService {
         _kChatNotificationIdBase + (conversationId.isEmpty ? 0 : conversationId.hashCode % 50000),
         senderName,
         body.isEmpty ? 'Sent you a message' : body,
-        NotificationDetails(android: details, iOS: const DarwinNotificationDetails()),
+        NotificationDetails(
+          android: details,
+          iOS: const DarwinNotificationDetails(
+            presentAlert: true,
+            presentSound: true,
+            presentBanner: true,
+            presentList: true,
+          ),
+        ),
         payload: _encodePayload(payload),
       );
     } catch (e) {
@@ -402,7 +443,15 @@ class PushNotificationService {
         DateTime.now().millisecondsSinceEpoch % 100000,
         title,
         body,
-        NotificationDetails(android: details, iOS: const DarwinNotificationDetails()),
+        NotificationDetails(
+          android: details,
+          iOS: const DarwinNotificationDetails(
+            presentAlert: true,
+            presentSound: true,
+            presentBanner: true,
+            presentList: true,
+          ),
+        ),
         payload: _encodePayload(payload),
       );
     } catch (e) {
