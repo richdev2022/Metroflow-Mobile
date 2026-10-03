@@ -102,6 +102,14 @@
         <key>UIBackgroundModes</key>
         <array>
                 <string>remote-notification</string>
+                <!-- voip: lets PushKit wake the app for incoming calls so a
+                     mobile-to-mobile call can ring while the app is
+                     backgrounded or terminated (paired with CallKit in a
+                     later step). Harmless without PushKit registered. -->
+                <string>voip</string>
+                <!-- audio: keeps an ACTIVE call's audio running when the app
+                     is backgrounded mid-conversation. -->
+                <string>audio</string>
         </array>
         <key>UILaunchStoryboardName</key>
         <string>LaunchScreen</string>

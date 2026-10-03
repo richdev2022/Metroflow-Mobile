@@ -29,6 +29,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   List<Conversation> _conversations = [];
   List<User> _teamMembers = [];
   bool _isLoading = true;
+  String? _loadError;
   String _searchQuery = '';
   late final void Function(dynamic) _conversationCreatedHandler;
 
@@ -66,6 +67,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   Future<void> _loadConversations() async {
+    setState(() => _loadError = null);
     try {
       final response = await _api.getConversations();
       if (response.data['success'] == true) {
@@ -85,9 +87,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         // Re-sync the bottom-nav chat badge with server truth
         final totalUnread = _conversations.fold<int>(0, (sum, c) => sum + c.unreadCount);
         ref.read(chatUnreadProvider.notifier).set(totalUnread);
+      } else {
+        if (!mounted) return;
+        setState(() => _loadError = 'Couldn\'t load conversations');
       }
     } catch (e) {
       Logger.error('Error loading conversations: $e');
+      // Surface the failure — a silent empty list made users think their
+      // chats disappeared (or showed stale socket-only rows as "No messages
+      // yet") whenever the request failed.
+      if (!mounted) return;
+      setState(() => _loadError = ApiService.extractErrorMessage(e));
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -244,7 +254,23 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                           SkeletonCard(),
                         ],
                       )
-                    : _conversations.isEmpty
+                    : _loadError != null
+                        ? ListView(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            padding: const EdgeInsets.fromLTRB(24, 8, 24, 96),
+                            children: [
+                              _MetricAiEntry(colors: colors),
+                              const SizedBox(height: 40),
+                              EmptyState(
+                                icon: Icons.wifi_off_rounded,
+                                title: 'Couldn\'t load conversations',
+                                subtitle: _loadError!,
+                                actionLabel: 'Retry',
+                                onAction: _loadConversations,
+                              ),
+                            ],
+                          )
+                        : _conversations.isEmpty
                         ? ListView(
                             physics: const AlwaysScrollableScrollPhysics(),
                             padding: const EdgeInsets.fromLTRB(24, 8, 24, 96),
