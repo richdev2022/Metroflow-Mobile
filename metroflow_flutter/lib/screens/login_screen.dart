@@ -382,7 +382,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 alignment: Alignment.centerRight,
                 child: TextButton(
                   onPressed: () {
-                    context.go('/forgot-password');
+                    // push (NOT go): keep the login screen on the stack so the
+                    // back arrow on forgot-password actually pops back.
+                    context.push('/forgot-password');
                   },
                   style: TextButton.styleFrom(
                     foregroundColor: colors.primary,

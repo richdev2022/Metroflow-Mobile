@@ -28,6 +28,7 @@ class SingleTransferSheet extends StatefulWidget {
     this.asPage = false,
     this.onSuccess,
     this.onClosed,
+    this.prefill,
   });
 
   /// Wallet pre-selected when the form opens ('user' or 'business').
@@ -44,6 +45,11 @@ class SingleTransferSheet extends StatefulWidget {
   /// Called when the user closes the bottom sheet via the X button (wallet
   /// hides the modal host).
   final VoidCallback? onClosed;
+
+  /// "Repeat transaction" prefill from a receipt: bank_code / account_number /
+  /// account_name / amount / remark. Applied after the bank list loads so the
+  /// picker shows the resolved bank name.
+  final Map<String, dynamic>? prefill;
 
   @override
   State<SingleTransferSheet> createState() => _SingleTransferSheetState();
@@ -217,10 +223,29 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
                   .toList() ??
               [];
         });
+        _applyPrefill();
       }
     } catch (e) {
       debugPrint('Failed to fetch banks: $e');
     }
+  }
+
+  /// Apply the [SingleTransferSheet.prefill] map ("repeat transaction" from a
+  /// receipt). Runs after the bank list loads so the bank picker can resolve
+  /// the saved code into a visible bank name.
+  void _applyPrefill() {
+    final p = widget.prefill;
+    if (p == null || !mounted) return;
+    setState(() {
+      final bankCode = p['bank_code']?.toString() ?? '';
+      if (bankCode.isNotEmpty && banks.any((b) => b.code == bankCode)) {
+        selectedBankCode = bankCode;
+      }
+      accountNumber = p['account_number']?.toString() ?? accountNumber;
+      accountName = p['account_name']?.toString() ?? accountName;
+      amount = p['amount']?.toString() ?? amount;
+      remark = p['remark']?.toString() ?? remark;
+    });
   }
 
   // -----------------------------------------------------------------------

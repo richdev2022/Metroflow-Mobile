@@ -7,6 +7,14 @@ class Transfer {
   final String recipientName;
   final String? recipientAccount;
   final String? recipientBank;
+  /// Human-readable bank name when the backend provides one (intl payouts).
+  final String? recipientBankName;
+  /// 'credit' | 'debit' — merged-ledger rows carry it; transfer_queue rows
+  /// are debits by nature and default to debit in [isCredit].
+  final String? direction;
+  /// 'transfer' | 'refund' | other transaction_type from the merged ledger.
+  final String? transactionType;
+  final String? paymentProvider;
   final String? remark;
   final String? sourceType;
   final String? sourceId;
@@ -25,6 +33,10 @@ class Transfer {
     required this.recipientName,
     this.recipientAccount,
     this.recipientBank,
+    this.recipientBankName,
+    this.direction,
+    this.transactionType,
+    this.paymentProvider,
     this.remark,
     this.sourceType,
     this.sourceId,
@@ -34,6 +46,18 @@ class Transfer {
     required this.createdAt,
     required this.updatedAt,
   });
+
+  /// Receipts must show Credit / Debit. Refund rows (and anything explicitly
+  /// credited) read as CREDIT; transfers read as DEBIT.
+  bool get isCredit {
+    final d = (direction ?? '').toLowerCase();
+    if (d == 'credit') return true;
+    if (d == 'debit') return false;
+    final t = (transactionType ?? '').toLowerCase();
+    return t == 'refund' || t == 'credit';
+  }
+
+  String get typeLabel => isCredit ? 'Credit' : 'Debit';
 
   factory Transfer.fromJson(Map<String, dynamic> json) {
     final amount = json['amount'];
@@ -47,6 +71,10 @@ class Transfer {
       recipientName: (json['recipient_name'] as String?) ?? '',
       recipientAccount: json['recipient_account'] as String?,
       recipientBank: json['recipient_bank'] as String?,
+      recipientBankName: (json['recipient_bank_name'] ?? json['bankName']) as String?,
+      direction: json['direction'] as String?,
+      transactionType: (json['transaction_type'] ?? json['transactionType']) as String?,
+      paymentProvider: (json['payment_provider'] ?? json['paymentProvider']) as String?,
       remark: json['remark'] as String?,
       sourceType: json['source_type'] as String?,
       sourceId: json['source_id'] as String?,
@@ -68,6 +96,10 @@ class Transfer {
       'recipient_name': recipientName,
       'recipient_account': recipientAccount,
       'recipient_bank': recipientBank,
+      'recipient_bank_name': recipientBankName,
+      'direction': direction,
+      'transaction_type': transactionType,
+      'payment_provider': paymentProvider,
       'remark': remark,
       'source_type': sourceType,
       'source_id': sourceId,

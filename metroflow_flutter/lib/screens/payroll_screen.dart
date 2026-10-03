@@ -616,7 +616,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
-                      onPressed: () => context.go('/main/bulk-transfer'),
+                      onPressed: () => context.push('/main/bulk-transfer'),
                       icon: const Icon(Icons.send_outlined),
                       label: const Text('Initiate Bulk Transfer'),
                     ),

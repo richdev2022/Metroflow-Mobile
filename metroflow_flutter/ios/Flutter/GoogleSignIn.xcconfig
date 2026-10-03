@@ -11,3 +11,7 @@
 // Keep the WEB client ID as serverClientId in lib/services/google_auth_service.dart.
 GOOGLE_IOS_CLIENT_ID = 438902996656-ufvc3giigfte0eng4d0qsuhnabf726r0.apps.googleusercontent.com
 GOOGLE_IOS_URL_SCHEME = com.googleusercontent.apps.438902996656-ufvc3giigfte0eng4d0qsuhnabf726r0
+
+// WEB OAuth client (serverClientId): the backend verifies ID tokens against
+// this audience among others. Overridable via CI env GOOGLE_WEB_CLIENT_ID.
+GOOGLE_WEB_CLIENT_ID = 438902996656-dbmnffpr8vufvso2o10esspalvl9c25c.apps.googleusercontent.com

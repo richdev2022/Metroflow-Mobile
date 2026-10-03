@@ -428,7 +428,8 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
 
       if (result['requiresOtp'] == true) {
         if (mounted) {
-          context.go('/verify-otp', extra: result['email'] ?? adminEmailController.text);
+          // push (NOT go): preserve the stack so back works from verify-otp.
+          context.push('/verify-otp', extra: result['email'] ?? adminEmailController.text);
         }
       } else {
         if (mounted) {

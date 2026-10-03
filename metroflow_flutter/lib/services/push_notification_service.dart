@@ -496,8 +496,11 @@ class PushNotificationService {
       final type = _normalizePushType(data['type']);
       switch (type) {
         case 'incoming_call':
+          // iOS hybrid pushes carry an aps.alert: the SYSTEM already posted
+          // a banner — never stack a local notification on top of it.
+          final systemShowed = message.notification != null;
           final alreadyRinging = foregroundCallGuard?.call() ?? false;
-          if (alreadyRinging) {
+          if (alreadyRinging && !systemShowed) {
             // The in-app incoming-call overlay is already ringing (socket
             // path): surface the tray banner as well so a swipe-down still
             // shows the call.
@@ -523,22 +526,30 @@ class PushNotificationService {
           AppFeedback.stopRingtone();
           dismissIncomingCallHook?.call();
           unawaited(cancelCallNotification());
-          showGeneralNotification(
-            title: 'Missed ${callType == 'video' ? 'video' : 'audio'} call',
-            body: caller.isEmpty ? 'You missed a call' : 'Missed call from $caller',
-            payload: Map<String, dynamic>.from(data),
-          );
+          if (message.notification == null) {
+            // System banner already shown for iOS hybrid pushes.
+            showGeneralNotification(
+              title: 'Missed ${callType == 'video' ? 'video' : 'audio'} call',
+              body: caller.isEmpty ? 'You missed a call' : 'Missed call from $caller',
+              payload: Map<String, dynamic>.from(data),
+            );
+          }
           AppBadgeService.instance.addUnread(
             exact: int.tryParse((data['badge'] ?? '').toString()),
           );
           break;
         case 'chat_message':
-          showChatNotification(
-            senderName: (data['sender_name'] ?? data['senderName'] ?? 'New message').toString(),
-            body: (data['message'] ?? '').toString(),
-            conversationId: (data['conversation_id'] ?? data['conversationId'] ?? '').toString(),
-            payload: Map<String, dynamic>.from(data),
-          );
+          // iOS hybrid pushes are displayed by the system itself — only the
+          // app's own badge logic runs here. Android (data-only) renders the
+          // rich chat notification locally as before.
+          if (message.notification == null) {
+            showChatNotification(
+              senderName: (data['sender_name'] ?? data['senderName'] ?? 'New message').toString(),
+              body: (data['message'] ?? '').toString(),
+              conversationId: (data['conversation_id'] ?? data['conversationId'] ?? '').toString(),
+              payload: Map<String, dynamic>.from(data),
+            );
+          }
           // Launcher badge (Facebook-style) — see the background handler.
           AppBadgeService.instance.addUnread(
             exact: int.tryParse((data['badge'] ?? '').toString()),

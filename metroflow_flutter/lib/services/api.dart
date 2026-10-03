@@ -797,6 +797,53 @@ class ApiService {
     return await _dio.post('/transfers/$id/retry');
   }
 
+  /// Re-query the provider for the CURRENT status of a transfer (used by the
+  /// receipt/success screen so users see the real outcome instantly instead
+  /// of a stuck "Processing").
+  Future<Response> verifyTransfer(String id) async {
+    return await _dio.post('/transfers/$id/verify');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Transaction disputes
+  // ---------------------------------------------------------------------------
+
+  /// POST /disputes — file a dispute against a debit transaction, with an
+  /// optional image/PDF attachment sent as multipart/form-data.
+  Future<Response> createDispute({
+    required String reference,
+    required String category,
+    required String message,
+    String? attachmentPath,
+    String? attachmentName,
+  }) async {
+    if (attachmentPath != null && attachmentPath.isNotEmpty) {
+      final fileName =
+          (attachmentName != null && attachmentName.isNotEmpty)
+              ? attachmentName
+              : attachmentPath.split(Platform.pathSeparator).last;
+      final formData = FormData.fromMap(<String, dynamic>{
+        'reference': reference,
+        'category': category,
+        'message': message,
+        'attachment': await MultipartFile.fromFile(attachmentPath,
+            filename: fileName),
+      });
+      return await _dio.post('/disputes', data: formData);
+    }
+    return await _dio.post('/disputes', data: {
+      'reference': reference,
+      'category': category,
+      'message': message,
+    });
+  }
+
+  /// GET /disputes/mine — disputes filed by my business.
+  Future<Response> getMyDisputes() async {
+    return await _dio.get('/disputes/mine');
+  }
+
+
   /// International payout quote (USD payouts funded from an NGN wallet).
   /// GET /transfers/quote?amount=&source_currency=&destination_currency=
   /// Response: { success, data: { live_rate, markup_percent, marked_up_rate,
