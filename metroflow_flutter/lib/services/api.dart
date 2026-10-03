@@ -120,22 +120,49 @@ class ApiService {
     return 'Something went wrong';
   }
 
+  /// Re-entrancy guard: a session-expired 403 can arrive DURING the logout
+  /// flow itself (logout best-effort unregisters the FCM token; that DELETE
+  /// also 403s with "Invalid or expired token" and would call this handler
+  /// again -> logout() again -> infinite recursion). One flag breaks it.
+  static bool _handlingSessionExpiry = false;
+
   Future<void> _handleSessionExpired() async {
-    // Session expiry logs the user out but must NEVER touch the biometric
-    // enrollment: the `biometricsEnabled` flag and the per-device token stay
-    // on the device so the next password/Google sign-in silently re-enrolls.
-    // Enrollment is revoked ONLY by an explicit user action
-    // (Settings → disable biometrics → logout(disableBiometrics: true)).
-    if (authNotifierInstance != null) {
-      await authNotifierInstance!.logout();
-    } else {
-      // Fallback if notifier isn't available yet — session keys only,
-      // biometrics keys stay untouched.
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove('token');
-      await prefs.remove('userId');
-      await prefs.remove('businessId');
-      await prefs.remove('userName');
+    if (_handlingSessionExpiry) return;
+    _handlingSessionExpiry = true;
+    try {
+      // Session expiry logs the user out but must NEVER touch the biometric
+      // enrollment: the `biometricsEnabled` flag and the per-device token stay
+      // on the device so the next password/Google sign-in silently re-enrolls.
+      // Enrollment is revoked ONLY by an explicit user action
+      // (Settings → disable biometrics → logout(disableBiometrics: true)).
+      if (authNotifierInstance != null) {
+        try {
+          await authNotifierInstance!.logout();
+        } catch (_) {
+          // logout() must never throw inside an interceptor — the storage
+          // cleanup below is the safety net and runs regardless.
+        }
+      }
+      // ALWAYS clear the session material ourselves, not just in the fallback
+      // branch. HISTORY: when the notifier wasn't ready (early-boot 403s from
+      // the notifications provider) only SharedPreferences were cleaned while
+      // the SECURE-STORAGE token survived — the interceptor kept sending the
+      // dead token, every request kept 403ing, and the user was stuck in a
+      // "logged-in zombie" state (notifications error, no calls, no chat)
+      // until they manually logged out. Clearing both stores guarantees the
+      // next boot lands on the login screen.
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove('token');
+        await prefs.remove('userId');
+        await prefs.remove('businessId');
+        await prefs.remove('userName');
+      } catch (_) {}
+      try {
+        await _storage.clearSession();
+      } catch (_) {}
+    } finally {
+      _handlingSessionExpiry = false;
     }
     // Don't show dialog - auth state listener will navigate to login
   }
@@ -292,6 +319,37 @@ class ApiService {
   /// authProvider, hasPassword, emailVerified, kycStatus, phoneNumber } }.
   Future<Response> getMe() async {
     return await _dio.get('/auth/me', options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// Result codes for a server-side session validation (GET /auth/me):
+  /// [sessionValid] alive, [sessionExpired] server rejected the token
+  /// (caller clears the session and lands on login), [sessionUnknown]
+  /// network/5xx hiccup — callers must fail open.
+  static const int sessionValid = 0;
+  static const int sessionExpired = 1;
+  static const int sessionUnknown = 2;
+
+  /// Validates the stored session against the server WITHOUT side effects.
+  /// Used by AuthNotifier.checkAuth so a dead session (server cleaned up the
+  /// user_sessions row after idle expiry) is detected at boot instead of
+  /// leaving the app in an authenticated-looking state where every request
+  /// 403s, sockets run as guest (no calls/chat) and push never registers.
+  /// Returns [sessionValid] / [sessionExpired] / [sessionUnknown].
+  Future<int> validateSession() async {
+    try {
+      final response = await _dio.get('/auth/me', options: Options(extra: {'suppressToast': true}));
+      final data = response.data;
+      if (data is Map && data['success'] == true) return sessionValid;
+      // 200 but unexpected body — treat as unknown (fail open).
+      return sessionUnknown;
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      if (status == 401 || status == 403) return sessionExpired;
+      // Network/timeout/5xx — cannot judge, fail open.
+      return sessionUnknown;
+    } catch (_) {
+      return sessionUnknown;
+    }
   }
 
   Future<Response> verifyOtp(String email, String otpCode) async {
@@ -1754,6 +1812,23 @@ class StorageService {
   Future<void> removeToken() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('token');
+    await _deleteTokenSecurely();
+  }
+
+  /// Clears ALL session material (token, ids, profile name) from BOTH stores
+  /// — secure storage AND SharedPreferences. Used by the session-expired
+  /// handler: the interceptor previously only wiped the SharedPreferences
+  /// copies, so a dead secure-storage token kept being attached to requests
+  /// and the app stayed trapped in an authenticated-looking 403 loop.
+  /// Biometric enrollment keys are deliberately untouched.
+  Future<void> clearSession() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('token');
+      await prefs.remove('userId');
+      await prefs.remove('businessId');
+      await prefs.remove('userName');
+    } catch (_) {}
     await _deleteTokenSecurely();
   }
 

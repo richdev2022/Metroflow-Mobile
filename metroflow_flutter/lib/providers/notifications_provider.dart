@@ -96,7 +96,12 @@ class NotificationsNotifier extends Notifier<NotificationsState> {
       }
     } catch (e) {
       debugPrint('Error fetching notifications: $e');
-      state = state.copyWith(isLoading: false, error: e.toString());
+      // Show the SERVER's message (e.g. "Your subscription has expired…"),
+      // never the raw DioException dump — users cannot act on that.
+      state = state.copyWith(
+        isLoading: false,
+        error: ApiService.extractErrorMessage(e),
+      );
     }
   }
 

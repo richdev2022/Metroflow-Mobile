@@ -141,7 +141,25 @@ class AuthNotifier extends Notifier<AuthState> {
       final biometricsEnabled = await BiometricService.isEnabled();
       final hasSeenOnboarding = await _storageService.getHasSeenOnboarding();
 
-      final isTokenValid = token != null;
+      var isTokenValid = token != null;
+
+      // SERVER-SIDE SESSION VALIDATION. HISTORY: this used to trust the mere
+      // EXISTENCE of a stored token. The backend keeps sessions in the
+      // user_sessions table with a sliding idle window — once the row is
+      // gone (idle expiry, server-side cleanup) every REST call 403s and the
+      // socket silently drops to GUEST: no calls, no live chat, no push
+      // registration, raw DioExceptions on the notifications tab — while the
+      // app still LOOKED logged in. Now a dead session is detected here and
+      // the user is routed to login (fail-open on network errors so an
+      // offline launch never logs anyone out).
+      if (isTokenValid) {
+        final verdict = await _apiService.validateSession();
+        if (verdict == ApiService.sessionExpired) {
+          debugPrint('checkAuth: stored session rejected by server — clearing it');
+          await _storageService.clearSession();
+          isTokenValid = false;
+        }
+      }
 
       // Connect socket if authenticated
       if (isTokenValid && userId != null && businessId != null) {
