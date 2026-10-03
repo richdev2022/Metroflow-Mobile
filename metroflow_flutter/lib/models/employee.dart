@@ -105,6 +105,8 @@ class Employee {
     this.salaryCalculationStatus,
     this.contractStartDate,
     this.adjustments,
+    this.verificationStatus,
+    this.jobTitle,
   });
 
   factory Employee.fromJson(Map<String, dynamic> json) {

@@ -2042,7 +2042,6 @@ class _PayrollScreenState extends State<PayrollScreen> {
                       ? const SizedBox(
                           width: 14,
                           height: 14,
-                          strokeWidth: 2,
                           child: CircularProgressIndicator(strokeWidth: 2))
                       : const Icon(Icons.verified_outlined, size: 18),
                   label: Text(

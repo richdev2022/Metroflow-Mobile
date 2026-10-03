@@ -8,6 +8,16 @@ import '../models/task.dart';
 import '../models/task_status.dart';
 import '../utils/app_toast.dart';
 
+// Top-level so BOTH _BoardScreenState and _BoardTaskCard can use it.
+String formatDate(String dateString) {
+  try {
+    final date = DateTime.parse(dateString).toLocal();
+    return '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
+  } catch (e) {
+    return dateString;
+  }
+}
+
 class BoardScreen extends ConsumerStatefulWidget {
   const BoardScreen({super.key});
 
@@ -70,15 +80,6 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
       return Color(int.parse(buffer.toString(), radix: 16));
     } catch (e) {
       return const Color(0xFF9E9E9E);
-    }
-  }
-
-  String formatDate(String dateString) {
-    try {
-      final date = DateTime.parse(dateString).toLocal();
-      return '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
-    } catch (e) {
-      return dateString;
     }
   }
 
@@ -299,7 +300,7 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
                   // Back button — was MISSING entirely (board used go() nav).
                   _HeaderIconButton(
                     icon: Icons.arrow_back_ios_new_rounded,
-                    color: colors,
+                    colors: colors,
                     onTap: _goBack,
                   ),
                   const SizedBox(width: 12),
@@ -326,13 +327,13 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
                   ),
                   _HeaderIconButton(
                     icon: Icons.refresh_rounded,
-                    color: colors,
+                    colors: colors,
                     onTap: () => fetchData(),
                   ),
                   const SizedBox(width: 8),
                   _HeaderIconButton(
                     icon: Icons.view_column_outlined,
-                    color: colors,
+                    colors: colors,
                     onTap: showCreateStatusDialog,
                   ),
                 ],
