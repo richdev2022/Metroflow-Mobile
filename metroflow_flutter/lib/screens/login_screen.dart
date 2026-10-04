@@ -123,6 +123,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     // USE a financial feature (wallet, transfers, payroll, payment links,
     // subscriptions...), which main_screen's finance gate enforces.
     //
+    // PERSONAL PROFILE GATE (invited members): the backend decides via
+    // /auth/me — business admins never get requiresProfileCompletion, so
+    // they keep the BUSINESS completion flow (/profile-complete, gated in
+    // the login handlers). Invited members land on the PERSONAL completion
+    // screen (photo, name, read-only email, phone OTP, skip). Skipped
+    // prompts are remembered server-side and never re-nag.
+    //
     // PER-ACCOUNT BIOMETRIC PROMPT: the setup offer is keyed by the account
     // that just signed in — every NEW account is asked to activate biometrics
     // on its first login, even if a previous account on this device already
@@ -130,6 +137,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     // it either enables biometrics or explicitly skips ONCE (remembered
     // per-account, not device-wide).
     try {
+      // Personal completion gate first (best-effort — never blocks login).
+      try {
+        final meResponse = await ApiService().getMe();
+        final meData = meResponse.data is Map ? meResponse.data['data'] : null;
+        if (meData is Map && meData['requiresProfileCompletion'] == true) {
+          if (mounted) {
+            context.go('/profile-completion');
+            return;
+          }
+        }
+      } catch (_) {}
+
       final userId = ref.read(authProvider).userId ?? await StorageService().getUserId();
       final isEnabled = await BiometricService.isEnabled(userId);
       final promptShown = await BiometricService.hasPromptBeenShown(userId);
@@ -324,9 +343,19 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       final success = await ref.read(authProvider.notifier).loginWithGoogle();
       if (!success) return; // user cancelled — no error, stay on screen
 
-      // SSO PROFILE-COMPLETION GATE: Google sign-ups (and existing SSO
-      // accounts with an incomplete profile) MUST fill in the business name,
-      // industry, phone number and logo before reaching the dashboard.
+      // SSO PROFILE-COMPLETION GATE (role-aware): invited members complete
+      // their PERSONAL profile (photo, name, read-only email, phone OTP,
+      // skip); business admins complete the BUSINESS profile (name,
+      // industry, phone, logo). The backend now returns role-aware flags on
+      // /auth/google — requiresProfileCompletion wins over profileCompleted.
+      final meResponse = await ApiService().getMe();
+      final meData = meResponse.data is Map ? meResponse.data['data'] : null;
+      if (meData is Map && meData['requiresProfileCompletion'] == true) {
+        if (mounted) {
+          context.go('/profile-completion');
+          return;
+        }
+      }
       final profileCompleted = ref.read(authProvider).profileCompleted;
       if (profileCompleted == false) {
         if (mounted) context.go('/profile-complete');

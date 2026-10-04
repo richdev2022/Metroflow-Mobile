@@ -272,6 +272,116 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
+  /// PERSONAL profile editor for invited team members (non-admins):
+  /// name + phone number. EMAIL IS READ-ONLY — it identifies the account and
+  /// cannot be changed. Phone numbers saved here are unverified until the
+  /// user confirms an OTP (verification lives in the profile flows).
+  Future<void> _showPersonalProfileModal() async {
+    String email = ref.read(userProfileProvider).email;
+    String phone = '';
+    try {
+      final me = await ApiService().getMe();
+      final data = me.data is Map ? me.data['data'] : null;
+      if (data is Map) {
+        if ((data['email'] ?? '').toString().isNotEmpty) {
+          email = (data['email'] ?? '').toString();
+        }
+        phone = (data['phoneNumber'] ?? '').toString();
+      }
+    } catch (_) {
+      // Prefill failures must not block editing.
+    }
+    if (!mounted) return;
+
+    final nameController = TextEditingController(text: ref.read(userProfileProvider).name);
+    final phoneController = TextEditingController(text: phone);
+    bool saving = false;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setModalState) => _modalShell(
+          title: 'My Profile',
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _fieldLabel('Full Name'),
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(hintText: 'Your name'),
+              ),
+              const SizedBox(height: 16),
+              _fieldLabel('Email'),
+              TextField(
+                controller: TextEditingController(text: email),
+                enabled: false,
+                decoration: InputDecoration(
+                  hintText: email,
+                  helperText: 'Email can\'t be changed — it identifies your account',
+                  helperStyle: const TextStyle(fontSize: 11),
+                  suffixIcon: Icon(Icons.lock_outline,
+                      size: 18, color: AppTheme.colors.textSecondary),
+                ),
+              ),
+              const SizedBox(height: 16),
+              _fieldLabel('Phone Number'),
+              TextField(
+                controller: phoneController,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(hintText: 'Phone Number'),
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: saving
+                    ? null
+                    : () async {
+                        final name = nameController.text.trim();
+                        if (name.isEmpty) {
+                          AppToast.show('Your name is required',
+                              type: AppToastType.error);
+                          return;
+                        }
+                        setModalState(() => saving = true);
+                        try {
+                          await ApiService().saveMyProfile(
+                            name: name,
+                            phoneNumber: phoneController.text.trim(),
+                          );
+                          ref
+                              .read(userProfileProvider.notifier)
+                              .setName(name);
+                          AppToast.show('Profile updated successfully',
+                              type: AppToastType.success);
+                          if (sheetContext.mounted) {
+                            Navigator.of(sheetContext).pop();
+                          }
+                        } catch (e) {
+                          debugPrint('Personal profile save failed: $e');
+                          AppToast.show(ApiService.extractErrorMessage(e),
+                              type: AppToastType.error);
+                        } finally {
+                          setModalState(() => saving = false);
+                        }
+                      },
+                child: saving
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child:
+                            CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Text('Save Changes'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _handleRequestContactUpdate() async {
     final type = _contactType;
     final value = _contactController.text.trim();
@@ -1882,7 +1992,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  /// Only business admins (owner/admin) may edit the BUSINESS profile.
+  bool get _isBusinessAdmin {
+    final role = (ref.read(userProfileProvider).role ?? '').toLowerCase();
+    return role == 'owner' || role == 'admin';
+  }
+
   void _showEditProfileModal() {
+    // Business-profile editing is for business admins ONLY. Invited members
+    // get their PERSONAL profile editor (name + phone; email is read-only).
+    if (!_isBusinessAdmin) {
+      _showPersonalProfileModal();
+      return;
+    }
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,

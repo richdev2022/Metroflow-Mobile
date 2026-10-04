@@ -1667,6 +1667,36 @@ class ApiService {
     return null;
   }
 
+  /// Save the personal profile (first-login completion or Settings).
+  /// Email is deliberately NOT sent — the backend treats it as read-only.
+  /// Any save marks the profile complete and dismisses the first-login prompt.
+  Future<Response> saveMyProfile({String? name, String? phoneNumber}) async {
+    return await _dio.put('/settings/profile', data: {
+      if (name != null) 'name': name,
+      if (phoneNumber != null) 'phone_number': phoneNumber,
+    });
+  }
+
+  /// Send the phone-number verification OTP (SMS) for profile completion.
+  Future<Response> sendProfilePhoneOtp(String phone) async {
+    return await _dio.post('/settings/profile/phone/send-otp',
+        data: {'phone': phone});
+  }
+
+  /// Verify the phone OTP; on success the backend commits the number and
+  /// flips phone_verified + profile_completed.
+  Future<Response> verifyProfilePhoneOtp(String phone, String otp) async {
+    return await _dio.post('/settings/profile/phone/verify-otp',
+        data: {'phone': phone, 'otp': otp});
+  }
+
+  /// Skip CTA for the first-login profile completion prompt (server-persisted
+  /// so the prompt does not reappear on other devices).
+  Future<Response> dismissProfilePrompt() async {
+    return await _dio.post('/settings/profile/dismiss',
+        options: Options(extra: {'suppressToast': true}));
+  }
+
   /// Make a media URL absolute. The backend returns absolute URLs for
   /// R2-hosted files but RELATIVE paths (`/uploads/...`) for the local upload
   /// fallback — players (audioplayers / network images) need absolute URLs.

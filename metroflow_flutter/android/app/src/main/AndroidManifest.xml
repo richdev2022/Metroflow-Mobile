@@ -23,6 +23,14 @@
         android:label="Metricorex"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- FCM: when a push carries an FCM notification block (e.g. legacy
+             server-key path or console-sent campaigns), the OS tray must post
+             it into our app channel (default sound/importance) instead of the
+             silent "Miscellaneous" channel. App-generated local notifications
+             always set their own channel. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="general" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
