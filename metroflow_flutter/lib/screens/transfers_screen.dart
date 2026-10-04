@@ -158,6 +158,35 @@ class _TransfersScreenState extends ConsumerState<TransfersScreen> {
     }
   }
 
+  /// "Reverse Now" — pull the money for a FAILED transfer straight back into
+  /// the wallet (POST /transfers/:id/force-reversal, id-or-reference,
+  /// idempotent server-side). Honest errors (already reversed / nothing to
+  /// reverse) are surfaced verbatim.
+  Future<void> _handleReverseTransfer(Transfer transfer) async {
+    try {
+      final api = ApiService();
+      final id = transfer.id.isNotEmpty ? transfer.id : transfer.reference;
+      final response = await api.forceTransferReversal(id);
+      final data = response.data;
+      final ok = data is Map && data['success'] == true;
+      final message = (data is Map ? data['message'] ?? data['error'] : null)
+              ?.toString() ??
+          (ok ? 'Reversal completed' : 'Reversal failed');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message)),
+        );
+      }
+      await _fetchTransfers(1, refresh: true);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(ApiService.extractErrorMessage(e))),
+        );
+      }
+    }
+  }
+
   Future<void> _exportToCsv() async {
     setState(() => _isLoading = true);
     try {
@@ -505,6 +534,7 @@ class _TransfersScreenState extends ConsumerState<TransfersScreen> {
             transfer: transfer,
             onTap: () => context.push('/main/transfer-detail', extra: transfer),
             onRetry: transfer.status == 'failed' ? () => _handleRetryTransfer(transfer.id) : null,
+            onReverse: transfer.status == 'failed' ? () => _handleReverseTransfer(transfer) : null,
           );
         },
       ),
@@ -516,8 +546,9 @@ class _TransferCard extends StatelessWidget {
   final Transfer transfer;
   final VoidCallback onTap;
   final VoidCallback? onRetry;
+  final VoidCallback? onReverse;
 
-  const _TransferCard({required this.transfer, required this.onTap, this.onRetry});
+  const _TransferCard({required this.transfer, required this.onTap, this.onRetry, this.onReverse});
 
   static Color getStatusColor(String status, ThemeColors colors) {
     switch (status) {
@@ -642,6 +673,18 @@ class _TransferCard extends StatelessWidget {
                       ),
                       child: const Text('Retry', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
                     ),
+                  if (onReverse != null) ...[
+                    const SizedBox(width: 6),
+                    TextButton(
+                      onPressed: onReverse,
+                      style: TextButton.styleFrom(
+                        backgroundColor: colors.error,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      ),
+                      child: const Text('Reverse Now', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                    ),
+                  ],
                 ],
               ),
             ),

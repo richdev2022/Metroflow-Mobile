@@ -53,6 +53,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   // personal wallet from the Business overview card.
   String _primaryWalletType = 'user';
 
+  // Business logo (businesses.logo_url) — shown in the hero avatar slot when
+  // the workspace has one (uploaded from the SSO Complete-Profile screen or
+  // Settings). Falls back to the personal avatar.
+  String? _businessLogoUrl;
+
   // Anchors for the guided app tour (lib/widgets/app_tour.dart) — the tour
   // spotlights these regions on first launch.
   final GlobalKey _tourHeroKey = GlobalKey(debugLabel: 'tour-hero');
@@ -111,6 +116,24 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   /// em dash instead of breaking the home page.
   Future<void> _fetchSuiteStats() async {
     final api = ApiService();
+
+    // Business logo — uploaded via the SSO Complete-Profile screen or
+    // Settings; rendered in the hero so the workspace identity is visible
+    // the moment the user lands on the dashboard.
+    try {
+      final s = await api.getSettings();
+      final data = s.data;
+      if (mounted && data is Map && data['settings'] is Map) {
+        final settings = Map<String, dynamic>.from(data['settings'] as Map);
+        final logo = (settings['logo_url'] ?? settings['logoUrl'] ?? '')
+            .toString();
+        if (logo.isNotEmpty) {
+          setState(() {
+            _businessLogoUrl = ApiService.resolveMediaUrl(logo);
+          });
+        }
+      }
+    } catch (_) {}
 
     try {
       final r = await api.getPaymentLinks();
@@ -485,7 +508,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 ),
                 child: AvatarWithInitials(
                   name: firstName == 'there' ? 'Me' : firstName,
-                  imageUrl: profile.avatarUrl,
+                  // Prefer the business logo when the workspace has one —
+                  // the uploaded logo must be VISIBLE on the dashboard.
+                  imageUrl: _businessLogoUrl ?? profile.avatarUrl,
                   radius: 19,
                 ),
               ),

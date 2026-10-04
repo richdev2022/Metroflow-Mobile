@@ -13,6 +13,7 @@ import '../providers/auth_provider.dart';
 import '../providers/badge_provider.dart';
 import '../widgets/modern_ui.dart';
 import '../widgets/metric_ai_logo.dart';
+import '../widgets/avatar_with_initials.dart';
 import 'chat_detail_screen.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
@@ -593,6 +594,14 @@ class _ConversationTile extends StatelessWidget {
   }
 }
 
+/// "New Chat" flow — mirrors the web app's New Conversation dialog
+/// (client/pages/Chat.tsx): the user FIRST picks the conversation type
+/// (Direct Message vs Group Chat), groups get a name field, and both types
+/// pick participants from a searchable team list. The payload uses the
+/// camelCase `participantIds` key the backend reads — the old mobile dialog
+/// sent `participant_ids`, which the backend ignored, so every new chat
+/// contained only the creator (and the direct-dedupe path crashed with a
+/// 500 before the backend normalization fix).
 class _CreateConversationDialog extends StatefulWidget {
   final List<User> teamMembers;
   final String? currentUserId;
@@ -610,31 +619,73 @@ class _CreateConversationDialog extends StatefulWidget {
 
 class _CreateConversationDialogState extends State<_CreateConversationDialog> {
   final ApiService _api = ApiService();
-  final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
+  final _searchController = TextEditingController();
+  String _type = 'direct';
   final List<String> _selectedMemberIds = [];
   bool _isCreating = false;
 
   @override
   void dispose() {
     _nameController.dispose();
+    _searchController.dispose();
     super.dispose();
+  }
+
+  List<User> get _availableMembers =>
+      widget.teamMembers.where((m) => m.id != widget.currentUserId).toList();
+
+  List<User> get _filteredMembers {
+    final query = _searchController.text.trim().toLowerCase();
+    if (query.isEmpty) return _availableMembers;
+    return _availableMembers
+        .where((m) =>
+            m.name.toLowerCase().contains(query) ||
+            m.email.toLowerCase().contains(query))
+        .toList();
+  }
+
+  void _toggleMember(String id) {
+    setState(() {
+      if (_type == 'direct') {
+        // Direct chat: exactly ONE participant — re-tap selects the other
+        // person (radio behaviour, like the web Select + single-pick flow).
+        _selectedMemberIds
+          ..clear()
+          ..add(id);
+      } else {
+        if (_selectedMemberIds.contains(id)) {
+          _selectedMemberIds.remove(id);
+        } else {
+          _selectedMemberIds.add(id);
+        }
+      }
+    });
   }
 
   Future<void> _createConversation() async {
     if (_selectedMemberIds.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select at least one member')),
+        SnackBar(
+          content: Text(_type == 'direct'
+              ? 'Please select a teammate to chat with'
+              : 'Please select at least one participant'),
+        ),
+      );
+      return;
+    }
+    if (_type == 'group' && _nameController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please give your group a name')),
       );
       return;
     }
 
     setState(() => _isCreating = true);
     try {
-      final type = _selectedMemberIds.length == 1 ? 'direct' : 'group';
       final response = await _api.createConversation({
-        if (type == 'group' && _nameController.text.isNotEmpty) 'name': _nameController.text,
-        'type': type,
+        if (_type == 'group') 'name': _nameController.text.trim(),
+        'type': _type,
         // camelCase matches the backend contract (snake_case kept for older
         // deployed backends that were taught the other spelling).
         'participantIds': _selectedMemberIds,
@@ -645,7 +696,8 @@ class _CreateConversationDialogState extends State<_CreateConversationDialog> {
         if (responseData is! Map) {
           throw const FormatException('Invalid conversation response');
         }
-        final conversation = Conversation.fromJson(Map<String, dynamic>.from(responseData));
+        Conversation conversation =
+            Conversation.fromJson(Map<String, dynamic>.from(responseData));
         widget.onCreated(conversation);
         if (mounted) {
           final navigator = Navigator.of(context, rootNavigator: true);
@@ -679,7 +731,7 @@ class _CreateConversationDialogState extends State<_CreateConversationDialog> {
   @override
   Widget build(BuildContext context) {
     final colors = AppTheme.colors;
-    final availableMembers = widget.teamMembers.where((m) => m.id != widget.currentUserId).toList();
+    final availableMembers = _availableMembers;
     return AlertDialog(
       backgroundColor: colors.surface,
       shape: RoundedRectangleBorder(
@@ -688,96 +740,179 @@ class _CreateConversationDialogState extends State<_CreateConversationDialog> {
       title: const Text('New Conversation'),
       content: SizedBox(
         width: double.maxFinite,
-        child: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (availableMembers.length > 1)
-                TextFormField(
-                  controller: _nameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Group Name (optional)',
-                    hintText: 'e.g. Project Team',
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // -- Step 1: conversation type (web parity: the Type Select) --
+            Text(
+              'Type',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: colors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: _TypeCard(
+                    icon: Icons.person_outline_rounded,
+                    label: 'Direct Message',
+                    selected: _type == 'direct',
+                    colors: colors,
+                    onTap: () => setState(() {
+                      _type = 'direct';
+                      // Switching to direct keeps at most one selection.
+                      if (_selectedMemberIds.length > 1) {
+                        _selectedMemberIds.removeRange(1, _selectedMemberIds.length);
+                      }
+                    }),
                   ),
                 ),
-              const SizedBox(height: 16),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'Select Participants:',
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _TypeCard(
+                    icon: Icons.group_outlined,
+                    label: 'Group Chat',
+                    selected: _type == 'group',
+                    colors: colors,
+                    onTap: () => setState(() => _type = 'group'),
+                  ),
+                ),
+              ],
+            ),
+            // -- Step 2: group name (group only, required) --
+            if (_type == 'group') ...[
+              const SizedBox(height: 14),
+              TextFormField(
+                controller: _nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Group Name',
+                  hintText: 'e.g. Project Team',
+                ),
+              ),
+            ],
+            const SizedBox(height: 14),
+            // -- Step 3: participants (searchable, chips for selection) --
+            Row(
+              children: [
+                Text(
+                  _type == 'direct' ? 'Select teammate' : 'Select participants',
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
                     color: colors.textSecondary,
                   ),
                 ),
+                const Spacer(),
+                if (_selectedMemberIds.isNotEmpty)
+                  Text(
+                    _type == 'direct'
+                        ? '1 selected'
+                        : '${_selectedMemberIds.length} selected',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: colors.primary,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (_selectedMemberIds.isNotEmpty) ...[
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final id in _selectedMemberIds)
+                    _ParticipantChip(
+                      member: _availableMembers.where((m) => m.id == id).firstOrNull,
+                      colors: colors,
+                      onRemove: () => setState(() => _selectedMemberIds.remove(id)),
+                    ),
+                ],
               ),
               const SizedBox(height: 8),
-              if (availableMembers.isEmpty)
-                // Empty state — the picker used to render a silent blank box
-                // here when the team list failed to load or only the current
-                // user exists. Give the user an actual explanation + action.
-                Container(
-                  height: 200,
-                  alignment: Alignment.center,
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.group_add_rounded, size: 44, color: colors.textSecondary),
-                      const SizedBox(height: 12),
-                      Text(
-                        'No teammates to chat with yet',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: colors.text),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Invite your team from the More → Team screen, then start a conversation here.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 12.5, height: 1.4, color: colors.textSecondary),
-                      ),
-                    ],
-                  ),
-                )
-              else
-                SizedBox(
-                  height: 200,
-                  child: ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: availableMembers.length,
-                    itemBuilder: (context, index) {
-                    final member = availableMembers[index];
-                    final isSelected = _selectedMemberIds.contains(member.id);
-                    return CheckboxListTile(
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      title: Text(
-                        member.name,
-                        style: TextStyle(color: colors.text),
-                      ),
-                      subtitle: Text(
-                        member.email,
-                        style: TextStyle(color: colors.textSecondary),
-                      ),
-                      value: isSelected,
-                      onChanged: (value) {
-                        setState(() {
-                          if (value == true) {
-                            _selectedMemberIds.add(member.id);
-                          } else {
-                            _selectedMemberIds.remove(member.id);
-                          }
-                        });
-                      },
-                    );
-                  },
-                  ),
-                ),
             ],
-          ),
+            TextField(
+              controller: _searchController,
+              onChanged: (_) => setState(() {}),
+              style: TextStyle(color: colors.text, fontSize: 14),
+              decoration: InputDecoration(
+                hintText: 'Search team members...',
+                hintStyle: TextStyle(color: colors.textSecondary, fontSize: 13.5),
+                prefixIcon: Icon(Icons.search_rounded,
+                    size: 20, color: colors.textSecondary),
+                isDense: true,
+                filled: true,
+                fillColor: colors.surfaceVariant,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Flexible(
+              child: availableMembers.isEmpty
+                  // Empty state — the picker used to render a silent blank
+                  // box here when the team list failed to load or only the
+                  // current user exists. Actual explanation + where to go.
+                  ? Container(
+                      height: 200,
+                      alignment: Alignment.center,
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.group_add_rounded, size: 44, color: colors.textSecondary),
+                          const SizedBox(height: 12),
+                          Text(
+                            'No teammates to chat with yet',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: colors.text),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Invite your team from the More → Team screen, then start a conversation here.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(fontSize: 12.5, height: 1.4, color: colors.textSecondary),
+                          ),
+                        ],
+                      ),
+                    )
+                  : SizedBox(
+                      height: 200,
+                      child: _filteredMembers.isEmpty
+                          ? Center(
+                              child: Text(
+                                'No team members found.',
+                                style: TextStyle(
+                                    fontSize: 13, color: colors.textSecondary),
+                              ),
+                            )
+                          : ListView.builder(
+                              shrinkWrap: true,
+                              itemCount: _filteredMembers.length,
+                              itemBuilder: (context, index) {
+                                final member = _filteredMembers[index];
+                                final isSelected =
+                                    _selectedMemberIds.contains(member.id);
+                                return _ParticipantTile(
+                                  member: member,
+                                  isSelected: isSelected,
+                                  colors: colors,
+                                  onTap: () => _toggleMember(member.id),
+                                );
+                              },
+                            ),
+                    ),
+            ),
+          ],
         ),
       ),
       actions: [
@@ -796,6 +931,184 @@ class _CreateConversationDialogState extends State<_CreateConversationDialog> {
               : const Text('Create'),
         ),
       ],
+    );
+  }
+}
+
+/// Type chooser card: "Direct Message" vs "Group Chat" (web Type Select).
+class _TypeCard extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final ThemeColors colors;
+  final VoidCallback onTap;
+
+  const _TypeCard({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.colors,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+        decoration: BoxDecoration(
+          color: selected ? colors.primaryBg : colors.surfaceVariant,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: selected ? colors.primary : colors.border,
+            width: selected ? 1.6 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(icon,
+                size: 18,
+                color: selected ? colors.primary : colors.textSecondary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  color: selected ? colors.primary : colors.text,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Selected-participant chip with a remove button (web Badge + X pattern).
+class _ParticipantChip extends StatelessWidget {
+  final User? member;
+  final ThemeColors colors;
+  final VoidCallback onRemove;
+
+  const _ParticipantChip({
+    required this.member,
+    required this.colors,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.only(left: 10, right: 4, top: 4, bottom: 4),
+      decoration: BoxDecoration(
+        color: colors.primaryBg,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: colors.primary.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            member?.name ?? 'Member',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: colors.primary,
+            ),
+          ),
+          const SizedBox(width: 2),
+          InkWell(
+            onTap: onRemove,
+            customBorder: const CircleBorder(),
+            child: Padding(
+              padding: const EdgeInsets.all(3),
+              child: Icon(Icons.close_rounded, size: 13, color: colors.primary),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Searchable participant row with a check indicator (web CommandItem).
+class _ParticipantTile extends StatelessWidget {
+  final User member;
+  final bool isSelected;
+  final ThemeColors colors;
+  final VoidCallback onTap;
+
+  const _ParticipantTile({
+    required this.member,
+    required this.isSelected,
+    required this.colors,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+        child: Row(
+          children: [
+            AvatarWithInitials(name: member.name, radius: 14),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    member.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                      color: colors.text,
+                    ),
+                  ),
+                  Text(
+                    member.email,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: colors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              width: 20,
+              height: 20,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: isSelected ? colors.primary : Colors.transparent,
+                border: Border.all(
+                  color: isSelected ? colors.primary : colors.borderVariant,
+                  width: 1.6,
+                ),
+              ),
+              child: isSelected
+                  ? const Icon(Icons.check_rounded,
+                      size: 13, color: Colors.white)
+                  : null,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
