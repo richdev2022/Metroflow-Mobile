@@ -37,6 +37,7 @@ import 'screens/reset_password_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'screens/kyc_prompt_screen.dart';
 import 'screens/profile_completion_screen.dart';
+import 'screens/personal_profile_completion_screen.dart';
 import 'screens/kyc_initiate_screen.dart';
 import 'screens/kyc_otp_screen.dart';
 import 'screens/business_kyc_screen.dart';
@@ -367,6 +368,12 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         GoRoute(
           path: '/profile-complete',
           builder: (context, state) => const ProfileCompletionScreen(),
+        ),
+        // PERSONAL completion for invited team members (role-gated by the
+        // backend's requiresProfileCompletion flag — admins never route here).
+        GoRoute(
+          path: '/profile-completion',
+          builder: (context, state) => const PersonalProfileCompletionScreen(),
         ),
         GoRoute(
           path: '/kyc-initiate',
