@@ -855,7 +855,6 @@ class ApiService {
     return await _dio.post('/transfers/$id/retry');
   }
 
-<<<<<<< HEAD
   /// Re-query the provider for the CURRENT status of a transfer (used by the
   /// receipt/success screen so users see the real outcome instantly instead
   /// of a stuck "Processing").
