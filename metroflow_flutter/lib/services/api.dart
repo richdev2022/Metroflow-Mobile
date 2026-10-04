@@ -10,6 +10,7 @@ import '../utils/app_toast.dart';
 import 'package:flutter/material.dart';
 import '../providers/auth_provider.dart';
 import '../widgets/upgrade_dialog.dart';
+import '../widgets/maintenance_gate.dart' show MaintenanceGate;
 import '../models/chat_media.dart';
 import '../models/gif.dart';
 import '../models/task_attachment.dart';
@@ -226,6 +227,25 @@ class ApiService {
         return handler.next(response);
       },
       onError: (error, handler) async {
+        // MAINTENANCE GATE (web parity): the backend answers 503 with
+        // code "MAINTENANCE_MODE" when an admin has maintenance mode ON —
+        // most importantly on POST /auth/login. Flip the global gate so the
+        // full-screen maintenance screen covers the app immediately.
+        if (error.response?.statusCode == 503) {
+          final errData = error.response?.data;
+          final code = (errData is Map
+                  ? (errData['code'] ?? errData['data']?['code'])
+                  : null)
+              ?.toString()
+              .toUpperCase();
+          final errText = extractResponseMessage(errData)?.toLowerCase() ?? '';
+          if (code == 'MAINTENANCE_MODE' ||
+              errText.contains('maintenance')) {
+            MaintenanceGate.setOn();
+            return handler.next(error);
+          }
+        }
+
         final message = extractResponseMessage(error.response?.data) ?? 'Something went wrong';
         final errorData = error.response?.data;
         final isPlanUpgradeError = _isPlanUpgradeFailure(errorData);
@@ -1553,6 +1573,15 @@ class ApiService {
   /// present on success.
   Future<Response> getAiVideoJob(String jobId) async {
     return await _dio.get('/ai/video/$jobId', options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// PUBLIC app config — GET /public/app-config. No auth required. Returns
+  /// { maintenance_mode: bool, announcement: {...} } and drives the global
+  /// MaintenanceGateOverlay + announcement banner (web MaintenanceGate
+  /// parity). Suppressed toasts: failures fail-open inside the gate.
+  Future<Response> getPublicAppConfig() async {
+    return await _dio.get('/public/app-config',
+        options: Options(extra: {'suppressToast': true}));
   }
 
   /// Free public "Ask MetricAi" — POST /public/metric-ai/ask.

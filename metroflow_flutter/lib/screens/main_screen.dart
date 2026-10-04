@@ -12,6 +12,7 @@ import '../services/app_update_service.dart';
 import '../utils/kyc_gate.dart';
 import '../widgets/app_tour.dart';
 import '../widgets/avatar_with_initials.dart';
+import '../widgets/maintenance_gate.dart' show AnnouncementBanner;
 import 'dashboard_screen.dart';
 import 'tasks_screen.dart';
 import 'wallet_screen.dart';
@@ -695,7 +696,14 @@ class _MainScreenState extends ConsumerState<MainScreen> {
           ),
         ),
       ),
-      body: _pages[_selectedIndex],
+      body: Column(
+        children: [
+          // Web parity (AnnouncementTicker): slim dismissible strip fed by
+          // the public /app-config announcement — hidden when empty.
+          const AnnouncementBanner(),
+          Expanded(child: _pages[_selectedIndex]),
+        ],
+      ),
       bottomNavigationBar: BottomNavigationBar(
         type: BottomNavigationBarType.fixed,
         currentIndex: _selectedIndex > 3 ? 4 : _selectedIndex,
