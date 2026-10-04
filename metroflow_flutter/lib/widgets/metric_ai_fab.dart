@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../providers/auth_provider.dart';
+import '../services/api.dart' show navigatorKey;
 import '../theme/app_theme.dart';
 
 /// Current app route, kept fresh by the GoRouter redirect in main.dart so
@@ -79,6 +80,13 @@ class _MetricAiFloatingBubbleState
     } catch (_) {}
   }
 
+  /// Default corner (bottom-right, above the tab bar) used when the user
+  /// has never dragged the bubble.
+  Offset _defaultPosition(Size size) => Offset(
+        size.width - _bubbleSize - 16,
+        size.height - _bubbleSize - 118,
+      );
+
   Offset _clamp(Offset pos) {
     final size = MediaQuery.of(context).size;
     final maxX = size.width - _bubbleSize - _edgeMargin;
@@ -88,6 +96,9 @@ class _MetricAiFloatingBubbleState
       pos.dy.clamp(_edgeMargin, maxY < _edgeMargin ? _edgeMargin : maxY),
     );
   }
+
+  Offset get _effectivePos =>
+      _pos ?? _defaultPosition(MediaQuery.of(context).size);
 
   bool get _hidden {
     if (!ref.read(authProvider).isAuthenticated) return true;
@@ -100,8 +111,18 @@ class _MetricAiFloatingBubbleState
   void _openMetricAi() {
     final route = appCurrentRouteNotifier.value;
     if (route.startsWith('/main/metric-ai')) return;
+    // CLICK FIX: this bubble is mounted in the MaterialApp.builder stack,
+    // whose BuildContext sits ABOVE the Router widget — GoRouter.of(context)
+    // threw "No GoRouter found in context" on every tap, so the bubble
+    // rendered fine but clicks silently did nothing. The navigator key's
+    // context lives BELOW the router's InheritedGoRouter, so resolving the
+    // GoRouter through it always works.
+    final navContext = navigatorKey.currentContext;
+    final router = navContext != null
+        ? GoRouter.maybeOf(navContext)
+        : GoRouter.maybeOf(context);
     // push (not go) so the bubble's host screen stays in the stack.
-    GoRouter.of(context).push('/main/metric-ai');
+    router?.push('/main/metric-ai');
   }
 
   @override
@@ -114,11 +135,7 @@ class _MetricAiFloatingBubbleState
       builder: (context, route, _) {
         if (!isAuthenticated || _hidden) return const SizedBox.shrink();
 
-        final position = _clamp(_pos ??
-            Offset(
-              MediaQuery.of(context).size.width - _bubbleSize - 16,
-              MediaQuery.of(context).size.height - _bubbleSize - 118,
-            ));
+        final position = _clamp(_effectivePos);
 
         return Positioned(
           left: position.dx,
@@ -126,15 +143,27 @@ class _MetricAiFloatingBubbleState
           width: _bubbleSize,
           height: _bubbleSize,
           child: GestureDetector(
-            onPanStart: (_) => _dragging = true,
-            onPanUpdate: (details) {
+            // DRAG FIX: seeding _pos here — the first drag used to crash on
+            // "_pos!" (null until the user had ever dragged), which could
+            // leave _dragging stuck true and permanently dead taps.
+            onPanStart: (_) {
               setState(() {
-                _pos = _clamp(_pos! + details.delta);
+                _pos = _effectivePos;
+                _dragging = true;
+              });
+            },
+            onPanUpdate: (details) {
+              if (!_dragging) return;
+              setState(() {
+                _pos = _clamp((_pos ?? _effectivePos) + details.delta);
               });
             },
             onPanEnd: (_) {
               _dragging = false;
               if (_pos != null) _persistPosition(_pos!);
+            },
+            onPanCancel: () {
+              if (mounted) setState(() => _dragging = false);
             },
             onTap: _dragging ? null : _openMetricAi,
             child: Tooltip(

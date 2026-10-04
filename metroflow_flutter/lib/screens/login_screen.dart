@@ -8,6 +8,7 @@ import '../services/biometrics.dart';
 import '../services/api.dart';
 import '../services/app_update_service.dart';
 import '../widgets/auth_ui.dart';
+import '../widgets/maintenance_gate.dart';
 import 'permission_primer.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -249,6 +250,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       return;
     }
 
+    // MAINTENANCE GATE (web parity): never let a sign-in through during a
+    // maintenance window. The global overlay covers the app anyway; this
+    // re-check closes the 60s polling gap so the user gets instant feedback
+    // instead of a 503 from the server.
+    if (await MaintenanceGate.checkNow()) {
+      await _showAlert(
+          'Under maintenance',
+          'Metricorex is undergoing scheduled maintenance. '
+          'Please try again in a little while.');
+      return;
+    }
+
     setState(() {
       _isLoading = true;
     });
@@ -293,6 +306,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   /// provider itself (non-blocking).
   Future<void> _handleGoogleSignIn() async {
     if (_isGoogleLoading) return;
+
+    // MAINTENANCE GATE (same rationale as password login above).
+    if (await MaintenanceGate.checkNow()) {
+      await _showAlert(
+          'Under maintenance',
+          'Metricorex is undergoing scheduled maintenance. '
+          'Please try again in a little while.');
+      return;
+    }
+
     setState(() {
       _isGoogleLoading = true;
     });

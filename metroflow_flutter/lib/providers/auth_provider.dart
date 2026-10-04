@@ -210,6 +210,24 @@ class AuthNotifier extends Notifier<AuthState> {
       final userName = (data['name'] ?? data['user']?['name'] ?? email)
           .toString();
 
+      // ACCOUNT-SWITCH BIOMETRIC WIPE (user requirement): biometrics are per
+      // ACCOUNT — when a different account signs in on this device, the
+      // previous account's enrollment is cleared COMPLETELY (server revoke +
+      // per-device token + per-account flag + prompt memory) BEFORE the new
+      // session is persisted (the revoke call still rides the old token).
+      // The enrollment is one-per-device, so a new account never starts with
+      // biometrics enabled and gets the activation prompt on the login
+      // screen instead.
+      final newUserId = userId?.toString();
+      final previousUserId = await _resolveEnrolledUserId();
+      if (newUserId != null &&
+          newUserId.isNotEmpty &&
+          previousUserId != null &&
+          previousUserId.isNotEmpty &&
+          previousUserId != newUserId) {
+        await _wipeBiometricsForAccountSwitch(previousUserId);
+      }
+
       await Future.wait([
         _storageService.setToken(token),
         _storageService.setUserId(userId),
@@ -304,6 +322,18 @@ class AuthNotifier extends Notifier<AuthState> {
       // SSO onboarding gate — server says whether the business profile is
       // complete (real name, industry, phone, logo).
       final profileCompleted = data['profileCompleted'] == true;
+
+      // ACCOUNT-SWITCH BIOMETRIC WIPE — same contract as password login:
+      // a different Google account signing in wipes the previous account's
+      // enrollment completely before the new session is persisted.
+      final previousUserId = await _resolveEnrolledUserId();
+      if (userId != null &&
+          userId.isNotEmpty &&
+          previousUserId != null &&
+          previousUserId.isNotEmpty &&
+          previousUserId != userId) {
+        await _wipeBiometricsForAccountSwitch(previousUserId);
+      }
 
       // Same session persistence path as password login.
       await _storageService.setToken(token.toString());
@@ -613,6 +643,55 @@ class AuthNotifier extends Notifier<AuthState> {
       throw Exception(backendMessage);
     } catch (e) {
       rethrow;
+    }
+  }
+
+  /// Resolves the account that owns the CURRENT device biometric
+  /// enrollment: the legacy credentials copy records the userId that
+  /// enrolled; when absent, fall back to the persisted session userId.
+  Future<String?> _resolveEnrolledUserId() async {
+    try {
+      final creds = await _storageService.getBiometricsCredentials();
+      final credsUserId = creds?['userId']?.toString();
+      if (credsUserId != null && credsUserId.isNotEmpty) return credsUserId;
+    } catch (_) {}
+    try {
+      return await _storageService.getUserId();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// ACCOUNT-SWITCH WIPE (user requirement): when a DIFFERENT account signs
+  /// in on this device, the previous account's biometric enrollment is
+  /// cleared COMPLETELY — server-side revoke, per-device token, per-account
+  /// opt-in flag and prompt memory — because the enrollment (one per
+  /// device) belongs to exactly one account and must never leak into
+  /// another user's session.
+  Future<void> _wipeBiometricsForAccountSwitch(String previousUserId) async {
+    try {
+      debugPrint(
+          'Account switch detected — wiping biometric enrollment of $previousUserId');
+      final deviceId = await _storageService.getBiometricDeviceId();
+      try {
+        await _apiService.biometricRevoke(deviceId: deviceId);
+      } catch (e) {
+        // Best-effort: offline / stale session — the local wipe still
+        // guarantees the old account can never biometric-login here.
+        debugPrint('Account-switch biometric revoke skipped: $e');
+      }
+      if (deviceId != null && deviceId.isNotEmpty) {
+        await _storageService.clearBiometricToken(deviceId);
+      }
+      await _storageService.setBiometricsEnabledForAccount(
+          previousUserId, false);
+      await _storageService.setBiometricsPromptShownForAccount(
+          previousUserId, false);
+      await BiometricService.disableBiometrics();
+      await BiometricService.resetPromptStatusFor(previousUserId);
+      await _storageService.clearBiometricsCredentials();
+    } catch (e) {
+      debugPrint('Account-switch biometric wipe failed: $e');
     }
   }
 
