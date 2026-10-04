@@ -437,8 +437,14 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
       }
     } catch (e) {
       if (mounted) {
+        // Friendly error (strips the "Exception: " prefix) so server
+        // messages like "An account with this email already exists..."
+        // read cleanly instead of showing raw Dart exception text.
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.toString())),
+          SnackBar(
+            content: Text(_friendlyError(e)),
+            backgroundColor: AppColors.error,
+          ),
         );
       }
     } finally {
@@ -486,6 +492,15 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   /// only when the user tries to use wallet/transfers/payroll/payment links/
   /// subscriptions.
   Future<void> _routeAfterGoogleAuth() async {
+    // SSO PROFILE-COMPLETION GATE (same as the login screen): Google sign-ups
+    // must fill in business name / industry / phone / logo before the
+    // dashboard. KYC is no longer an onboarding step — main_screen's finance
+    // gate demands BVN/NIN only when the user tries to USE money features.
+    final profileCompleted = ref.read(authProvider).profileCompleted;
+    if (profileCompleted == false) {
+      if (mounted) context.go('/profile-complete');
+      return;
+    }
     if (mounted) context.go('/main');
   }
 

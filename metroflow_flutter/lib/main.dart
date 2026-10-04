@@ -19,6 +19,7 @@ import 'utils/app_feedback.dart';
 import 'utils/app_timezone.dart';
 import 'utils/logger.dart';
 import 'widgets/inapp_banner.dart';
+import 'widgets/metric_ai_fab.dart';
 import 'providers/badge_provider.dart';
 import 'providers/call_provider.dart';
 import 'providers/notifications_provider.dart';
@@ -281,6 +282,9 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
         final path = state.uri.path;
         _currentRoute = path;
+        // Keep the global route tracker in sync for globally-mounted
+        // widgets (the draggable MetricAi bubble hides itself per-route).
+        appCurrentRouteNotifier.value = path;
 
         if (isAuthenticated) {
           if (path.startsWith('/onboarding') ||
@@ -792,6 +796,11 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
                 // "Hide keyboard" pill: floats just above the keyboard on
                 // every screen that has one open (explicit one-tap close).
                 const _KeyboardDismissPill(),
+                // Floating "Ask MetricAi" bubble (draggable, persists its
+                // position) — on EVERY authed screen like the web widget.
+                // Rendered below the incoming-call overlay so a call always
+                // takes precedence.
+                const MetricAiFloatingBubble(),
                 const IncomingCallDialog(),
               ],
             );

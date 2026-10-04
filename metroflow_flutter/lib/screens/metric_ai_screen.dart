@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
@@ -78,6 +79,12 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
   int? _videoUsedToday; int? _videoLimitToday;
 
   final List<_AiMessage> _messages = [];
+
+  // ENDLESS-SCROLL FIX: auto-scroll only follows the conversation while the
+  // user is actually AT the bottom. Reading history (scrolling up) must pin
+  // the list — previously every reply/video-poll tick yanked the list back
+  // down, which read as the chat "scrolling endlessly on its own".
+  bool _autoFollow = true;
 
   // -- Support conversation mode (human handoff) ------------------------------
   bool _supportMode = false;
@@ -202,7 +209,7 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
             }));
         });
         Future.delayed(const Duration(milliseconds: 80), () {
-          if (mounted) _scrollToBottom();
+          if (mounted) _scrollToBottom(force: true);
         });
       }
     } catch (e) {
@@ -338,7 +345,9 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
       _pendingVideoName = null;
       _messageController.clear();
     });
-    _scrollToBottom();
+    // The user themselves sent this — always re-anchor, even if they had
+    // scrolled up while reviewing history.
+    _scrollToBottom(force: true);
     try {
       Map<String, dynamic>? data;
       if (_helpMode) {
@@ -550,10 +559,13 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
   /// `maxScrollExtent` reflects the freshly-laid-out content — an unanchored
   /// `animateTo` racing layout (keyboard insets, media loading, list item
   /// changes) targets a stale extent and makes the list appear to drift or
-  /// "scroll loop" on its own. Skipped entirely when already at the bottom.
-  void _scrollToBottom() {
+  /// "scroll loop" on its own. Skipped when already at the bottom AND when
+  /// the user has scrolled up to read (auto-follow off) — [force] re-anchors
+  /// regardless (used after the USER sends a message).
+  void _scrollToBottom({bool force = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients) return;
+      if (!force && !_autoFollow) return;
       final position = _scrollController.position;
       if (position.maxScrollExtent - position.pixels <= 8) return;
       _scrollController.animateTo(
@@ -1570,41 +1582,73 @@ class _MetricAiScreenState extends ConsumerState<MetricAiScreen> {
                         ],
                       ),
                     )
-                  : ListView.builder(
-                      controller: _scrollController,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 14),
-                      itemCount: _messages.length + (_sending ? 1 : 0),
-                      itemBuilder: (context, index) {
-                        if (index == _messages.length) {
-                          return Align(
-                            alignment: Alignment.centerLeft,
-                            child: Padding(
-                              padding:
-                                  const EdgeInsets.only(left: 44, bottom: 8),
-                              child: _BouncingDots(color: colors.primary),
-                            ),
-                          );
+                  // ENDLESS-SCROLL FIX: user-scroll notifications drive the
+                  // auto-follow flag — scrolling up stops the chase-back;
+                  // scrolling back to the bottom resumes it. The typing
+                  // dots moved OUT of the list (below), so the item count no
+                  // longer changes twice per turn (another layout-churn
+                  // source that made the list jump while scrolling).
+                  : NotificationListener<UserScrollNotification>(
+                      onNotification: (notification) {
+                        final metrics = notification.metrics;
+                        switch (notification.direction) {
+                          case ScrollDirection.forward:
+                            if (metrics.pixels > 24) _autoFollow = false;
+                            break;
+                          case ScrollDirection.reverse:
+                            _autoFollow = true;
+                            break;
+                          case ScrollDirection.idle:
+                            if (metrics.maxScrollExtent - metrics.pixels <= 48) {
+                              _autoFollow = true;
+                            }
+                            break;
                         }
-                        final message = _messages[index];
-                        final isUser = message.role == 'user';
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            _AiBubble(
-                              message: message,
-                              isUser: isUser,
-                              colors: colors,
-                            ),
-                            if (!isUser && message.suggestHumanSupport)
-                              _HumanHandoffCard(
-                                colors: colors,
-                                onTap: _showEscalationSheet,
-                              ),
-                          ],
-                        );
+                        return false;
                       },
+                      child: ListView.builder(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 14),
+                        itemCount: _messages.length,
+                        itemBuilder: (context, index) {
+                          final message = _messages[index];
+                          final isUser = message.role == 'user';
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _AiBubble(
+                                message: message,
+                                isUser: isUser,
+                                colors: colors,
+                              ),
+                              if (!isUser && message.suggestHumanSupport)
+                                _HumanHandoffCard(
+                                  colors: colors,
+                                  onTap: _showEscalationSheet,
+                                ),
+                            ],
+                          );
+                        },
+                      ),
                     ),
+        ),
+        // Typing indicator lives OUTSIDE the scrollable — a fixed slot that
+        // appears/disappears without changing the list's item count, so its
+        // insert/remove can never fight an in-flight scroll animation.
+        AnimatedSize(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          alignment: Alignment.bottomLeft,
+          child: _sending
+              ? Align(
+                  alignment: Alignment.centerLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 20, bottom: 4),
+                    child: _BouncingDots(color: colors.primary),
+                  ),
+                )
+              : const SizedBox(width: double.infinity),
         ),
         SafeArea(
           top: false,
@@ -1924,6 +1968,13 @@ class _AiBubble extends StatelessWidget {
                             child: CachedNetworkImage(
                               imageUrl: message.imageUrl!,
                               width: 220,
+                              // ENDLESS-SCROLL FIX: the height used to be
+                              // unconstrained — the placeholder was 160px,
+                              // then the decoded image jumped to its own
+                              // intrinsic height, growing maxScrollExtent
+                              // UNDER an in-flight scroll animation. Pin the
+                              // box so the extent never changes on decode.
+                              height: 160,
                               fit: BoxFit.cover,
                               placeholder: (_, __) => Container(
                                 width: 220,
@@ -1936,7 +1987,7 @@ class _AiBubble extends StatelessWidget {
                               ),
                               errorWidget: (_, __, ___) => Container(
                                 width: 220,
-                                height: 100,
+                                height: 160,
                                 color: colors.surfaceVariant,
                                 child: Icon(Icons.broken_image_rounded,
                                     color: colors.textSecondary),

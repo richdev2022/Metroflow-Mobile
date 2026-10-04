@@ -989,7 +989,6 @@ class ApiService {
     });
   }
 
-
   /// International payout quote (USD payouts funded from an NGN wallet).
   /// GET /transfers/quote?amount=&source_currency=&destination_currency=
   /// Response: { success, data: { live_rate, markup_percent, marked_up_rate,
