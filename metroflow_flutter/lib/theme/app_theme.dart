@@ -82,7 +82,13 @@ class AppTheme {
     primary: AppColors.primary,
     primaryLight: AppColors.primaryLight,
     primaryDark: AppColors.primaryDark,
-    primaryBg: AppColors.primaryBg,
+    // DARK MODE FIX: this was AppColors.primaryBg (near-white 0xFFEFF6FF) in
+    // BOTH palettes, so every `colors.primaryBg` surface (MetricAi usage
+    // chips, help-mode banner, chat unread dots, OTP boxes, …) rendered
+    // light-blue with the near-white dark-theme text on top — literally
+    // white text on a white background. Dark theme now uses a deep blue
+    // slate tint that keeps white/primary content readable.
+    primaryBg: const Color(0xFF172554),
     success: AppColors.success,
     successBg: AppColors.successBg,
     warning: AppColors.warning,

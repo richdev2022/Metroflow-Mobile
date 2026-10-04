@@ -855,6 +855,7 @@ class ApiService {
     return await _dio.post('/transfers/$id/retry');
   }
 
+<<<<<<< HEAD
   /// Re-query the provider for the CURRENT status of a transfer (used by the
   /// receipt/success screen so users see the real outcome instantly instead
   /// of a stuck "Processing").
@@ -988,7 +989,6 @@ class ApiService {
       'phone_number': phoneNumber,
     });
   }
-
 
   /// International payout quote (USD payouts funded from an NGN wallet).
   /// GET /transfers/quote?amount=&source_currency=&destination_currency=

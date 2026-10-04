@@ -262,6 +262,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       await _fetchData();
     } catch (e) {
       debugPrint('Failed: $e');
+      // Surface server errors (validation, permissions) instead of failing
+      // silently — the user must see WHY the save didn't happen.
+      if (mounted) {
+        AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
+      }
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -284,6 +289,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       }
     } catch (e) {
       debugPrint('Failed: $e');
+      // Duplicate contact details come back as a 409 with a friendly
+      // "already in use" message — show it instead of failing silently.
+      if (mounted) {
+        AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
+      }
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -305,6 +315,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       await _fetchData();
     } catch (e) {
       debugPrint('Failed: $e');
+      // Show invalid/expired OTP and duplicate-contact errors verbatim.
+      if (mounted) {
+        AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
+      }
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
