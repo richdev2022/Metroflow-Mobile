@@ -19,6 +19,7 @@ import 'utils/app_feedback.dart';
 import 'utils/app_timezone.dart';
 import 'utils/logger.dart';
 import 'widgets/inapp_banner.dart';
+import 'widgets/maintenance_gate.dart';
 import 'widgets/metric_ai_fab.dart';
 import 'providers/badge_provider.dart';
 import 'providers/call_provider.dart';
@@ -802,6 +803,12 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
                 // takes precedence.
                 const MetricAiFloatingBubble(),
                 const IncomingCallDialog(),
+                // MAINTENANCE GATE (web parity): TOP-most child — while the
+                // admin has maintenance mode ON it covers the entire app
+                // (every screen, dialog and the login form itself), polls
+                // /public/app-config every 60s + on app resume, and lets
+                // users back in automatically when the flag flips off.
+                const MaintenanceGateOverlay(),
               ],
             );
           },
