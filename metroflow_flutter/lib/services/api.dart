@@ -194,14 +194,13 @@ class ApiService {
         final isSuccess = data is Map && data['success'] == true;
         final isFailure = data is Map && data['success'] == false;
 
-        // Check for token error even in 200 OK responses
+        // REGRESSION FIX (users logged out "unauthorized" too easily): an
+        // HTTP-200 {success:false} envelope is a BUSINESS failure ("Invalid
+        // transaction PIN", "OTP expired", "Invalid account number", …) — it
+        // must NEVER terminate the session. Real session failures arrive as
+        // HTTP 401/403 and are handled in onError below.
         if (isFailure) {
-          final errorMsg = (data['error'] as String?)?.toLowerCase() ?? '';
-          if (errorMsg.contains('invalid') || errorMsg.contains('expired')) {
-            await _handleSessionExpired();
-            // Don't show toast for token errors
-            return handler.next(response);
-          }
+          return handler.next(response);
         }
         
         // Show success toast for non-GET requests if success and message exists
@@ -257,13 +256,20 @@ class ApiService {
           return handler.next(error);
         }
 
-        // Only logout for actual auth failures
+        // Only logout for ACTUAL session failures. The backend's real
+        // session errors are exactly: 401 "Access token required" and 403
+        // "Invalid or expired token". Matching bare 'invalid'/'expired'
+        // here also matched business errors ("Invalid OTP", "OTP expired",
+        // "Invalid account number") and logged users out mid-flow — the
+        // "user gets unauthorized easily" regression. Match on the token
+        // keyword (plus a plain 401) instead.
         if (error.response?.statusCode == 401 || error.response?.statusCode == 403) {
-          // Check if this is a plan upgrade error or other non-auth 401
           if (!isPlanUpgradeError) {
-            // Check if the error message is something that means token is invalid
             final errorMsg = (errorData is Map ? errorData['error'] : null)?.toString().toLowerCase() ?? '';
-            if (errorMsg.contains('invalid') || errorMsg.contains('expired') || errorMsg.contains('unauthorized')) {
+            final isSessionError = error.response?.statusCode == 401 ||
+                errorMsg.contains('token') ||
+                errorMsg.contains('unauthorized');
+            if (isSessionError) {
               await _handleSessionExpired();
               return handler.next(error);
             }
