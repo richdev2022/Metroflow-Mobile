@@ -80,16 +80,32 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     // per-account, not device-wide).
     try {
       // Personal completion gate first (best-effort — never blocks login).
+      Map<String, dynamic>? meMap;
       try {
         final meResponse = await ApiService().getMe();
         final meData = meResponse.data is Map ? meResponse.data['data'] : null;
-        if (meData is Map && meData['requiresProfileCompletion'] == true) {
+        if (meData is Map) meMap = Map<String, dynamic>.from(meData);
+        if (meMap != null && meMap['requiresProfileCompletion'] == true) {
           if (mounted) {
             context.go('/profile-completion');
             return;
           }
         }
       } catch (_) {}
+
+      // BUSINESS profile gate (business admins): profileCompleted == false
+      // means the workspace is still missing name/industry/phone/logo — but
+      // a skip (profilePromptDismissed) must stick, same as the personal
+      // gate. Checked here so BOTH the password and Google login paths
+      // behave identically.
+      if (meMap != null &&
+          meMap['profileCompleted'] == false &&
+          meMap['profilePromptDismissed'] != true) {
+        if (mounted) {
+          context.go('/profile-complete');
+          return;
+        }
+      }
 
       final userId = ref.read(authProvider).userId ?? await StorageService().getUserId();
       final isEnabled = await BiometricService.isEnabled(userId);
@@ -149,7 +165,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     try {
       final result = await ref.read(authProvider.notifier).enableBiometricsWithResult();
       if (result.success) {
-        await BiometricService.markPromptAsShown();
+        // Per-account flag: mark for THE ACCOUNT THAT JUST LOGGED IN, not the
+        // legacy device-wide key (omitting userId left the per-account flag
+        // false, so the setup modal re-appeared on every login).
+        final uid = ref.read(authProvider).userId ?? await StorageService().getUserId();
+        await BiometricService.markPromptAsShown(uid);
         if (mounted) {
           setState(() {
             _showBiometricsSetupModal = false;
@@ -177,7 +197,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _handleSkipBiometrics() async {
-    await BiometricService.markPromptAsShown();
+    // Per-account flag (see _handleSetupBiometrics).
+    final uid = ref.read(authProvider).userId ?? await StorageService().getUserId();
+    await BiometricService.markPromptAsShown(uid);
     if (!mounted) return;
     setState(() {
       _showBiometricsSetupModal = false;
@@ -289,7 +311,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       // their PERSONAL profile (photo, name, read-only email, phone OTP,
       // skip); business admins complete the BUSINESS profile (name,
       // industry, phone, logo). The backend now returns role-aware flags on
-      // /auth/google — requiresProfileCompletion wins over profileCompleted.
+      // /auth/google — requiresProfileCompletion wins over profileCompleted,
+      // and a skip (profilePromptDismissed) sticks on both gates.
       final meResponse = await ApiService().getMe();
       final meData = meResponse.data is Map ? meResponse.data['data'] : null;
       if (meData is Map && meData['requiresProfileCompletion'] == true) {
@@ -299,7 +322,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         }
       }
       final profileCompleted = ref.read(authProvider).profileCompleted;
-      if (profileCompleted == false) {
+      final dismissed = meData is Map ? meData['profilePromptDismissed'] : null;
+      if (profileCompleted == false && dismissed != true) {
         if (mounted) context.go('/profile-complete');
         return;
       }
