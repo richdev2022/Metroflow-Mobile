@@ -9,6 +9,7 @@ import '../services/api.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_toast.dart';
 import '../providers/auth_provider.dart';
+import '../widgets/biometric_setup_prompt.dart';
 
 /// First-login PERSONAL profile completion (invited team members).
 ///
@@ -228,10 +229,14 @@ class _PersonalProfileCompletionScreenState
     _finish();
   }
 
-  /// Hand control back to the normal post-login flow (biometric offer is
-  /// handled by the login screen's per-account prompt on the next login;
-  /// the dashboard is the immediate destination).
-  void _finish() {
+  /// Hand control back to the normal post-login flow. The per-account
+  /// biometric activation offer is shown HERE (before the dashboard) — the
+  /// login screen's prompt only fires on the password-login path, so invited
+  /// members finishing their profile never saw it.
+  Future<void> _finish() async {
+    if (!mounted) return;
+    await maybeOfferBiometricSetup(context, ref);
+    if (!mounted) return;
     context.go('/main');
   }
 

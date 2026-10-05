@@ -5,6 +5,7 @@ import '../providers/auth_provider.dart';
 import '../services/api.dart';
 import '../theme/app_theme.dart';
 import '../widgets/auth_ui.dart';
+import '../widgets/biometric_setup_prompt.dart';
 
 class VerifyOtpScreen extends ConsumerStatefulWidget {
   const VerifyOtpScreen({super.key, required this.email});
@@ -67,6 +68,10 @@ class _VerifyOtpScreenState extends ConsumerState<VerifyOtpScreen> {
       await ref
           .read(authProvider.notifier)
           .verifyOtp(widget.email, _otpController.text);
+      // Freshly-registered account: offer the per-account biometric
+      // activation BEFORE the dashboard (previously the registration path
+      // skipped the offer entirely).
+      if (mounted) await maybeOfferBiometricSetup(context, ref);
       if (mounted) context.go('/main');
     } catch (e) {
       if (mounted) {
