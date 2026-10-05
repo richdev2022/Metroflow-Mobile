@@ -11,7 +11,6 @@ import 'providers/theme_provider.dart';
 import 'providers/auth_provider.dart';
 import 'services/api.dart';
 import 'services/app_badge_service.dart';
-import 'services/biometrics.dart';
 import 'services/push_notification_service.dart';
 import 'screens/permission_primer.dart';
 import 'services/socket_service.dart';
@@ -114,7 +113,6 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   AppLifecycleState _appState = AppLifecycleState.resumed;
   String? _currentRoute;
   final _storage = StorageService();
-  bool _shouldPromptBiometricsOnResume = false;
   bool _isWebViewOpen = false; // New flag to track webview state
   DateTime? _appPausedAt; // Track when app went to background
 
@@ -635,10 +633,12 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       } else {
         // Check if app was paused for more than 5 minutes
         if (_appPausedAt != null && DateTime.now().difference(_appPausedAt!) > const Duration(minutes: 5)) {
-          // More than 5 minutes - logout and prompt for biometrics
+          // More than 5 minutes - security logout. The user lands on the
+          // login screen and signs back in (password/Google/biometrics) —
+          // biometrics are NEVER auto-triggered (user requirement): they
+          // only run when the user taps "Sign in with Biometrics".
           if (updatedAuthState.isAuthenticated && !_isWebViewOpen) {
             await authNotifier.logout();
-            _shouldPromptBiometricsOnResume = true;
           }
         } else {
           // Less than 5 minutes - reset idle timer and stay logged in
@@ -663,36 +663,6 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
           }
         }
         
-        // Prompt biometrics if needed.
-        // BUGFIX: re-read the provider AFTER logout() — the snapshot taken at
-        // the top (updatedAuthState) was captured before logout flipped
-        // isAuthenticated to false, so `!…isAuthenticated` was always false
-        // and the post-backgrounding biometric re-prompt could never fire.
-        final postLogoutState = ref.read(authProvider);
-        if (_shouldPromptBiometricsOnResume && postLogoutState.biometricsEnabled && !postLogoutState.isAuthenticated) {
-          // Prompt biometrics
-          final hasBiometrics = await BiometricService.canAuthenticate();
-          if (hasBiometrics && mounted) {
-            // Try to auto-prompt biometrics login
-            try {
-              final result = await authNotifier.loginWithBiometrics();
-              if (result.success) {
-              // Navigate to last route or main
-              final lastRoute = await _storage.getLastRoute();
-              if (lastRoute != null && lastRoute.isNotEmpty && lastRoute != '/login') {
-                await _storage.removeLastRoute();
-                if (mounted) _router.go(lastRoute);
-              } else {
-                if (mounted) _router.go('/main');
-              }
-            }
-            } catch (e) {
-              debugPrint('Auto biometric login failed: $e');
-            }
-          }
-          _shouldPromptBiometricsOnResume = false;
-        }
-
         // Refresh the launcher badge against the live unread counts.
         _syncLauncherBadge();
 

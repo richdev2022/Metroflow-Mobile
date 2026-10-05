@@ -16,6 +16,15 @@ class BiometricResult {
 class BiometricService {
   static final LocalAuthentication _auth = LocalAuthentication();
 
+  /// ANDROID MULTI-ATTEMPT FIX: local_auth cannot run two platform prompts
+  /// at once. When a second authenticate() is issued while one is still in
+  /// flight (double-tap, widget rebuild, screen race), Android fails the
+  /// pending fingerprint read — the user then had to authenticate several
+  /// times before sign-in went through. The guard makes any overlapping
+  /// call a no-op that waits for the ORIGINAL attempt's result instead of
+  /// cancelling it.
+  static Future<BiometricResult>? _inFlight;
+
   static Future<bool> hasHardware() async {
     if (kIsWeb) {
       return false;
@@ -121,13 +130,37 @@ class BiometricService {
         error: 'Biometric authentication is not available on web',
       );
     }
-    try {
-      // First stop any existing authentication
+
+    // Overlapping call while a prompt is already up: reuse its result rather
+    // than issuing a second platform call that fails the first one (Android).
+    final pending = _inFlight;
+    if (pending != null) {
       try {
-        await _auth.stopAuthentication();
-      } catch (e) {
-        // Ignore stop errors
+        return await pending;
+      } catch (_) {
+        // Fall through and try a fresh attempt below.
+      } finally {
+        // Only clear if this is still the same attempt (no newer one started).
+        if (identical(_inFlight, pending)) _inFlight = null;
       }
+    }
+
+    final attempt = _authenticateOnce(promptMessage);
+    _inFlight = attempt;
+    try {
+      return await attempt;
+    } finally {
+      if (identical(_inFlight, attempt)) _inFlight = null;
+    }
+  }
+
+  static Future<BiometricResult> _authenticateOnce(String promptMessage) async {
+    try {
+      // NOTE: no stopAuthentication() here. Firing it immediately before
+      // authenticate() raced the platform channel on Android — a fingerprint
+      // that WAS verified could be reported as cancelled, forcing the user
+      // through biometric several times before login succeeded. local_auth
+      // serialises its own calls; the in-flight guard above handles overlap.
 
       // Device-credential fallback: allow the device PIN/pattern when
       // biometrics are unavailable/failed (stickyAuth survives backgrounding,

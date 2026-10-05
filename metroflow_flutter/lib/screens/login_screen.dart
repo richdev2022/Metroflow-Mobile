@@ -27,78 +27,19 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _biometricLoading = false;
   bool _biometricsAvailable = false;
   bool _showBiometricsSetupModal = false;
-  /// Set when the enrollment status check finds the server-side enrollment
-  /// gone — suppresses the auto biometric prompt for THIS session so the
-  /// user signs in with their password once (and is silently re-enrolled).
-  bool _suppressAutoBiometrics = false;
 
   @override
   void initState() {
     super.initState();
     _checkBiometrics();
     _loadUserName();
-    _verifyBiometricEnrollmentThenAutoTrigger();
-  }
-
-  /// Anti-stale-token guard: when biometrics are enabled AND a per-device
-  /// token is stored, ask the backend (POST /auth/biometric/status) whether
-  /// the enrollment is still live. If it is NOT: clear ONLY the token (keep
-  /// the enabled flag), suppress the auto prompt for this session — the user
-  /// signs in with their password once and gets silently re-enrolled.
-  /// Guarded silently: any failure keeps today's behaviour (never blocks).
-  Future<void> _verifyBiometricEnrollmentThenAutoTrigger() async {
-    try {
-      // PER-ACCOUNT: the stored enrollment belongs to exactly one account —
-      // read the flag for THAT account, not the device-wide legacy one.
-      final storage = StorageService();
-      final creds = await storage.getBiometricsCredentials();
-      final enrolledUserId = creds?['userId']?.toString();
-      final enabled = await BiometricService.isEnabled(enrolledUserId);
-      if (enabled) {
-        final deviceId = await storage.getBiometricDeviceId();
-        final token = (deviceId == null || deviceId.isEmpty)
-            ? null
-            : await storage.getBiometricToken(deviceId);
-        if (deviceId != null &&
-            deviceId.isNotEmpty &&
-            token != null &&
-            token.isNotEmpty) {
-          final response = await ApiService().biometricStatus(deviceId);
-          final data = response.data;
-          // Old backends without the endpoint respond without `enrolled` —
-          // default to true so nothing regresses.
-          final enrolled = data is Map ? data['enrolled'] == true : true;
-          if (!enrolled) {
-            await storage.clearBiometricToken(deviceId);
-            if (mounted) setState(() => _suppressAutoBiometrics = true);
-          }
-        }
-      }
-    } catch (_) {
-      // Status check is best-effort; soft-fail closed to current behaviour.
-    }
-    if (mounted) await _autoTriggerBiometrics();
-  }
-
-  Future<void> _autoTriggerBiometrics() async {
-    if (_suppressAutoBiometrics) return;
-    // Wait for the next frame to ensure the UI is built
-    await Future.delayed(Duration.zero);
-    if (!mounted) return;
-
-    // PER-ACCOUNT auto-prompt: only fire when the enrollment stored on this
-    // device belongs to the last signed-in account AND that account actually
-    // enabled biometrics — the device-wide flag no longer leaks across
-    // accounts (account B never auto-fingerprint-signs-in as account A).
-    final storage = StorageService();
-    final creds = await storage.getBiometricsCredentials();
-    final enrolledUserId = creds?['userId']?.toString();
-    final biometricsEnabled = await BiometricService.isEnabled(enrolledUserId);
-    final canAuth = await BiometricService.canAuthenticate();
-
-    if (biometricsEnabled && canAuth && mounted) {
-      await _handleBiometricLogin();
-    }
+    // BIOMETRICS ARE CLICK-TO-USE ONLY (user requirement): no auto-trigger of
+    // the fingerprint prompt when the login screen opens. The user explicitly
+    // taps "Sign in with Biometrics" — that button runs _handleBiometricLogin
+    // (local_auth prompt -> POST /auth/biometric/login). Auto-prompting at
+    // initState also raced the button: two overlapping local_auth calls on
+    // Android make the first fingerprint read fail, which forced users to
+    // authenticate multiple times before sign-in went through.
   }
 
   Future<void> _loadUserName() async {
