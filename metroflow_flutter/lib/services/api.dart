@@ -1785,6 +1785,7 @@ class ApiService {
     return await _dio.post('/calls/$id/join', data: password != null ? {'password': password} : null);
   }
 
+
   Future<Response> leaveCall(String id) async {
     return await _dio.post('/calls/$id/leave');
   }
