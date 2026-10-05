@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:dio/dio.dart';
 import '../components/google_sign_in_button.dart';
 import '../theme/app_theme.dart';
 import '../providers/auth_provider.dart';
@@ -384,6 +385,29 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   String _friendlyError(Object e) {
+    // DioException: surface the backend's message (or a friendly fallback) —
+    // NEVER the raw "DioException [bad response] ..." toString, which users
+    // cannot act on. Safe against non-JSON bodies (HTML error pages etc.).
+    if (e is DioException) {
+      final data = e.response?.data;
+      final dynamic message = data is Map
+          ? (data['message'] ?? data['error'])
+          : (data is String && data.isNotEmpty && !data.startsWith('<')
+              ? data
+              : null);
+      if (message is String && message.trim().isNotEmpty &&
+          !message.startsWith('DioException')) {
+        return message.trim();
+      }
+      if (e.type == DioExceptionType.connectionError ||
+          e.type == DioExceptionType.connectionTimeout) {
+        return 'Network error. Please check your connection and try again.';
+      }
+      if (e.response?.statusCode != null && e.response!.statusCode! >= 500) {
+        return 'Server error. Please try again in a moment.';
+      }
+      return 'Sign-in failed. Please try again.';
+    }
     final message = e.toString();
     if (message.startsWith('Exception: ')) {
       return message.substring('Exception: '.length);
