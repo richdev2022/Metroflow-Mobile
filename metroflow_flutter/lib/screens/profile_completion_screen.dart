@@ -7,10 +7,10 @@ import 'package:image_picker/image_picker.dart';
 
 import '../providers/auth_provider.dart';
 import '../services/api.dart';
-import '../services/biometrics.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_toast.dart';
 import '../utils/logger.dart';
+import '../widgets/biometric_setup_prompt.dart';
 
 /// Shared industry catalogue (mirrors the Settings screen list).
 const businessIndustries = <String>[
@@ -107,18 +107,26 @@ class _ProfileCompletionScreenState
   }
 
   Future<void> _prefill() async {
+    // GET /settings answers { success, settings: <business>, profile: <user> }.
+    // This screen previously read data['data']['business'] — a shape the
+    // backend never returns — so the form ALWAYS opened blank ("call get
+    // profile to fill existing profile information").
     try {
       final response = await _api.getSettings();
       final data = response.data;
-      if (data is Map && data['success'] == true && data['data'] is Map) {
-        final business = data['data']['business'];
-        if (business is Map && mounted) {
+      if (data is Map && data['success'] == true && data['settings'] is Map) {
+        final business = data['settings'] as Map;
+        if (mounted) {
           setState(() {
             _nameController.text = (business['name'] ?? '').toString();
             final industry = (business['industry'] ?? '').toString();
             _industry = industry.isEmpty ? null : industry;
-            _phoneController.text = (business['phoneNumber'] ?? '').toString();
-            _existingLogoUrl = (business['logoUrl'] ?? '').toString();
+            _phoneController.text = (business['phone_number'] ??
+                    business['phoneNumber'] ??
+                    '')
+                .toString();
+            _existingLogoUrl = (business['logo_url'] ?? business['logoUrl'] ?? '')
+                .toString();
             _loaded = true;
           });
         } else if (mounted) {
@@ -182,17 +190,13 @@ class _ProfileCompletionScreenState
             type: AppToastType.success);
 
         // Seamless continuation: offer the per-account biometric activation
-        // right after completing the profile (same prompt the password
-        // login flow shows), then land on the dashboard.
-        final userId = ref.read(authProvider).userId;
-        final isEnabled = await BiometricService.isEnabled(userId);
-        final canAuth = await BiometricService.canAuthenticate();
+        // right here, then land on the dashboard. (Previously this navigated
+        // to /login hoping the login screen would re-prompt — but the login
+        // auto-prompt was removed, so users were stranded on the login form.)
         if (!mounted) return;
-        if (canAuth && !isEnabled) {
-          context.go('/login'); // triggers the standard biometric prompt flow
-        } else {
-          context.go('/main');
-        }
+        await maybeOfferBiometricSetup(context, ref);
+        if (!mounted) return;
+        context.go('/main');
       } else {
         final error = data is Map
             ? (data['error'] ?? data['message'])?.toString()
@@ -206,6 +210,20 @@ class _ProfileCompletionScreenState
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  /// SKIP: dismiss the prompt server-side (never re-nags on the next login)
+  /// and go straight to the dashboard. Server failure is non-blocking.
+  Future<void> _skipForNow() async {
+    setState(() => _saving = true);
+    try {
+      await ApiService().dismissProfilePrompt();
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() => _saving = false);
+    await maybeOfferBiometricSetup(context, ref);
+    if (!mounted) return;
+    context.go('/main');
   }
 
   @override
@@ -321,6 +339,20 @@ class _ProfileCompletionScreenState
                       ? 'Enter a valid phone number'
                       : null,
                   decoration: _inputDecoration('e.g. 08012345678', colors),
+                ),
+                const SizedBox(height: 12),
+                // SKIP: finishing the business profile must never trap the
+                // user — the profile can be completed later from Settings.
+                TextButton(
+                  onPressed: _saving ? null : _skipForNow,
+                  child: Text(
+                    'Skip for now — I\'ll do it later in Settings',
+                    style: TextStyle(
+                      color: colors.textSecondary,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 28),
                 SizedBox(
