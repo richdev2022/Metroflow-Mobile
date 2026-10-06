@@ -226,19 +226,29 @@ class ApiService {
       },
       onResponse: (response, handler) async {
         // E2E PAYLOAD ENCRYPTION (response direction): the server wraps EVERY
-        // JSON response in an envelope and stamps `x-mfv-enc: 1` when we
-        // opted in. Decrypt it BEFORE any success/failure parsing so the
-        // rest of the pipeline (and every caller) keeps seeing plain JSON.
-        // A decrypt failure is converted into a normal-shaped business
-        // error — it must NEVER terminate the session.
-        if (response.headers.value(PayloadCrypto.encHeaderName) ==
-                PayloadCrypto.encHeaderValue &&
+        // JSON response in an envelope when we opted in. Decrypt it BEFORE
+        // any success/failure parsing so the rest of the pipeline (and every
+        // caller) keeps seeing plain JSON. Detection is ENVELOPE-SHAPE first
+        // (proxies can strip headers) with the header as a tie-breaker — a
+        // decrypt failure on a header-confirmed envelope is converted into a
+        // normal-shaped business error; a shape-only miss passes through so
+        // a coincidental lookalike body is never destroyed.
+        if (PayloadCrypto.isEnabled &&
             PayloadCrypto.looksLikeEnvelope(response.data)) {
+          final headerConfirmed = response.headers.value(
+                PayloadCrypto.encHeaderName,
+              ) ==
+              PayloadCrypto.encHeaderValue;
           try {
             response.data = await PayloadCrypto.decryptEnvelope(
               Map<String, dynamic>.from(response.data as Map),
             );
           } catch (e) {
+            if (!headerConfirmed) {
+              // Shape said "maybe", header wasn't there to confirm — leave
+              // the body untouched and let normal parsing proceed.
+              return handler.next(response);
+            }
             return handler.reject(DioException(
               requestOptions: response.requestOptions,
               response: Response<dynamic>(
@@ -340,8 +350,7 @@ class ApiService {
         // the decrypt failure itself.
         final errResponse = error.response;
         if (errResponse != null &&
-            errResponse.headers.value(PayloadCrypto.encHeaderName) ==
-                PayloadCrypto.encHeaderValue &&
+            PayloadCrypto.isEnabled &&
             PayloadCrypto.looksLikeEnvelope(errResponse.data)) {
           try {
             errResponse.data = await PayloadCrypto.decryptEnvelope(
