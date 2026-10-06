@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'payload_crypto.dart';
 import '../utils/app_toast.dart';
 import 'package:flutter/material.dart';
 import '../providers/auth_provider.dart';
@@ -184,12 +185,80 @@ class ApiService {
         if (token != null && token.isNotEmpty) {
           options.headers['Authorization'] = 'Bearer $token';
         }
+
+        // E2E PAYLOAD ENCRYPTION (request direction): when the key is
+        // configured, JSON map bodies travel as { v, iv, tag, ct } envelopes
+        // with the `x-mfv-enc: 1` header so the network tab never shows raw
+        // payloads. FormData (multipart uploads) passes through UNTOUCHED —
+        // the backend bypasses encryption for multipart. Any encryption
+        // hiccup degrades to plaintext WITHOUT the header (the server
+        // accepts both), so a crypto failure can never block a request.
+        if (PayloadCrypto.isEnabled &&
+            options.data is Map &&
+            options.data is! FormData) {
+          // Keep the plaintext body around: if the server turns out to be
+          // deployed WITHOUT PAYLOAD_ENCRYPTION_KEY it answers 400
+          // DECRYPT_FAILED and the onError handler below retries once in
+          // plaintext instead of failing the call.
+          options.extra['mfvPlaintext'] = options.data;
+          if (options.extra['mfvRetryPlaintext'] == true) {
+            // Already a plaintext retry — send as-is, no enc header.
+            options.headers.remove(PayloadCrypto.encHeaderName);
+            return handler.next(options);
+          }
+          try {
+            final body = Map<String, dynamic>.from(options.data as Map);
+            final envelope = await PayloadCrypto.encryptJson(body);
+            if (envelope != null) {
+              options.data = envelope;
+              options.headers[PayloadCrypto.encHeaderName] =
+                  PayloadCrypto.encHeaderValue;
+            }
+          } catch (_) {
+            // Plaintext fallback (no header => server treats it as such).
+          }
+        }
+
         options.headers['Content-Type'] = options.data is FormData
             ? Headers.multipartFormDataContentType
             : Headers.jsonContentType;
         return handler.next(options);
       },
       onResponse: (response, handler) async {
+        // E2E PAYLOAD ENCRYPTION (response direction): the server wraps EVERY
+        // JSON response in an envelope and stamps `x-mfv-enc: 1` when we
+        // opted in. Decrypt it BEFORE any success/failure parsing so the
+        // rest of the pipeline (and every caller) keeps seeing plain JSON.
+        // A decrypt failure is converted into a normal-shaped business
+        // error — it must NEVER terminate the session.
+        if (response.headers.value(PayloadCrypto.encHeaderName) ==
+                PayloadCrypto.encHeaderValue &&
+            PayloadCrypto.looksLikeEnvelope(response.data)) {
+          try {
+            response.data = await PayloadCrypto.decryptEnvelope(
+              Map<String, dynamic>.from(response.data as Map),
+            );
+          } catch (e) {
+            return handler.reject(DioException(
+              requestOptions: response.requestOptions,
+              response: Response<dynamic>(
+                requestOptions: response.requestOptions,
+                statusCode: response.statusCode,
+                // Normal-shaped error body: the error interceptor + callers
+                // extract a readable message from it (no auth side effects).
+                data: <String, dynamic>{
+                  'success': false,
+                  'error':
+                      'Could not decrypt the server response. Please check your connection and try again.',
+                  'code': 'MFV_DECRYPT_FAILED',
+                },
+              ),
+              type: DioExceptionType.badResponse,
+              error: e,
+            ));
+          }
+        }
+
         final data = response.data;
         final isSuccess = data is Map && data['success'] == true;
         final isFailure = data is Map && data['success'] == false;
@@ -226,6 +295,64 @@ class ApiService {
         return handler.next(response);
       },
       onError: (error, handler) async {
+        // ENCRYPTION MISMATCH FALLBACK: the app encrypted the body but the
+        // server was deployed WITHOUT PAYLOAD_ENCRYPTION_KEY — it answers
+        // 400 DECRYPT_FAILED. Retry the exact request once in plaintext so
+        // a half-configured deployment degrades instead of breaking every
+        // JSON POST from a build that ships with the key.
+        final mismatchResponse = error.response;
+        if (mismatchResponse != null &&
+            mismatchResponse.statusCode == 400 &&
+            error.requestOptions.headers[PayloadCrypto.encHeaderName] ==
+                PayloadCrypto.encHeaderValue &&
+            error.requestOptions.extra['mfvRetryPlaintext'] != true &&
+            error.requestOptions.extra['mfvPlaintext'] != null &&
+            mismatchResponse.data is Map &&
+            (mismatchResponse.data as Map)['code'] == 'DECRYPT_FAILED') {
+          try {
+            final ro = error.requestOptions;
+            final retry = RequestOptions(
+              path: ro.path,
+              baseUrl: ro.baseUrl,
+              method: ro.method,
+              data: ro.extra['mfvPlaintext'],
+              queryParameters: ro.queryParameters,
+              headers: Map<String, dynamic>.from(ro.headers)
+                ..remove(PayloadCrypto.encHeaderName),
+              extra: Map<String, dynamic>.from(ro.extra)
+                ..['mfvRetryPlaintext'] = true,
+              contentType: Headers.jsonContentType,
+              responseType: ro.responseType,
+            );
+            final res = await _dio.fetch(retry);
+            return handler.resolve(res);
+          } catch (e) {
+            // Retry failed — fall through with the original error.
+          }
+        }
+
+        // E2E PAYLOAD ENCRYPTION (error direction): error responses (4xx/5xx)
+        // are wrapped in the same envelope. Decrypt error.response.data
+        // FIRST so the maintenance gate, the session-expiry logic and the
+        // toasts below all see the REAL error message instead of ciphertext.
+        // A failed decrypt keeps the original error — the existing handling
+        // then just shows a generic message; the session is never touched by
+        // the decrypt failure itself.
+        final errResponse = error.response;
+        if (errResponse != null &&
+            errResponse.headers.value(PayloadCrypto.encHeaderName) ==
+                PayloadCrypto.encHeaderValue &&
+            PayloadCrypto.looksLikeEnvelope(errResponse.data)) {
+          try {
+            errResponse.data = await PayloadCrypto.decryptEnvelope(
+              Map<String, dynamic>.from(errResponse.data as Map),
+            );
+          } catch (_) {
+            // Leave the undecryptable envelope in place; the generic error
+            // path below handles it without auth side effects.
+          }
+        }
+
         // MAINTENANCE GATE (web parity): the backend answers 503 with
         // code "MAINTENANCE_MODE" when an admin has maintenance mode ON —
         // most importantly on POST /auth/login. Flip the global gate so the
@@ -264,7 +391,14 @@ class ApiService {
         // "user gets unauthorized easily" regression. Match on the token
         // keyword (plus a plain 401) instead.
         if (error.response?.statusCode == 401 || error.response?.statusCode == 403) {
-          if (!isPlanUpgradeError) {
+          // PER-REQUEST OPT-OUT: endpoints that legitimately answer 401 as a
+          // BUSINESS signal (GET /roles/me for personal accounts with no
+          // business workspace) set
+          // Options(extra: {'suppressSessionLogout': true}) — they must
+          // never terminate the session.
+          final suppressSessionLogout =
+              error.requestOptions.extra['suppressSessionLogout'] == true;
+          if (!isPlanUpgradeError && !suppressSessionLogout) {
             final errorMsg = (errorData is Map ? errorData['error'] : null)?.toString().toLowerCase() ?? '';
             final isSessionError = error.response?.statusCode == 401 ||
                 errorMsg.contains('token') ||
@@ -562,17 +696,30 @@ class ApiService {
     return await _dio.patch('/team/$id/role', data: {'roleId': roleId});
   }
 
-  // Team Roles & Permissions API (mirror of the web app Role Management)
+  // Team Roles & Permissions API (mirror of the web app Role Management).
+  // suppressSessionLogout: GET /roles/me answers 401 "Unauthorized" for
+  // PERSONAL accounts (no business workspace) — that is a business signal,
+  // not a dead session, so the error interceptor must not log the user out
+  // (and team_roles_screen treats the call as independently optional).
   Future<Response> getRoles() async {
-    return await _dio.get('/roles');
+    return await _dio.get(
+      '/roles',
+      options: Options(extra: {'suppressSessionLogout': true}),
+    );
   }
 
   Future<Response> getRolePermissions() async {
-    return await _dio.get('/roles/permissions');
+    return await _dio.get(
+      '/roles/permissions',
+      options: Options(extra: {'suppressSessionLogout': true}),
+    );
   }
 
   Future<Response> getMyTeamRole() async {
-    return await _dio.get('/roles/me');
+    return await _dio.get(
+      '/roles/me',
+      options: Options(extra: {'suppressSessionLogout': true}),
+    );
   }
 
   Future<Response> createRole(Map<String, dynamic> data) async {
@@ -2122,8 +2269,12 @@ class StorageService {
   // silently inherited A's switch. Biometrics is now keyed by ACCOUNT:
   //   biometricsEnabled_<userId>       — per-account opt-in
   //   biometricsPromptShown_<userId>   — per-account setup-prompt memory
-  // The legacy keys stay in sync so older code paths (and a rollback) keep
-  // working; the per-account value always wins when present.
+  // POISONING FIX: the per-account getters NO LONGER fall back to the legacy
+  // device-wide keys and the per-account setters NO LONGER mirror into them —
+  // the fallback/mirror made a brand-new account inherit a previous account's
+  // values (promptShown=true meant the activation offer never appeared).
+  // A fresh account now genuinely starts from false/false. The legacy keys
+  // remain only for the (rare) code paths that have no userId available.
   // ------------------------------------------------------------------
 
   Future<void> setBiometricsEnabledForAccount(String userId, bool enabled) async {
@@ -2134,24 +2285,25 @@ class StorageService {
 
   Future<bool> getBiometricsEnabledForAccount(String userId) async {
     final prefs = await SharedPreferences.getInstance();
-    final perAccount = prefs.getBool('biometricsEnabled_$userId');
-    if (perAccount != null) return perAccount;
-    // Migration: first read for an existing install falls back to the
-    // device-wide flag, so nobody who already opted in loses the feature.
-    return prefs.getBool('biometricsEnabled') ?? false;
+    // PER-ACCOUNT ONLY — no legacy fallback. Falling back to the device-wide
+    // flag poisoned new accounts with a PREVIOUS account's opt-in.
+    return prefs.getBool('biometricsEnabled_$userId') ?? false;
   }
 
   Future<void> setBiometricsPromptShownForAccount(String userId, bool shown) async {
     final prefs = await SharedPreferences.getInstance();
+    // PER-ACCOUNT ONLY — no mirroring into the legacy device-wide key:
+    // mirroring made one account's dismissal silence the activation offer
+    // for every account signed in afterwards on this device.
     await prefs.setBool('biometricsPromptShown_$userId', shown);
-    if (shown) await prefs.setBool('biometricsPromptShown', true); // legacy mirror
   }
 
   Future<bool> getBiometricsPromptShownForAccount(String userId) async {
     final prefs = await SharedPreferences.getInstance();
-    final perAccount = prefs.getBool('biometricsPromptShown_$userId');
-    if (perAccount != null) return perAccount;
-    return prefs.getBool('biometricsPromptShown') ?? false;
+    // PER-ACCOUNT ONLY — no legacy fallback: a brand-new account must reach
+    // the biometric activation offer even when an older account on this
+    // device already dismissed it.
+    return prefs.getBool('biometricsPromptShown_$userId') ?? false;
   }
 
   // SSO onboarding gate — persisted copy of the server's profileCompleted

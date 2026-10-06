@@ -187,10 +187,15 @@ class MaintenanceScreen extends StatelessWidget {
                       ClipRRect(
                         borderRadius: BorderRadius.circular(18),
                         child: Image.asset(
-                          'assets/images/appIcon.png',
+                          // WHITE-MATTE FIX: appIcon.png is an RGB PNG with
+                          // the mark baked onto an opaque white canvas (no
+                          // alpha) — a white tile glared on this dark screen.
+                          // logo-mark.png is the identical mark with a
+                          // transparent background.
+                          'assets/images/logo-mark.png',
                           width: 72,
                           height: 72,
-                          fit: BoxFit.cover,
+                          fit: BoxFit.contain,
                         ),
                       ),
                       const SizedBox(height: 24),

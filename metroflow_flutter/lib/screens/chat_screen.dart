@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -34,6 +36,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   String _searchQuery = '';
   late final void Function(dynamic) _conversationCreatedHandler;
 
+  // WhatsApp-style typing presence (chat:typing-updated → user room):
+  // conversationId -> display name of the peer who is typing. Each entry
+  // auto-clears 4s after its last update, so a lost `isTyping: false` (old
+  // emitter, dropped packet, app kill) can never leave a stuck indicator.
+  final Map<String, String> _typingNames = {};
+  final Map<String, Timer> _typingTimers = {};
+  late final void Function(dynamic) _typingUpdatedHandler;
+
   @override
   void initState() {
     super.initState();
@@ -56,6 +66,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       });
     };
     _socket.onConversationCreated = _conversationCreatedHandler;
+    // Typing presence — same pattern as the other chat listeners: assign a
+    // stored handler here and unregister the exact instance in dispose.
+    _typingUpdatedHandler = _handleTypingUpdated;
+    _socket.onChatTypingUpdated = _typingUpdatedHandler;
     // Deep link from a chat push tap: open the exact conversation once the
     // list arrives (see ChatDetailScreen.pendingOpenConversationId, set by
     // the push notification tap handler).
@@ -84,8 +98,64 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (_socket.onConversationCreated == _conversationCreatedHandler) {
       _socket.onConversationCreated = null;
     }
+    if (_socket.onChatTypingUpdated == _typingUpdatedHandler) {
+      _socket.onChatTypingUpdated = null;
+    }
+    for (final timer in _typingTimers.values) {
+      timer.cancel();
+    }
+    _typingTimers.clear();
     _searchController.dispose();
     super.dispose();
+  }
+
+  /// `chat:typing-updated` → { conversationId, userId, name, isTyping, ts }.
+  /// Own events are skipped (the server excludes the emitter's user room,
+  /// but the guard also covers local echoes / same-account multi-device).
+  void _handleTypingUpdated(dynamic data) {
+    if (!mounted || data is! Map) return;
+    final payload = Map<String, dynamic>.from(data);
+    final conversationId = (payload['conversationId'] ?? '').toString();
+    if (conversationId.isEmpty) return;
+    final senderId = (payload['userId'] ?? payload['user_id'] ?? '').toString();
+    final currentUserId = ref.read(authProvider).userId;
+    if (senderId.isNotEmpty && senderId == currentUserId) return;
+
+    final isTyping = payload['isTyping'] == true;
+    if (!isTyping) {
+      _clearTyping(conversationId);
+      return;
+    }
+
+    final name = (payload['name'] ?? payload['userName'] ?? 'Someone').toString();
+    _typingTimers[conversationId]?.cancel();
+    setState(() => _typingNames[conversationId] = name);
+    // Auto-clear 4s after the LAST update (WhatsApp behaviour — typing
+    // indicators are ephemeral and must never stick).
+    _typingTimers[conversationId] = Timer(const Duration(seconds: 4), () {
+      if (!mounted) return;
+      setState(() => _typingNames.remove(conversationId));
+      _typingTimers.remove(conversationId);
+    });
+  }
+
+  void _clearTyping(String conversationId) {
+    if (!_typingNames.containsKey(conversationId)) return;
+    _typingTimers.remove(conversationId)?.cancel();
+    if (mounted) {
+      setState(() => _typingNames.remove(conversationId));
+    }
+  }
+
+  /// Tile subtitle for a conversation with an active typing flag:
+  /// direct chats show "typing…", groups "`<First name>` is typing…".
+  String? _typingLabelFor(Conversation conversation) {
+    final name = _typingNames[conversation.id];
+    if (name == null) return null;
+    final isGroup = conversation.type == 'group';
+    if (!isGroup) return 'typing…';
+    final firstName = name.trim().split(RegExp(r'\s+')).first;
+    return '$firstName is typing…';
   }
 
   Future<void> _loadConversations() async {
@@ -363,6 +433,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                                     hasUnread: hasUnread,
                                     unreadCount: conversation.unreadCount,
                                     colors: colors,
+                                    typingLabel: _typingLabelFor(conversation),
                                     onTap: () {
                                       Navigator.push(
                                         context,
@@ -467,6 +538,10 @@ class _ConversationTile extends StatelessWidget {
   final ThemeColors colors;
   final VoidCallback onTap;
 
+  /// "typing…" / "`<Name>` is typing…" while the peer's typing flag is on —
+  /// replaces the last-message preview (WhatsApp behaviour).
+  final String? typingLabel;
+
   const _ConversationTile({
     required this.conversation,
     required this.name,
@@ -475,6 +550,7 @@ class _ConversationTile extends StatelessWidget {
     this.unreadCount = 0,
     required this.colors,
     required this.onTap,
+    this.typingLabel,
   });
 
   @override
@@ -547,18 +623,23 @@ class _ConversationTile extends StatelessWidget {
                 Row(
                   children: [
                     Expanded(
-                      child: Text(
-                        preview,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 13,
-                          height: 1.3,
-                          fontWeight: hasUnread ? FontWeight.w600 : FontWeight.w400,
-                          fontStyle: hasPreview ? FontStyle.normal : FontStyle.italic,
-                          color: hasUnread ? colors.text.withValues(alpha: 0.85) : colors.textSecondary,
-                        ),
-                      ),
+                      // Typing indicator replaces the preview while active —
+                      // subtle pulsing "…" in the primary color (WhatsApp
+                      // style), animated so it reads as "live presence".
+                      child: (typingLabel != null && typingLabel!.isNotEmpty)
+                          ? _TypingText(label: typingLabel!, accent: colors.primary)
+                          : Text(
+                              preview,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 13,
+                                height: 1.3,
+                                fontWeight: hasUnread ? FontWeight.w600 : FontWeight.w400,
+                                fontStyle: hasPreview ? FontStyle.normal : FontStyle.italic,
+                                color: hasUnread ? colors.text.withValues(alpha: 0.85) : colors.textSecondary,
+                              ),
+                            ),
                     ),
                     if (hasUnread) ...[
                       const SizedBox(width: 8),
@@ -589,6 +670,59 @@ class _ConversationTile extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// "`<label>`" with a gently pulsing trailing "…" — the animated typing
+/// indicator used in conversation tiles (subtle fade loop, ~1.4s cycle).
+class _TypingText extends StatefulWidget {
+  final String label;
+  final Color accent;
+
+  const _TypingText({required this.label, required this.accent});
+
+  @override
+  State<_TypingText> createState() => _TypingTextState();
+}
+
+class _TypingTextState extends State<_TypingText>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: Tween<double>(begin: 0.45, end: 1.0).animate(
+        CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+      ),
+      child: Text(
+        widget.label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontSize: 13,
+          height: 1.3,
+          fontWeight: FontWeight.w600,
+          fontStyle: FontStyle.italic,
+          color: widget.accent,
+        ),
       ),
     );
   }

@@ -42,6 +42,9 @@ dependencies:
   flutter_colorpicker: ^1.1.0
   flutter_dotenv: ^5.2.1
   socket_io_client: ^2.0.3+1
+  # E2E API payload encryption (AES-256-GCM envelopes) — pure-Dart, so it
+  # works on every platform without a native plugin. See payload_crypto.dart.
+  cryptography: ^2.7.0
   timezone: ^0.9.4
   flutter_webrtc: ^1.5.2
   # On-device speech recognition so mobile can BROADCAST live captions
