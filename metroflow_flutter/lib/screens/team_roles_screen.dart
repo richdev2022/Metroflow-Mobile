@@ -93,6 +93,10 @@ class _TeamRolesScreenState extends State<TeamRolesScreen> {
   bool _canManage = true;
   bool _isLoading = true;
 
+  /// TRUE when the ROLES call itself failed (a REAL error, distinct from an
+  /// empty list) — renders the error state with a Retry button.
+  bool _loadFailed = false;
+
   @override
   void initState() {
     super.initState();
@@ -100,46 +104,76 @@ class _TeamRolesScreenState extends State<TeamRolesScreen> {
   }
 
   Future<void> _load() async {
+    // DECOUPLED LOADING (was Future.wait = all-or-nothing): GET /roles/me
+    // legitimately answers 401 "Unauthorized" for personal accounts (no
+    // business workspace) and that ONE throw left the screen stuck on a
+    // permanent empty state hiding the roles list. Each call now fails
+    // independently; only a failure of the ROLES call itself is fatal.
+    // (The 401s no longer trip the session-expiry logout either — the three
+    // methods send suppressSessionLogout in their dio extra.)
+    dynamic rolesRes;
+    dynamic permRes;
+    dynamic meRes;
     try {
-      final results = await Future.wait([
-        ApiService().getRoles(),
-        ApiService().getRolePermissions(),
-        ApiService().getMyTeamRole(),
-      ]);
-
-      final rolesData = results[0].data;
-      final permData = results[1].data;
-      final meData = results[2].data;
-
-      final roles = _dataList(rolesData, 'roles')
-          .whereType<Map>()
-          .map((r) => _Role.fromJson(Map<String, dynamic>.from(r)))
-          .toList();
-
-      final catalog = _dataList(permData, 'permissions')
-          .whereType<Map>()
-          .map((p) => _Permission.fromJson(Map<String, dynamic>.from(p)))
-          .toList();
-
-      // '*' means the caller is owner/admin with full access.
-      final myPerms = _dataList(meData, 'permissions')
-          .map((p) => p.toString())
-          .toList();
-      final wildcard = meData is Map && meData['data']?['wildcard'] == true;
-      final canManage = wildcard || myPerms.contains('manage_team');
-
-      if (!mounted) return;
-      setState(() {
-        _roles = roles;
-        _catalog = catalog;
-        _grouped = _groupCatalog(catalog);
-        _canManage = canManage;
-        _isLoading = false;
-      });
+      rolesRes = await ApiService().getRoles();
     } catch (e) {
-      debugPrint('Failed to load roles: $e');
-      if (mounted) setState(() => _isLoading = false);
+      debugPrint('getRoles failed: $e');
     }
+    try {
+      permRes = await ApiService().getRolePermissions();
+    } catch (e) {
+      debugPrint('getRolePermissions failed: $e');
+    }
+    try {
+      meRes = await ApiService().getMyTeamRole();
+    } catch (e) {
+      debugPrint('getMyTeamRole failed: $e');
+    }
+
+    if (!mounted) return;
+
+    // REAL error: the roles list itself failed → error state with retry.
+    if (rolesRes == null) {
+      setState(() {
+        _isLoading = false;
+        _loadFailed = true;
+      });
+      return;
+    }
+
+    final rolesData = rolesRes.data;
+    final permData = permRes?.data;
+    final meData = meRes?.data;
+
+    final roles = _dataList(rolesData, 'roles')
+        .whereType<Map>()
+        .map((r) => _Role.fromJson(Map<String, dynamic>.from(r)))
+        .toList();
+
+    final catalog = _dataList(permData, 'permissions')
+        .whereType<Map>()
+        .map((p) => _Permission.fromJson(Map<String, dynamic>.from(p)))
+        .toList();
+
+    // '*' means the caller is owner/admin with full access. When /roles/me
+    // is unavailable (personal account → 401) the previous/default
+    // _canManage value is KEPT instead of downgrading the UI.
+    final myPerms = _dataList(meData, 'permissions')
+        .map((p) => p.toString())
+        .toList();
+    final wildcard = meData is Map && meData['data']?['wildcard'] == true;
+    final canManage = meRes == null
+        ? _canManage
+        : (wildcard || myPerms.contains('manage_team'));
+
+    setState(() {
+      _roles = roles;
+      _catalog = catalog;
+      _grouped = _groupCatalog(catalog);
+      _canManage = canManage;
+      _isLoading = false;
+      _loadFailed = false;
+    });
   }
 
   /// Groups the flat permission catalog the same way the web Role Management
@@ -321,7 +355,41 @@ class _TeamRolesScreenState extends State<TeamRolesScreen> {
                   ? const Center(
                       child: CircularProgressIndicator(color: AppColors.primary),
                     )
-                  : RefreshIndicator(
+                  : _loadFailed
+                      ? ListView(
+                          padding: const EdgeInsets.symmetric(horizontal: 24),
+                          children: [
+                            const SizedBox(height: 64),
+                            const Icon(Icons.error_outline,
+                                size: 64, color: AppColors.error),
+                            const SizedBox(height: 16),
+                            Text(
+                              'Could not load roles',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: colors.text,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Something went wrong while fetching your workspace roles. Check your connection and try again.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                  color: colors.textSecondary, fontSize: 14),
+                            ),
+                            const SizedBox(height: 24),
+                            Center(
+                              child: OutlinedButton.icon(
+                                onPressed: _load,
+                                icon: const Icon(Icons.refresh),
+                                label: const Text('Retry'),
+                              ),
+                            ),
+                          ],
+                        )
+                      : RefreshIndicator(
                       onRefresh: _load,
                       child: _roles.isEmpty
                           ? ListView(

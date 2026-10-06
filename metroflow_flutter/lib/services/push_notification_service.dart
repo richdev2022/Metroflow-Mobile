@@ -175,6 +175,15 @@ class PushNotificationService {
   /// ring to avoid overlapping audio. Wired from main.dart.
   bool Function()? foregroundCallGuard;
 
+  /// Reports the callId currently ringing via the in-app overlay
+  /// (callProvider's IncomingCallState.call.id), or null when nothing is
+  /// ringing. Wired from main.dart — lets the foreground incoming-call push
+  /// recognise a SERVER RETRY for the call that is already ringing (the
+  /// server now retries failed deliveries, so a data-only push can arrive
+  /// while the socket ring is active) and ignore it entirely instead of
+  /// re-presenting (which reset the ring timer and restarted the ringtone).
+  String? Function()? currentRingingCallId;
+
   /// Hook that clears the in-app ringing overlay (callProvider) when a
   /// missed-call / ended push proves the call is gone. Wired from main.dart.
   void Function()? dismissIncomingCallHook;
@@ -561,6 +570,27 @@ class PushNotificationService {
           // a banner — never stack a local notification on top of it.
           final systemShowed = message.notification != null;
           final alreadyRinging = foregroundCallGuard?.call() ?? false;
+          // DUPLICATE-DELIVERY GUARD: the server retries failed deliveries,
+          // so a data-only push can arrive while the socket ring for the
+          // SAME call is already active. Ignore it entirely — re-presenting
+          // would reset the 45s ring timeout and restart the ringtone
+          // mid-ring. (Pushes without a usable callId fall through to the
+          // pre-existing guards below.)
+          if (alreadyRinging) {
+            final pushCallId = (data['callId'] ??
+                    data['callID'] ??
+                    data['call_id'] ??
+                    data['id'] ??
+                    '')
+                .toString();
+            final ringingCallId = currentRingingCallId?.call();
+            if (pushCallId.isNotEmpty &&
+                ringingCallId != null &&
+                ringingCallId.isNotEmpty &&
+                pushCallId == ringingCallId) {
+              break;
+            }
+          }
           if (alreadyRinging && !systemShowed) {
             // The in-app incoming-call overlay is already ringing (socket
             // path): surface the tray banner as well so a swipe-down still
@@ -610,10 +640,15 @@ class PushNotificationService {
           );
           break;
         case 'chat_message':
-          // iOS hybrid pushes are displayed by the system itself — only the
-          // app's own badge logic runs here. Android (data-only) renders the
-          // rich chat notification locally as before.
-          if (message.notification == null) {
+          // ANDROID FOREGROUND FIX: FCM does NOT auto-display notification
+          // payloads while the app is FOREGROUNDED — the old
+          // `notification == null` skip silently dropped every chat message
+          // that arrived as a hybrid push while the app was open. On Android
+          // ALWAYS render the local notification (flutter_local_notifications
+          // dedupes via stable per-conversation ids); on iOS the hybrid
+          // push's aps.alert IS displayed by the system, so the skip stays.
+          final systemShowedChat = message.notification != null;
+          if (!(systemShowedChat && !Platform.isAndroid)) {
             showChatNotification(
               senderName: (data['sender_name'] ?? data['senderName'] ?? 'New message').toString(),
               body: (data['message'] ?? '').toString(),
@@ -627,7 +662,15 @@ class PushNotificationService {
           );
           break;
         default:
-          if (message.notification != null) return; // FCM already displayed it
+          // ANDROID FOREGROUND FIX (same as chat_message): FCM does not
+          // display notification payloads in the foreground on Android, so
+          // the local notification must fire there unconditionally or the
+          // push is silently lost. iOS keeps the original skip — the system
+          // already displayed the aps.alert.
+          final systemShowedDefault = message.notification != null;
+          if (systemShowedDefault && !Platform.isAndroid) {
+            break; // FCM already displayed it (iOS)
+          }
           showGeneralNotification(
             title: message.notification?.title ?? (data['title'] ?? 'Metricorex'),
             body: message.notification?.body ?? (data['body'] ?? ''),

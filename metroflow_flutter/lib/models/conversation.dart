@@ -127,8 +127,16 @@ class Conversation {
           .whereType<Map>()
           .map((e) => ConversationParticipant.fromJson(Map<String, dynamic>.from(e)))
           .toList(),
-      lastMessage: (json['lastMessage'] ?? json['last_message'])?.toString(),
-      lastMessageAt: _parseDate(json['lastMessageAt'] ?? json['last_message_at']),
+      // Case-fallback chain: the backend used to alias lastMessage with a
+      // quoted camelCase alias, but the unquoted-SQL era lowercased it to
+      // `lastmessage` (and `lastmessageat`). Quote-aliases landed
+      // server-side so camelCase is primary again — the lowercase fallbacks
+      // stay so older cached/proxied payloads keep rendering.
+      lastMessage: (json['lastMessage'] ?? json['last_message'] ?? json['lastmessage'])
+          ?.toString(),
+      lastMessageAt: _parseDate(json['lastMessageAt'] ??
+          json['last_message_at'] ??
+          json['lastmessageat']),
       unreadCount: _parseIntOrZero(json['unreadCount'] ?? json['unread_count']),
       lastMessageSenderId:
           (json['lastMessageSenderId'] ?? json['last_message_sender_id'])?.toString(),

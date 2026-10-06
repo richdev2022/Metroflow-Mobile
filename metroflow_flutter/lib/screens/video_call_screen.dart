@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io' show Platform;
+import 'dart:math' show Random;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -129,6 +130,22 @@ class _ChatLine {
   });
 }
 
+/// One floating reaction animation (rising emoji). [startDx] is a random
+/// 0..1 horizontal anchor so bursts of reactions don't stack in a line.
+class _FloatingReaction {
+  final int id;
+  final String emoji;
+  final String? fromName;
+  final double startDx;
+
+  _FloatingReaction({
+    required this.id,
+    required this.emoji,
+    this.fromName,
+    required this.startDx,
+  });
+}
+
 class _ParticipantTileData {
   final String id;
   final String displayName;
@@ -205,6 +222,30 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   // Google Meet-style pin: tap a tile to make it the big stage tile; tap
   // again (or tap the stage) to unpin. Screen shares always take the stage.
   String? _pinnedPeerId;
+
+  // -------------------------------------------------------------------------
+  // Reactions + raise hand (call-room social layer, web CallRoom parity).
+  // Reactions: 6-emoji strip toggled from the dock's smiley button; tapping
+  // spawns a rising-emoji animation AND emits call:reaction. Incoming
+  // call:reaction-received spawns the same animation with a fromName chip.
+  // Raise hand: dock toggle (✋) emits call:raise-hand; call:hand-updated
+  // maintains the authoritative userId -> raised map that draws the tile
+  // badges + the header counter chip.
+  // -------------------------------------------------------------------------
+  static const List<String> _reactionEmojis = ['👍', '❤️', '😂', '😮', '👏', '🎉'];
+  static const int _maxFloatingReactions = 8;
+  bool _showReactionBar = false;
+  bool _handRaised = false;
+  final Map<String, bool> _raisedHands = {};
+  final List<_FloatingReaction> _floatingReactions = [];
+  final Map<int, Timer> _reactionTimers = {};
+  final Random _reactionRandom = Random();
+  int _reactionSeq = 0;
+  /// Canonical room id from the call:join ack — used to match the roomId on
+  /// call:reaction-received / call:hand-updated when widget.roomId is a code.
+  String? _resolvedRoomId;
+  void Function(dynamic)? _previousReactionHandler;
+  void Function(dynamic)? _previousHandHandler;
 
   // AI meeting notes: notified while a meeting room is open when the backend
   // finishes generating notes for THIS meeting.
@@ -290,6 +331,10 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     if (VideoCallScreen.activeCallRoomId == widget.roomId) {
       VideoCallScreen.activeCallRoomId = null;
     }
+    for (final timer in _reactionTimers.values) {
+      timer.cancel();
+    }
+    _reactionTimers.clear();
     _stopCaptionBroadcast();
     unawaited(_cleanup());
     _chatController.dispose();
@@ -369,6 +414,12 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     }
 
     if (!ackFailed && ack is Map) {
+      // Canonical room id (the server resolves codes -> id): reactions and
+      // raise-hand events echo THIS id in `roomId`.
+      final resolvedRoom = ack['roomId']?.toString();
+      if (resolvedRoom != null && resolvedRoom.isNotEmpty) {
+        _resolvedRoomId = resolvedRoom;
+      }
       if (ack['waitingRoom'] == true) {
         _enterWaitingRoom();
         return;
@@ -1040,6 +1091,54 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _previousCountdownWarnHandler = _socket.onCallCountdownWarning;
     _previousMultiDeviceHandler = _socket.onCallMultiDevice;
     _previousNotesHandler = _socket.onMeetingNotesUpdated;
+    _previousReactionHandler = _socket.onCallReactionReceived;
+    _previousHandHandler = _socket.onCallHandUpdated;
+
+    // Incoming call-room reaction { emoji, from, fromName, roomId, ts }.
+    // The server broadcasts to the whole room INCLUDING the sender — we
+    // already animated our own reaction at tap time, so skip that echo.
+    _socket.onCallReactionReceived = (data) {
+      _previousReactionHandler?.call(data);
+      if (!mounted || data is! Map) return;
+      final payload = Map<String, dynamic>.from(data);
+      final from = (payload['from'] ?? payload['userId'] ?? '').toString();
+      if (from.isNotEmpty && from == _resolvedUserId) return;
+      final emoji = (payload['emoji'] ?? '').toString();
+      if (emoji.isEmpty) return;
+      final fromNameRaw = (payload['fromName'] ?? '').toString();
+      _spawnReaction(emoji, fromName: fromNameRaw.isEmpty ? null : fromNameRaw);
+    };
+
+    // Raise-hand broadcast { userId, name, raised, roomId, ts }: maintain
+    // the authoritative map that drives tile badges + the header chip.
+    _socket.onCallHandUpdated = (data) {
+      _previousHandHandler?.call(data);
+      if (!mounted || data is! Map) return;
+      final payload = Map<String, dynamic>.from(data);
+      final roomId = payload['roomId']?.toString();
+      if (roomId != null &&
+          roomId.isNotEmpty &&
+          roomId != widget.roomId &&
+          roomId != _resolvedRoomId) {
+        return;
+      }
+      final userId = (payload['userId'] ?? '').toString();
+      if (userId.isEmpty) return;
+      final raised = payload['raised'] != false;
+      setState(() {
+        if (raised) {
+          _raisedHands[userId] = true;
+        } else {
+          _raisedHands.remove(userId);
+        }
+        // Another device of THIS account toggled — keep the local state
+        // authoritative-aligned (the join ack never carries hand state, so
+        // this is also how a reconnect restores the raised flag).
+        if (userId == _resolvedUserId) {
+          _handRaised = raised;
+        }
+      });
+    };
 
     // AI meeting notes became ready while we are in the room → subtle
     // snackbar that opens the notes view on top of the call screen.
@@ -1248,6 +1347,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _socket.onMeetingNotesUpdated = _previousNotesHandler;
     _socket.onWaitingRoomAdmitted = _previousWaitingAdmittedHandler;
     _socket.onWaitingRoomDenied = _previousWaitingDeniedHandler;
+    _socket.onCallReactionReceived = _previousReactionHandler;
+    _socket.onCallHandUpdated = _previousHandHandler;
     _waitingHintTimer?.cancel();
     _waitingHintTimer = null;
     _joinWatchdog?.cancel();
@@ -1728,6 +1829,35 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
               ),
             if (_showChat) _buildChatPanel(),
             if (_showJoinRetry && !_isWaitingForAdmission) _buildJoinRetryBanner(),
+            // Floating reaction animations — rise from the bottom of the
+            // call stage (purely visual, never intercepts touches).
+            if (_floatingReactions.isNotEmpty)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: Stack(
+                    children: [
+                      for (final reaction in _floatingReactions)
+                        _FloatingReactionBubble(
+                          key: ValueKey<int>(reaction.id),
+                          reaction: reaction,
+                          onCompleted: () => _removeReaction(reaction.id),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            // Reaction bar — compact emoji strip ABOVE the control dock,
+            // toggled from the smiley button in the dock.
+            if (_showReactionBar && !_isWaitingForAdmission)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 150,
+                child: SafeArea(
+                  top: false,
+                  child: Center(child: _buildReactionBar()),
+                ),
+              ),
             // Bottom control bar — SafeArea(bottom) guarantees the hang-up
             // button is NEVER clipped by gesture bars / home indicators, and
             // the Wrap layout keeps every control reachable down to 320dp.
@@ -1931,6 +2061,10 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                       _buildDurationChip(),
                       const SizedBox(width: 6),
                       _buildParticipantCountChip(),
+                      if (_raisedHands.isNotEmpty) ...[
+                        const SizedBox(width: 6),
+                        _buildRaisedHandsChip(),
+                      ],
                     ],
                   ),
                 ],
@@ -2241,6 +2375,22 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                 ],
               ),
             ),
+            // Raise-hand badge (Google Meet style amber ✋) — top-right so
+            // it never collides with the pinned/presenting chips (top-left).
+            if (_isHandRaisedFor(participant))
+              Positioned(
+                right: 10,
+                top: 10,
+                child: Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF59E0B),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.black26),
+                  ),
+                  child: const Text('✋', style: TextStyle(fontSize: 14)),
+                ),
+              ),
           ],
         ),
       ),
@@ -2455,6 +2605,143 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     );
   }
 
+  // -------------------------------------------------------------------------
+  // Reactions + raise hand — actions and widgets
+  // -------------------------------------------------------------------------
+
+  /// Spawns a rising-emoji animation (capped at [_maxFloatingReactions]
+  /// concurrent — the oldest is dropped). Each animation self-removes via
+  /// onEnd AND a belt-and-braces timer (~3.2s) that is disposed with the
+  /// screen so a paused ticker can never leak a bubble.
+  void _spawnReaction(String emoji, {String? fromName}) {
+    if (!mounted) return;
+    setState(() {
+      while (_floatingReactions.length >= _maxFloatingReactions) {
+        final dropped = _floatingReactions.removeAt(0);
+        _reactionTimers.remove(dropped.id)?.cancel();
+      }
+      _reactionSeq += 1;
+      final id = _reactionSeq;
+      _floatingReactions.add(_FloatingReaction(
+        id: id,
+        emoji: emoji,
+        fromName: fromName,
+        // Random horizontal anchor + tilt so bursts don't line up.
+        startDx: 0.08 + _reactionRandom.nextDouble() * 0.74,
+      ));
+      _reactionTimers[id] = Timer(const Duration(milliseconds: 3200), () {
+        _reactionTimers.remove(id);
+        if (!mounted) return;
+        setState(() => _floatingReactions.removeWhere((r) => r.id == id));
+      });
+    });
+  }
+
+  void _removeReaction(int id) {
+    _reactionTimers.remove(id)?.cancel();
+    if (!mounted) return;
+    setState(() => _floatingReactions.removeWhere((r) => r.id == id));
+  }
+
+  void _toggleReactionBar() {
+    setState(() => _showReactionBar = !_showReactionBar);
+  }
+
+  /// Local tap: show the animation instantly, then emit `call:reaction`
+  /// { roomCode, emoji } — the server broadcasts `call:reaction-received`
+  /// to the room; our own echo is skipped via the `from` guard.
+  void _sendReaction(String emoji) {
+    _spawnReaction(emoji);
+    _socket.emitCallReaction({
+      'roomCode': widget.roomId,
+      'emoji': emoji,
+    });
+  }
+
+  void _toggleHand() {
+    final raised = !_handRaised;
+    setState(() => _handRaised = raised);
+    _socket.emitCallRaiseHand({
+      'roomCode': widget.roomId,
+      'raised': raised,
+    });
+  }
+
+  bool _isHandRaisedFor(_ParticipantTileData participant) {
+    if (participant.isLocal) {
+      return _handRaised ||
+          (_resolvedUserId.isNotEmpty && _raisedHands[_resolvedUserId] == true);
+    }
+    // Remote tile ids ARE user ids (mediasoup peerId / LiveKit identity).
+    return _raisedHands[participant.id] == true;
+  }
+
+  /// Amber ✋ counter chip for the top bar (hidden when nobody's hand is up).
+  Widget _buildRaisedHandsChip() {
+    final count = _raisedHands.length;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF59E0B).withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0xFFF59E0B).withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('✋', style: TextStyle(fontSize: 11)),
+          const SizedBox(width: 4),
+          Text(
+            '$count',
+            style: const TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
+              fontFeatures: [FontFeature.tabularFigures()],
+              color: Color(0xFFFBBF24),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Compact 6-emoji strip shown above the control dock.
+  Widget _buildReactionBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0B1220).withValues(alpha: 0.95),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.white10),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.45),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < _reactionEmojis.length; i++) ...[
+            if (i > 0) const SizedBox(width: 2),
+            GestureDetector(
+              onTap: () => _sendReaction(_reactionEmojis[i]),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+                child: Text(
+                  _reactionEmojis[i],
+                  style: const TextStyle(fontSize: 23),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildControls() {
     // Wrap (not Row): on narrow screens (320dp) the controls flow onto a
     // second line instead of overflowing — the hang-up button ALWAYS stays
@@ -2539,6 +2826,22 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
               active: _isRecording,
               activeColor: const Color(0xFFEF4444),
               onPressed: _toggleRecording,
+            ),
+            // Reactions: toggles the 6-emoji strip above the dock.
+            _dockButton(
+              icon: _showReactionBar
+                  ? Icons.emoji_emotions
+                  : Icons.emoji_emotions_outlined,
+              active: _showReactionBar,
+              onPressed: _toggleReactionBar,
+            ),
+            // Raise hand toggle — amber highlight while raised; the server's
+            // call:hand-updated broadcast is the authoritative state.
+            _dockButton(
+              icon: Icons.front_hand,
+              active: _handRaised,
+              activeColor: const Color(0xFFF59E0B),
+              onPressed: _toggleHand,
             ),
             _leaveButton(),
           ],
@@ -3088,6 +3391,88 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// One rising-emoji animation. Anchored at a random horizontal position near
+/// the bottom of the stage, rises ~45% of the screen height with a slight
+/// sideways drift + tilt, then fades out. Purely visual — the parent wraps
+/// it in an IgnorePointer. Self-removes via [onCompleted] (TweenAnimation
+/// onEnd) and the screen's safety timer disposes any stragglers.
+class _FloatingReactionBubble extends StatelessWidget {
+  final _FloatingReaction reaction;
+  final VoidCallback onCompleted;
+
+  const _FloatingReactionBubble({
+    super.key,
+    required this.reaction,
+    required this.onCompleted,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 2800),
+      curve: Curves.easeOutCubic,
+      onEnd: onCompleted,
+      builder: (context, t, _) {
+        // Rise: bottom of the stage -> ~45% of screen height.
+        final dy = -t * size.height * 0.45;
+        // Gentle sideways drift (direction alternates per reaction id).
+        final dx = (t * 26) * (reaction.id.isEven ? 1.0 : -1.0);
+        // Hold fully visible for 70% of the flight, then fade out.
+        final opacity = t < 0.7 ? 1.0 : (1.0 - (t - 0.7) / 0.3).clamp(0.0, 1.0);
+        // Pop in over the first 10%, then hold.
+        final scale = t < 0.1 ? 0.6 + 4.0 * t : 1.0;
+        return Align(
+          alignment: Alignment(reaction.startDx * 2 - 1, 1),
+          child: Transform.translate(
+            offset: Offset(dx, dy),
+            child: Opacity(
+              opacity: opacity,
+              child: Transform.scale(
+                scale: scale,
+                child: Transform.rotate(
+                  angle: (t - 0.5) * (reaction.id.isEven ? 0.16 : -0.16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        reaction.emoji,
+                        style: const TextStyle(fontSize: 36),
+                      ),
+                      if (reaction.fromName != null && reaction.fromName!.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.55),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          constraints: const BoxConstraints(maxWidth: 120),
+                          child: Text(
+                            reaction.fromName!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

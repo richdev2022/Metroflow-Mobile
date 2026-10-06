@@ -98,6 +98,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   KycStatus? _kycStatus;
   bool _isLoading = true;
   bool _isSaving = false;
+
+  /// ANDROID MULTI-TRIGGER FIX: in-flight guard for the biometric switch.
+  /// `_isSaving` disables the Switch only after the rebuild — two taps in
+  /// the same frame re-entered `_handleBiometricToggle` and stacked a second
+  /// local_auth prompt on the first (a failed match then re-ran
+  /// authenticate() twice). Cleared in a finally so EVERY exit path resets.
+  bool _authInFlight = false;
+
   bool _biometricsEnabled = false;
   bool _biometricsAvailable = false;
   bool _hasBiometricHardware = false;
@@ -728,47 +736,53 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _handleBiometricToggle(bool value) async {
-    setState(() => _isSaving = true);
-    if (value) {
-      // Device capability: biometrics OR the device PIN/pattern fallback.
-      final canAuth = await BiometricService.canAuthenticate();
-      if (!canAuth) {
-        setState(() => _isSaving = false);
-        _showInfo(
-          'Biometrics Not Available',
-          'This device does not support biometric or device-credential unlock.',
-        );
-        return;
+    if (_authInFlight) return; // already running — never re-enter authenticate()
+    _authInFlight = true;
+    try {
+      setState(() => _isSaving = true);
+      if (value) {
+        // Device capability: biometrics OR the device PIN/pattern fallback.
+        final canAuth = await BiometricService.canAuthenticate();
+        if (!canAuth) {
+          setState(() => _isSaving = false);
+          _showInfo(
+            'Biometrics Not Available',
+            'This device does not support biometric or device-credential unlock.',
+          );
+          return;
+        }
+        final enrolled = await BiometricService.isEnrolled();
+        if (!enrolled && !await BiometricService.isDeviceSupported()) {
+          setState(() => _isSaving = false);
+          _showInfo(
+            'Biometrics Not Set Up',
+            'Please set up fingerprint, face recognition, or a screen lock in your device settings first.',
+          );
+          return;
+        }
+        // enableBiometricsWithResult runs the local_auth prompt (with the
+        // device-credential fallback) and enrolls the device on the backend,
+        // storing the returned biometric_token in secure storage.
+        final result = await ref.read(authProvider.notifier).enableBiometricsWithResult();
+        if (!result.success) {
+          setState(() => _isSaving = false);
+          _showError(result.error ?? 'Failed to enable biometric login');
+          return;
+        }
+        setState(() => _biometricsEnabled = true);
+        AppToast.show('Biometric unlock enabled', type: AppToastType.success);
+      } else {
+        // disableBiometrics revokes the enrollment on the backend (DELETE
+        // /auth/biometric/enroll) and wipes the locally stored token.
+        await ref.read(authProvider.notifier).disableBiometrics();
+        setState(() => _biometricsEnabled = false);
+        AppToast.show('Biometric login disabled');
       }
-      final enrolled = await BiometricService.isEnrolled();
-      if (!enrolled && !await BiometricService.isDeviceSupported()) {
-        setState(() => _isSaving = false);
-        _showInfo(
-          'Biometrics Not Set Up',
-          'Please set up fingerprint, face recognition, or a screen lock in your device settings first.',
-        );
-        return;
-      }
-      // enableBiometricsWithResult runs the local_auth prompt (with the
-      // device-credential fallback) and enrolls the device on the backend,
-      // storing the returned biometric_token in secure storage.
-      final result = await ref.read(authProvider.notifier).enableBiometricsWithResult();
-      if (!result.success) {
-        setState(() => _isSaving = false);
-        _showError(result.error ?? 'Failed to enable biometric login');
-        return;
-      }
-      setState(() => _biometricsEnabled = true);
-      AppToast.show('Biometric unlock enabled', type: AppToastType.success);
-    } else {
-      // disableBiometrics revokes the enrollment on the backend (DELETE
-      // /auth/biometric/enroll) and wipes the locally stored token.
-      await ref.read(authProvider.notifier).disableBiometrics();
-      setState(() => _biometricsEnabled = false);
-      AppToast.show('Biometric login disabled');
+      await _checkBiometricAvailability();
+      if (mounted) setState(() => _isSaving = false);
+    } finally {
+      _authInFlight = false;
     }
-    await _checkBiometricAvailability();
-    if (mounted) setState(() => _isSaving = false);
   }
 
   // ---------------------------------------------------------------------
