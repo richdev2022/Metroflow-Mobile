@@ -67,6 +67,12 @@ class SocketService {
   void Function(dynamic)? onChatConversationRead;
   void Function(dynamic)? onChatTyping;
   void Function(dynamic)? onChatStopTyping;
+  /// WhatsApp-style typing presence (new pipeline): the server relays
+  /// `chat:typing` { conversationId, isTyping } emissions to every OTHER
+  /// participant's user room as `chat:typing-updated` with the payload
+  /// { conversationId, userId, name, isTyping, ts }. Consumed by the chat
+  /// list screen to render per-conversation "typing…" tiles.
+  void Function(dynamic)? onChatTypingUpdated;
   void Function(dynamic)? onChatNewMessageNotification;
   void Function(dynamic)? onCallDurationStarted;
   void Function(dynamic)? onCallDurationActive;
@@ -92,6 +98,16 @@ class SocketService {
   /// 2+ devices (backend counts sockets per room). Payload:
   /// { roomId, userId, userName, deviceCount, message }
   void Function(dynamic)? onCallMultiDevice;
+
+  /// Call-room reactions: someone in `room:{id}` tapped an emoji. Payload:
+  /// { emoji, from, fromName, roomId, roomType, ts }. NOTE the emitter's own
+  /// socket also receives this broadcast (io.to includes the sender) —
+  /// consumers echo-guard their own reactions via `from`.
+  void Function(dynamic)? onCallReactionReceived;
+
+  /// Raise-hand state changes in a call room. Payload:
+  /// { userId, name, raised, roomId, roomType, ts }.
+  void Function(dynamic)? onCallHandUpdated;
 
   void connect(String userId, String businessId, {String? token}) {
     // A socket in reconnect-limbo (connected == false but not disposed) used to
@@ -335,6 +351,23 @@ class SocketService {
       if (onChatStopTyping != null) onChatStopTyping!(data);
     });
 
+    // New typing pipeline — relays to the USER room (the authenticated
+    // handshake auto-joins user:{id}), so the chat LIST screen sees typing
+    // for every conversation at once. Old backends simply never fire it.
+    _socket?.on('chat:typing-updated', (data) {
+      if (onChatTypingUpdated != null) onChatTypingUpdated!(data);
+    });
+
+    // Call-room reactions + raise hand (web & mobile parity — see
+    // server/lib/socket.ts). Broadcast to room:{id} including the sender.
+    _socket?.on('call:reaction-received', (data) {
+      if (onCallReactionReceived != null) onCallReactionReceived!(data);
+    });
+
+    _socket?.on('call:hand-updated', (data) {
+      if (onCallHandUpdated != null) onCallHandUpdated!(data);
+    });
+
     _socket?.on('caption:updated', (data) {
       if (onCaptionUpdated != null) onCaptionUpdated!(data);
     });
@@ -492,6 +525,58 @@ class SocketService {
 
   void emitChatStopTyping(Map<String, dynamic> data) {
     _socket?.emit('chat:stop-typing', data);
+  }
+
+  // Throttle state for [emitChatTypingState]. `true` is emitted at most
+  // every 2.5s while the user keeps typing; `false` always goes out on
+  // send/blur so the peer's indicator can drop early.
+  DateTime? _lastTypingTrueAt;
+  String? _typingConversationId;
+
+  /// WhatsApp-style typing emitter for the NEW pipeline: emits
+  /// `chat:typing` { conversationId, isTyping } — the server relays it as
+  /// `chat:typing-updated` to every other participant's user room.
+  ///
+  /// Throttled: while typing, `true` goes out at most every 2.5s (the peer
+  /// keeps the indicator alive with the 4s auto-clear rule); `false` is
+  /// ALWAYS emitted (send/blur) so the indicator never lingers.
+  void emitChatTypingState(String conversationId, bool isTyping) {
+    if (conversationId.isEmpty) return;
+    if (isTyping) {
+      final now = DateTime.now();
+      if (_typingConversationId == conversationId &&
+          _lastTypingTrueAt != null &&
+          now.difference(_lastTypingTrueAt!) < const Duration(milliseconds: 2500)) {
+        return; // throttled — peer's indicator is still alive
+      }
+      _typingConversationId = conversationId;
+      _lastTypingTrueAt = now;
+      _socket?.emit('chat:typing', {
+        'conversationId': conversationId,
+        'isTyping': true,
+      });
+      return;
+    }
+    // Stop: always emit false (send/blur), then reset the throttle window.
+    _socket?.emit('chat:typing', {
+      'conversationId': conversationId,
+      'isTyping': false,
+    });
+    _typingConversationId = null;
+    _lastTypingTrueAt = null;
+  }
+
+  /// Call-room reaction: emit `call:reaction` { roomCode, emoji } — the
+  /// server resolves the room (uuid/code/roomId all work) and broadcasts
+  /// `call:reaction-received` to everyone in it (including us).
+  void emitCallReaction(Map<String, dynamic> data) {
+    _socket?.emit('call:reaction', data);
+  }
+
+  /// Call-room raise-hand toggle: emit `call:raise-hand`
+  /// { roomCode, raised } — the server broadcasts `call:hand-updated`.
+  void emitCallRaiseHand(Map<String, dynamic> data) {
+    _socket?.emit('call:raise-hand', data);
   }
 
   Future<dynamic> _emitAck(String event, [dynamic data]) {

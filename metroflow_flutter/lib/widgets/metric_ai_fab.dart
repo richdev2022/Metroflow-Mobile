@@ -194,7 +194,12 @@ class _MetricAiFloatingBubbleState
                   ),
                   padding: const EdgeInsets.all(3),
                   child: Image.asset(
-                    'assets/images/appIcon.png',
+                    // WHITE-MATTE FIX: appIcon.png is an RGB PNG with the
+                    // mark baked onto an opaque white canvas (no alpha), so
+                    // a white square showed inside the themed disc in dark
+                    // mode. logo-mark.png is the identical mark with a
+                    // transparent background.
+                    'assets/images/logo-mark.png',
                     fit: BoxFit.contain,
                   ),
                 ),

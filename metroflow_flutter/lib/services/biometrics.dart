@@ -25,13 +25,60 @@ class BiometricService {
   /// cancelling it.
   static Future<BiometricResult>? _inFlight;
 
+  // ---------------------------------------------------------------------------
+  // CAPABILITY PROBE CACHE (process lifetime) — ANDROID MULTI-TRIGGER FIX.
+  //
+  // hasHardware()/isDeviceSupported()/isEnrolled()/getAvailableTypes() each
+  // hit platform channels. The pre-flight sequence every authenticate() used
+  // to run (canAuthenticate -> isAvailable -> hasHardware ->
+  // isDeviceSupported -> canCheckBiometrics -> getAvailableBiometrics) fired
+  // 4-6 platform calls BEFORE the prompt went up — and on several OEMs
+  // (Samsung/Xiaomi) poking the biometric manager channel cancels a
+  // fingerprint prompt that is still pending, forcing the user through
+  // biometric multiple times. The probes are now memoized for the lifetime
+  // of the process; failures are never cached (a transient channel error
+  // still retries).
+  //
+  // The underlying facts can only change while the process lives when the
+  // user enrolls/removes biometrics in SYSTEM settings — i.e. exactly when
+  // the app is backgrounded. main.dart calls [resetCapabilityCache] on every
+  // app RESUME so the next attempt re-probes fresh.
+  // ---------------------------------------------------------------------------
+  static bool? _cachedHasHardware;
+  static bool? _cachedDeviceSupported;
+  static List<BiometricType>? _cachedAvailableBiometrics;
+
+  /// Drops the memoized capability probes. Called on app resume (main.dart)
+  /// so an enrollment change made in system settings is picked up again.
+  static void resetCapabilityCache() {
+    _cachedHasHardware = null;
+    _cachedDeviceSupported = null;
+    _cachedAvailableBiometrics = null;
+  }
+
+  /// Memoized [LocalAuthentication.getAvailableBiometrics] — the single point
+  /// every enrollment-dependent check funnels through.
+  static Future<List<BiometricType>> _probeAvailableBiometrics() async {
+    final cached = _cachedAvailableBiometrics;
+    if (cached != null) return cached;
+    final biometrics = await _auth.getAvailableBiometrics();
+    _cachedAvailableBiometrics = biometrics;
+    return biometrics;
+  }
+
   static Future<bool> hasHardware() async {
     if (kIsWeb) {
       return false;
     }
+    final cached = _cachedHasHardware;
+    if (cached != null) return cached;
     try {
       final supported = await _auth.isDeviceSupported();
-      if (!supported) return false;
+      if (!supported) {
+        _cachedDeviceSupported = false;
+        _cachedHasHardware = false;
+        return false;
+      }
 
       // Try canCheckBiometrics first
       bool canCheck = false;
@@ -41,22 +88,25 @@ class BiometricService {
         debugPrint('Error checking canCheckBiometrics: $e');
       }
 
+      bool result;
       if (canCheck) {
         // Check for available biometrics
         try {
-          final biometrics = await _auth.getAvailableBiometrics();
-          return biometrics.isNotEmpty;
+          final biometrics = await _probeAvailableBiometrics();
+          result = biometrics.isNotEmpty;
         } catch (e) {
           debugPrint('Error getting available biometrics: $e');
-          return true; // If we can check, assume available
+          result = true; // If we can check, assume available
         }
+      } else {
+        // Fallback: if canCheck fails, just return supported status
+        result = supported;
       }
-
-      // Fallback: if canCheck fails, just return supported status
-      return supported;
+      _cachedHasHardware = result;
+      return result;
     } catch (e) {
       debugPrint('Failed to check biometric hardware: $e');
-      return false;
+      return false; // never cache failures
     }
   }
 
@@ -68,8 +118,12 @@ class BiometricService {
     if (kIsWeb) {
       return false;
     }
+    final cached = _cachedDeviceSupported;
+    if (cached != null) return cached;
     try {
-      return await _auth.isDeviceSupported();
+      final supported = await _auth.isDeviceSupported();
+      _cachedDeviceSupported = supported;
+      return supported;
     } catch (e) {
       debugPrint('Failed to check device support: $e');
       return false;
@@ -87,7 +141,7 @@ class BiometricService {
       return false;
     }
     try {
-      final biometrics = await _auth.getAvailableBiometrics();
+      final biometrics = await _probeAvailableBiometrics();
       return biometrics.isNotEmpty;
     } catch (e) {
       debugPrint('Failed to check biometric enrollment: $e');
@@ -116,7 +170,7 @@ class BiometricService {
       return [];
     }
     try {
-      return await _auth.getAvailableBiometrics();
+      return await _probeAvailableBiometrics();
     } catch (e) {
       debugPrint('Failed to get biometric types: $e');
       return [];
@@ -176,6 +230,16 @@ class BiometricService {
 
       debugPrint('Starting biometric authentication...');
 
+      // STICKY AUTH (Android multi-trigger fix): in local_auth 3.x the
+      // `persistAcrossBackgrounding` flag IS AuthenticationOptions.stickyAuth
+      // — it is forwarded verbatim (local_auth maps stickyAuth:
+      // persistAcrossBackgrounding into the platform options and
+      // local_auth_android passes it as the `sticky` platform arg). It keeps
+      // the system sheet alive when the app is backgrounded mid-prompt
+      // instead of cancelling and re-prompting. AndroidAuthMessages
+      // (local_auth_android 2.0.8) has NO separate stickyAuth field — this
+      // flag is the only knob. biometricOnly stays FALSE on purpose: the
+      // device-credential (PIN/pattern) fallback is intentional.
       final result = await _auth.authenticate(
         localizedReason: promptMessage,
         biometricOnly: false,
@@ -242,9 +306,10 @@ class BiometricService {
     }
   }
 
-  /// Biometrics enabled — PER-ACCOUNT when a userId is given (falls back to
-  /// the legacy device-wide flag for installs that never stored a per-account
-  /// value). Without a userId this is the raw legacy flag.
+  /// Biometrics enabled — PER-ACCOUNT when a userId is given (the per-account
+  /// key is the ONLY source: no legacy fallback, so a fresh account starts
+  /// OFF even if a previous account on this device opted in). Without a
+  /// userId this is the raw legacy device-wide flag.
   static Future<bool> isEnabled([String? userId]) async {
     try {
       final storage = StorageService();

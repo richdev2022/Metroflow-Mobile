@@ -28,6 +28,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _biometricsAvailable = false;
   bool _showBiometricsSetupModal = false;
 
+  /// ANDROID MULTI-TRIGGER FIX: one shared in-flight guard for BOTH biometric
+  /// call sites ("Sign in with Biometrics" + the setup-modal "Enable
+  /// Biometrics"). The buttons already disable while `_biometricLoading`,
+  /// but two taps inside the same frame still double-fired before the
+  /// rebuild — a failed match then re-entered authenticate() twice. The
+  /// guard makes the second entry a no-op (BiometricService's own in-flight
+  /// dedupe remains as the second line of defence).
+  bool _authInFlight = false;
+
   @override
   void initState() {
     super.initState();
@@ -127,8 +136,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _handleBiometricLogin() async {
+    if (_authInFlight) return; // already running — never re-enter authenticate()
     setState(() {
       _biometricLoading = true;
+      _authInFlight = true;
     });
 
     try {
@@ -152,14 +163,19 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       if (mounted) {
         setState(() {
           _biometricLoading = false;
+          _authInFlight = false;
         });
+      } else {
+        _authInFlight = false;
       }
     }
   }
 
   Future<void> _handleSetupBiometrics() async {
+    if (_authInFlight) return; // already running — never re-enter authenticate()
     setState(() {
       _biometricLoading = true;
+      _authInFlight = true;
     });
 
     try {
@@ -191,7 +207,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       if (mounted) {
         setState(() {
           _biometricLoading = false;
+          _authInFlight = false;
         });
+      } else {
+        _authInFlight = false;
       }
     }
   }

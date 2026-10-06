@@ -59,14 +59,16 @@ class MetricAiGlowLogo extends StatelessWidget {
       ),
       padding: EdgeInsets.all(size * 0.08),
       child: ClipOval(
-        // Use the SQUARE app icon here: the wide wordmark (logo.png,
-        // 1024x273) is cropped to a blank sliver inside a circular
-        // BoxFit.cover frame — the same bug fixed on the web app.
-        // BoxFit.contain (object-contain) guarantees the full new
-        // blue-purple mark stays visible inside the white circle no
-        // matter its aspect ratio.
+        // WHITE-MATTE FIX: this used to render 'assets/images/appIcon.png',
+        // a 1024x1024 RGB PNG with NO alpha channel — the mark is baked onto
+        // an opaque white canvas, so a white square always showed inside the
+        // disc no matter the theme (glaring in dark mode). 'logo-mark.png'
+        // is the same blue-purple mark with a real transparent background
+        // (already used by auth/onboarding/main screens), so the theme-aware
+        // disc above finally shows through. BoxFit.contain keeps the full
+        // mark visible inside the circle no matter its aspect ratio.
         child: Image.asset(
-          'assets/images/appIcon.png',
+          'assets/images/logo-mark.png',
           fit: BoxFit.contain,
         ),
       ),

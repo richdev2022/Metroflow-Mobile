@@ -131,6 +131,9 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
     _lookupTimers[recipientId]?.cancel();
     final recipient = _recipients.where((r) => r.id == recipientId).toList();
     if (recipient.isEmpty) return;
+    // USD (international) rows have NO NGN account lookup — Flutterwave has
+    // no account resolution there, the beneficiary details are typed in.
+    if (recipient.first.isUsd) return;
     final account = recipient.first.recipientAccount.trim();
     final bank = recipient.first.recipientBank.trim();
     if (bank.isEmpty || account.length != 10) return;
@@ -230,56 +233,60 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
         if (r.id != id) return r;
         switch (field) {
           case 'recipientAccount':
-            return Recipient(
-              id: r.id,
-              recipientAccount: value,
-              recipientBank: r.recipientBank,
-              recipientName: r.recipientName,
-              amount: r.amount,
-              remark: r.remark,
-              sourceType: r.sourceType,
-              sourceId: r.sourceId,
-            );
+            return r.copyWith(recipientAccount: value);
           case 'recipientBank':
-            return Recipient(
-              id: r.id,
-              recipientAccount: r.recipientAccount,
-              recipientBank: value,
-              recipientName: r.recipientName,
-              amount: r.amount,
-              remark: r.remark,
-              sourceType: r.sourceType,
-              sourceId: r.sourceId,
-            );
+            return r.copyWith(recipientBank: value);
           case 'recipientName':
-            return Recipient(
-              id: r.id,
-              recipientAccount: r.recipientAccount,
-              recipientBank: r.recipientBank,
-              recipientName: value,
-              amount: r.amount,
-              remark: r.remark,
-              sourceType: r.sourceType,
-              sourceId: r.sourceId,
-            );
+            return r.copyWith(recipientName: value);
           case 'amount':
-            return Recipient(
-              id: r.id,
-              recipientAccount: r.recipientAccount,
-              recipientBank: r.recipientBank,
-              recipientName: r.recipientName,
-              amount: value,
-              remark: r.remark,
-              sourceType: r.sourceType,
-              sourceId: r.sourceId,
+            return r.copyWith(amount: value);
+          case 'currency':
+            // Corridor switch clears the OTHER side's fields so a stale
+            // NGN bank code never rides along with a USD payout (and vice
+            // versa) — mirrors the web behaviour.
+            if (value == 'USD') {
+              return r.copyWith(
+                currency: 'USD',
+                recipientBank: '',
+                recipientName: '',
+                recipientCountry: r.recipientCountry.isEmpty ? 'US' : r.recipientCountry,
+              );
+            }
+            return r.copyWith(
+              currency: 'NGN',
+              bankName: '',
+              swiftCode: '',
+              routingNumber: '',
+              accountType: 'checking',
+              beneficiaryEmail: '',
+              recipientAddress: '',
+              recipientCity: '',
+              recipientCountry: 'US',
             );
+          case 'bankName':
+            return r.copyWith(bankName: value);
+          case 'swiftCode':
+            return r.copyWith(swiftCode: value.toUpperCase());
+          case 'routingNumber':
+            return r.copyWith(routingNumber: value);
+          case 'accountType':
+            return r.copyWith(accountType: value);
+          case 'beneficiaryEmail':
+            return r.copyWith(beneficiaryEmail: value);
+          case 'recipientAddress':
+            return r.copyWith(recipientAddress: value);
+          case 'recipientCity':
+            return r.copyWith(recipientCity: value);
+          case 'recipientCountry':
+            return r.copyWith(recipientCountry: value);
           default:
             return r;
         }
       }).toList();
     });
-    // Auto-verify as soon as a full 10-digit account number is typed.
-    if (field == 'recipientAccount') {
+    // Auto-verify as soon as a full 10-digit account number is typed
+    // (NGN rows only — USD rows have no lookup).
+    if (field == 'recipientAccount' && !_recipients.any((r) => r.id == id && r.isUsd)) {
       _scheduleRecipientLookup(id);
     }
   }
@@ -298,6 +305,8 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
         sourceId: '',
       ),
     );
+    // USD (international) rows have no NGN account-name lookup.
+    if (recipient.isUsd) return;
     if (recipient.recipientBank.isEmpty || recipient.recipientAccount.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -340,6 +349,49 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
     }
   }
 
+  /// ABA routing-number checksum (US): weights cycle [3,7,1] over the first
+  /// 8 digits; the 9th digit must equal (10 - sum % 10) % 10 — the standard
+  /// 3-7-1 checksum the backend validates server-side.
+  bool _isValidAbaRouting(String routing) {
+    if (!RegExp(r'^\d{9}$').hasMatch(routing)) return false;
+    final digits = routing.split('').map((c) => int.parse(c)).toList();
+    const weights = [3, 7, 1];
+    var sum = 0;
+    for (var i = 0; i < 8; i++) {
+      sum += digits[i] * weights[i % 3];
+    }
+    return (10 - (sum % 10)) % 10 == digits[8];
+  }
+
+  /// SWIFT/BIC: 8 or 11 alphanumeric characters.
+  bool _isValidSwift(String swift) =>
+      RegExp(r'^[A-Za-z0-9]{8}(?:[A-Za-z0-9]{3})?$').hasMatch(swift.trim());
+
+  /// Per-recipient completeness + validity. Returns null when the row is
+  /// submittable, otherwise a human-readable reason (first failure wins).
+  String? _recipientValidationError(Recipient r) {
+    if (r.amount.trim().isEmpty || (double.tryParse(r.amount) ?? 0) <= 0) {
+      return 'enter a valid amount';
+    }
+    if (r.isUsd) {
+      if (r.bankName.trim().isEmpty) return 'bank name is required for USD transfers';
+      if (!_isValidSwift(r.swiftCode)) {
+        return 'SWIFT code must be 8 or 11 characters';
+      }
+      if (!_isValidAbaRouting(r.routingNumber.trim())) {
+        return 'routing number must be a valid 9-digit ABA number';
+      }
+      if (r.recipientAccount.trim().isEmpty) return 'account number is required';
+      if (r.recipientName.trim().isEmpty) return 'account name is required';
+    } else {
+      if (r.recipientBank.isEmpty) return 'select a bank';
+      if (!RegExp(r'^\d{10}$').hasMatch(r.recipientAccount.trim())) {
+        return 'NGN account numbers must be exactly 10 digits';
+      }
+    }
+    return null;
+  }
+
   Future<void> _handleRequestOtp() async {
     final wallet = _selectedWallet == 'business' ? _wallets['business_wallet'] : _wallets['user_wallet'];
     if (wallet == null) {
@@ -361,15 +413,19 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
     }
 
     if (_transferType == 'epic') {
-      final hasEmptyFields = _recipients.any((r) =>
-          r.recipientAccount.isEmpty || r.recipientBank.isEmpty || r.amount.isEmpty);
-      if (hasEmptyFields) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Please fill in all recipient details')),
-          );
+      // Per-currency completeness: NGN rows need bank + 10-digit account;
+      // USD rows need bank name + SWIFT + valid ABA routing + account.
+      for (final r in _recipients) {
+        final error = _recipientValidationError(r);
+        if (error != null) {
+          if (mounted) {
+            final label = r.accountDisplayLabel();
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('$label: $error')),
+            );
+          }
+          return;
         }
-        return;
       }
     }
 
@@ -456,15 +512,18 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
     }
 
     if (_transferType == 'epic') {
-      final hasEmptyFields = _recipients.any((r) =>
-          r.recipientAccount.isEmpty || r.recipientBank.isEmpty || r.amount.isEmpty);
-      if (hasEmptyFields) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Please fill in all recipient details')),
-          );
+      // Per-currency completeness + validity (same gate as the OTP step).
+      for (final r in _recipients) {
+        final error = _recipientValidationError(r);
+        if (error != null) {
+          if (mounted) {
+            final label = r.accountDisplayLabel();
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('$label: $error')),
+            );
+          }
+          return;
         }
-        return;
       }
       
       // Check minimum amount for epic transfers
@@ -499,15 +558,28 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
       // Check if it's single transfer mode
       if (_transferType == 'epic' && _transferMode == 'single') {
         final recipient = _recipients.first;
-        final payload = {
-          'bankCode': recipient.recipientBank,
-          'accountNumber': recipient.recipientAccount,
-          'accountName': recipient.recipientName,
+        // Per-recipient corridor: USD rows send the single-transfer
+        // handler's native international names, NGN rows keep bankCode.
+        final payload = <String, dynamic>{
+          'accountNumber': recipient.recipientAccount.trim(),
+          'accountName': recipient.recipientName.trim(),
           'amount': double.tryParse(recipient.amount) ?? 0,
-          // Explicit currency from the funding wallet — backend defaults to
-          // NGN and would reject a USD wallet with a currency mismatch.
-          'currency': wallet['currency'] ?? 'NGN',
+          // Row currency — the wallet-currency guard stays server-side.
+          'currency': recipient.currency.toUpperCase(),
           'remark': recipient.remark,
+          if (recipient.isUsd) ...{
+            'bankName': recipient.bankName.trim(),
+            'swiftCode': recipient.swiftCode.trim(),
+            'routingNumber': recipient.routingNumber.trim(),
+            'recipientAddress': recipient.recipientAddress.trim(),
+            'recipientCity': recipient.recipientCity.trim(),
+            'recipientCountry': recipient.recipientCountry.trim().toUpperCase(),
+            'accountType': recipient.accountType,
+            if (recipient.beneficiaryEmail.trim().isNotEmpty)
+              'beneficiaryEmail': recipient.beneficiaryEmail.trim(),
+          } else ...{
+            'bankCode': recipient.recipientBank.trim(),
+          },
           // Only send the OTP when the configuration requires one.
           if (_otpRequired) 'otp': _otp,
           'pin': _pin,
@@ -541,22 +613,41 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
             };
           }).toList();
         } else {
+          // Epic recipients — per-recipient corridor (NGN|USD). USD items
+          // use the POST /transfers/bulk contract names (recipientBankName,
+          // recipientSwiftCode, recipientRoutingNumber, ...); NGN items keep
+          // bankCode + 10-digit account.
           items = _recipients.map((r) {
-            return {
+            return <String, dynamic>{
               'amount': double.tryParse(r.amount) ?? 0,
-              'bankCode': r.recipientBank.trim(),
               'accountNumber': r.recipientAccount.trim(),
               'accountName': r.recipientName.trim(),
-              // Explicit currency from the funding wallet (backend guard
-              // rejects items whose currency differs from the source wallet).
-              'currency': wallet['currency'] ?? 'NGN',
+              'currency': r.currency.toUpperCase(),
               'remark': r.remark,
+              if (r.isUsd) ...{
+                'recipientBankName': r.bankName.trim(),
+                'recipientSwiftCode': r.swiftCode.trim(),
+                'recipientRoutingNumber': r.routingNumber.trim(),
+                'recipientAddress': r.recipientAddress.trim(),
+                'recipientCity': r.recipientCity.trim(),
+                'recipientCountry': r.recipientCountry.trim().toUpperCase(),
+                'beneficiaryEmail': r.beneficiaryEmail.trim(),
+                'accountType': r.accountType,
+              } else ...{
+                'bankCode': r.recipientBank.trim(),
+              },
             };
           }).toList();
         }
-        
-        final payload = {
+
+        final payload = <String, dynamic>{
           'type': _transferType == 'salary' ? 'Salary' : 'Epic',
+          // New contract: top-level `items` (+ `epicId`). The legacy
+          // `data.items` shape below is kept so older backends keep working.
+          if (_transferType == 'epic') ...{
+            'items': items,
+            if (_selectedEpic?.id != null) 'epicId': _selectedEpic!.id,
+          },
           // Only send the OTP when the configuration requires one.
           if (_otpRequired) 'otp': _otp,
           'pin': _pin,
@@ -589,12 +680,21 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
     }
   }
 
-  double get _totalAmount {
+  /// Per-currency totals — the summary card renders one line per currency
+  /// ("NGN 12,000 · USD 300") for mixed-corridor Epic batches.
+  Map<String, double> get _totalsByCurrency {
     if (_transferType == 'salary') {
-      return _employees.fold(0, (sum, emp) => sum + emp.netSalary);
-    } else {
-      return _recipients.fold(0, (sum, r) => sum + (double.tryParse(r.amount) ?? 0));
+      return {
+        'NGN': _employees.fold<double>(
+            0, (sum, emp) => sum + (emp.netSalary as num).toDouble()),
+      };
     }
+    final totals = <String, double>{};
+    for (final r in _recipients) {
+      final currency = r.currency.toUpperCase();
+      totals[currency] = (totals[currency] ?? 0) + (double.tryParse(r.amount) ?? 0);
+    }
+    return totals;
   }
 
   Wallet? get _selectedWalletData {
@@ -810,7 +910,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
                   ],
                   const SizedBox(height: 24),
                   _summaryCard(
-                    totalAmount: _totalAmount,
+                    totalsByCurrency: _totalsByCurrency,
                     transferType: _transferType,
                     recipientCount: _transferType == 'salary' ? _employees.length : _recipients.length,
                   ),
@@ -988,6 +1088,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
     VoidCallback? onRemove,
   }) {
     final colors = AppTheme.colors;
+    final isUsd = recipient.isUsd;
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
@@ -1002,14 +1103,19 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                'Recipient ${_recipients.indexOf(recipient) + 1}',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: colors.text,
+              Expanded(
+                child: Text(
+                  'Recipient ${_recipients.indexOf(recipient) + 1}',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: colors.text,
+                  ),
                 ),
               ),
+              // Per-recipient corridor toggle (NGN | USD) — mirrors the web
+              // Payroll page's mixed batches.
+              _buildCurrencyToggle(recipient),
               if (onRemove != null)
                 IconButton(
                   icon: const Icon(Icons.delete_outlined, color: AppColors.error, size: 20),
@@ -1017,84 +1123,325 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
                 ),
             ],
           ),
-          _buildField(
-            'Bank',
-            GestureDetector(
-              onTap: () {
-                setState(() {
-                  _bankSearchQuery = '';
-                  _bankSearchController.clear();
-                  _selectedRecipientIdForBank = recipient.id;
-                  _showBankPicker = true;
-                });
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          if (isUsd) ...[
+            _buildUsdFields(recipient),
+          ] else ...[
+            _buildField(
+              'Bank',
+              GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _bankSearchQuery = '';
+                    _bankSearchController.clear();
+                    _selectedRecipientIdForBank = recipient.id;
+                    _showBankPicker = true;
+                  });
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  decoration: BoxDecoration(
+                    color: colors.background,
+                    border: Border.all(color: colors.border),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        _banks.firstWhere((b) => b.code == recipient.recipientBank, orElse: () => Bank(code: '', name: 'Select a bank')).name,
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: recipient.recipientBank.isEmpty ? colors.textSecondary : colors.text,
+                        ),
+                      ),
+                      Icon(Icons.expand_more, color: colors.textSecondary),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            _buildAccountField(recipient),
+            if (recipient.recipientName.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                 decoration: BoxDecoration(
-                  color: colors.background,
-                  border: Border.all(color: colors.border),
-                  borderRadius: BorderRadius.circular(12),
+                  color: AppColors.success.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.success.withValues(alpha: 0.35)),
                 ),
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      _banks.firstWhere((b) => b.code == recipient.recipientBank, orElse: () => Bank(code: '', name: 'Select a bank')).name,
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: recipient.recipientBank.isEmpty ? colors.textSecondary : colors.text,
+                    const Icon(Icons.verified_rounded, size: 20, color: AppColors.success),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Account name: ${recipient.recipientName}',
+                        style: const TextStyle(
+                          color: AppColors.success,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                        ),
                       ),
                     ),
-                    Icon(Icons.expand_more, color: colors.textSecondary),
                   ],
                 ),
               ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          _buildAccountField(recipient),
-          if (recipient.recipientName.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-              decoration: BoxDecoration(
-                color: AppColors.success.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: AppColors.success.withValues(alpha: 0.35)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.verified_rounded, size: 20, color: AppColors.success),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Account name: ${recipient.recipientName}',
-                      style: const TextStyle(
-                        color: AppColors.success,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            ],
           ],
           const SizedBox(height: 16),
           _buildField(
-            'Amount',
+            'Amount${isUsd ? ' (USD)' : ' (NGN)'}',
             TextField(
               decoration: InputDecoration(
                 hintText: 'Enter amount (min: 100)',
                 hintStyle: TextStyle(color: colors.textSecondary),
+                prefixText: isUsd ? '\u0024 ' : '\u20A6 ',
+                prefixStyle: TextStyle(color: colors.text, fontSize: 16),
               ),
               style: TextStyle(color: colors.text, fontSize: 16),
-              keyboardType: TextInputType.number,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
               onChanged: (value) => _updateRecipient(recipient.id, 'amount', value),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  /// NGN | USD segmented pill for one recipient row.
+  Widget _buildCurrencyToggle(Recipient recipient) {
+    final colors = AppTheme.colors;
+    return Container(
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: colors.background,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: colors.border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: ['NGN', 'USD'].map((currency) {
+          final isSelected = recipient.currency.toUpperCase() == currency;
+          return GestureDetector(
+            onTap: () => _updateRecipient(recipient.id, 'currency', currency),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: isSelected ? colors.primary : Colors.transparent,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                currency,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  color: isSelected ? Colors.white : colors.textSecondary,
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  /// USD (international) beneficiary fields — validated per the backend's
+  /// corridor rules: bank name required, SWIFT 8/11, 9-digit ABA routing
+  /// with the 3-7-1 checksum. No account-name lookup exists on this route.
+  Widget _buildUsdFields(Recipient recipient) {
+    final colors = AppTheme.colors;
+    final routing = recipient.routingNumber.trim();
+    final routingValid = routing.isEmpty || _isValidAbaRouting(routing);
+    final swift = recipient.swiftCode.trim();
+    final swiftValid = swift.isEmpty || _isValidSwift(swift);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildField(
+          'Bank Name *',
+          TextField(
+            decoration: InputDecoration(
+              hintText: 'e.g. JPMorgan Chase Bank',
+              hintStyle: TextStyle(color: colors.textSecondary),
+            ),
+            style: TextStyle(color: colors.text, fontSize: 16),
+            controller: TextEditingController(text: recipient.bankName)
+              ..selection = TextSelection.collapsed(offset: recipient.bankName.length),
+            onChanged: (value) => _updateRecipient(recipient.id, 'bankName', value),
+          ),
+        ),
+        const SizedBox(height: 16),
+        _buildField(
+          'SWIFT / BIC *',
+          TextField(
+            decoration: InputDecoration(
+              hintText: '8 or 11 characters (e.g. CHASUS33)',
+              hintStyle: TextStyle(color: colors.textSecondary),
+              errorText: swiftValid ? null : '8 or 11 characters',
+            ),
+            style: TextStyle(color: colors.text, fontSize: 16),
+            textCapitalization: TextCapitalization.characters,
+            controller: TextEditingController(text: recipient.swiftCode)
+              ..selection = TextSelection.collapsed(offset: recipient.swiftCode.length),
+            onChanged: (value) => _updateRecipient(recipient.id, 'swiftCode', value),
+          ),
+        ),
+        const SizedBox(height: 16),
+        _buildField(
+          'Routing Number (ABA, 9 digits) *',
+          TextField(
+            decoration: InputDecoration(
+              hintText: 'e.g. 021000021',
+              hintStyle: TextStyle(color: colors.textSecondary),
+              errorText: routingValid
+                  ? null
+                  : 'Invalid ABA checksum — double-check with the beneficiary',
+              counterText: '',
+            ),
+            style: TextStyle(color: colors.text, fontSize: 16),
+            keyboardType: TextInputType.number,
+            maxLength: 9,
+            controller: TextEditingController(text: recipient.routingNumber)
+              ..selection = TextSelection.collapsed(offset: recipient.routingNumber.length),
+            onChanged: (value) => _updateRecipient(recipient.id, 'routingNumber', value),
+          ),
+        ),
+        const SizedBox(height: 16),
+        _buildField(
+          'Account Number *',
+          TextField(
+            decoration: InputDecoration(
+              hintText: 'Beneficiary account number',
+              hintStyle: TextStyle(color: colors.textSecondary),
+            ),
+            style: TextStyle(color: colors.text, fontSize: 16),
+            keyboardType: TextInputType.number,
+            controller: TextEditingController(text: recipient.recipientAccount)
+              ..selection = TextSelection.collapsed(offset: recipient.recipientAccount.length),
+            onChanged: (value) => _updateRecipient(recipient.id, 'recipientAccount', value),
+          ),
+        ),
+        const SizedBox(height: 16),
+        _buildField(
+          'Account Type *',
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: colors.background,
+              border: Border.all(color: colors.border),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: DropdownButtonFormField<String>(
+              initialValue: (recipient.accountType == 'savings') ? 'savings' : 'checking',
+              dropdownColor: colors.surface,
+              style: TextStyle(color: colors.text, fontSize: 16),
+              icon: Icon(Icons.expand_more, color: colors.textSecondary),
+              decoration: const InputDecoration(border: InputBorder.none),
+              items: const [
+                DropdownMenuItem(value: 'checking', child: Text('Checking')),
+                DropdownMenuItem(value: 'savings', child: Text('Savings')),
+              ],
+              onChanged: (value) {
+                if (value != null) {
+                  _updateRecipient(recipient.id, 'accountType', value);
+                }
+              },
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        _buildField(
+          'Account Name *',
+          TextField(
+            decoration: InputDecoration(
+              hintText: 'Beneficiary full name (as on the account)',
+              hintStyle: TextStyle(color: colors.textSecondary),
+            ),
+            style: TextStyle(color: colors.text, fontSize: 16),
+            controller: TextEditingController(text: recipient.recipientName)
+              ..selection = TextSelection.collapsed(offset: recipient.recipientName.length),
+            onChanged: (value) => _updateRecipient(recipient.id, 'recipientName', value),
+          ),
+        ),
+        const SizedBox(height: 16),
+        _buildField(
+          'Beneficiary Email',
+          TextField(
+            decoration: InputDecoration(
+              hintText: 'name@example.com',
+              hintStyle: TextStyle(color: colors.textSecondary),
+            ),
+            style: TextStyle(color: colors.text, fontSize: 16),
+            keyboardType: TextInputType.emailAddress,
+            controller: TextEditingController(text: recipient.beneficiaryEmail)
+              ..selection = TextSelection.collapsed(offset: recipient.beneficiaryEmail.length),
+            onChanged: (value) => _updateRecipient(recipient.id, 'beneficiaryEmail', value),
+          ),
+        ),
+        const SizedBox(height: 16),
+        _buildField(
+          'Street Address',
+          TextField(
+            decoration: InputDecoration(
+              hintText: 'Beneficiary street address',
+              hintStyle: TextStyle(color: colors.textSecondary),
+            ),
+            style: TextStyle(color: colors.text, fontSize: 16),
+            controller: TextEditingController(text: recipient.recipientAddress)
+              ..selection = TextSelection.collapsed(offset: recipient.recipientAddress.length),
+            onChanged: (value) => _updateRecipient(recipient.id, 'recipientAddress', value),
+          ),
+        ),
+        const SizedBox(height: 16),
+        _buildField(
+          'City',
+          TextField(
+            decoration: InputDecoration(
+              hintText: 'e.g. New York',
+              hintStyle: TextStyle(color: colors.textSecondary),
+            ),
+            style: TextStyle(color: colors.text, fontSize: 16),
+            controller: TextEditingController(text: recipient.recipientCity)
+              ..selection = TextSelection.collapsed(offset: recipient.recipientCity.length),
+            onChanged: (value) => _updateRecipient(recipient.id, 'recipientCity', value),
+          ),
+        ),
+        const SizedBox(height: 16),
+        _buildField(
+          'Country',
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: colors.background,
+              border: Border.all(color: colors.border),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: DropdownButtonFormField<String>(
+              initialValue: _usdCountries.any((c) => c.code == recipient.recipientCountry)
+                  ? recipient.recipientCountry
+                  : 'US',
+              dropdownColor: colors.surface,
+              style: TextStyle(color: colors.text, fontSize: 16),
+              icon: Icon(Icons.expand_more, color: colors.textSecondary),
+              decoration: const InputDecoration(border: InputBorder.none),
+              items: _usdCountries
+                  .map((country) => DropdownMenuItem(
+                        value: country.code,
+                        child: Text(country.name),
+                      ))
+                  .toList(),
+              onChanged: (value) {
+                if (value != null) {
+                  _updateRecipient(recipient.id, 'recipientCountry', value);
+                }
+              },
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -1161,11 +1508,15 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
   }
 
   Widget _summaryCard({
-    required double totalAmount,
+    required Map<String, double> totalsByCurrency,
     required String transferType,
     required int recipientCount,
   }) {
     final colors = AppTheme.colors;
+    final totalsLabel = totalsByCurrency.entries
+        .map((entry) =>
+            '${entry.key} ${entry.value.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (m) => '${m[1]},')}')
+        .join('  ·  ');
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
@@ -1215,12 +1566,15 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
                   'Total Amount',
                   style: TextStyle(fontSize: 16, color: colors.textSecondary),
                 ),
-                Text(
-                  '₦${totalAmount.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (m) => '${m[1]},')}',
-                  style: TextStyle(
-                    fontSize: 24,
-                    color: colors.primary,
-                    fontWeight: FontWeight.bold,
+                Flexible(
+                  child: Text(
+                    totalsLabel,
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                      fontSize: totalsByCurrency.length > 1 ? 17 : 24,
+                      color: colors.primary,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
               ],
@@ -1284,16 +1638,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
                                   final remark = epic.name.length > 30
                                       ? '${epic.name.substring(0, 27)}...'
                                       : epic.name;
-                                  return Recipient(
-                                    id: r.id,
-                                    recipientAccount: r.recipientAccount,
-                                    recipientBank: r.recipientBank,
-                                    recipientName: r.recipientName,
-                                    amount: r.amount,
-                                    remark: remark,
-                                    sourceType: r.sourceType,
-                                    sourceId: epic.id,
-                                  );
+                                  return r.copyWith(remark: remark, sourceId: epic.id);
                                 }).toList();
                                 _showEpicPicker = false;
                               });
@@ -1406,16 +1751,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
                               setState(() {
                                 _recipients = _recipients.map((r) {
                                   if (r.id == _selectedRecipientIdForBank) {
-                                    return Recipient(
-                                      id: r.id,
-                                      recipientAccount: r.recipientAccount,
-                                      recipientBank: bank.code,
-                                      recipientName: r.recipientName,
-                                      amount: r.amount,
-                                      remark: r.remark,
-                                      sourceType: r.sourceType,
-                                      sourceId: r.sourceId,
-                                    );
+                                    return r.copyWith(recipientBank: bank.code);
                                   }
                                   return r;
                                 }).toList();
@@ -1573,6 +1909,47 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
   }
 }
 
+/// ISO-2 country options for the USD beneficiary country dropdown
+/// (default US — mirrors the web Payroll page's country select).
+class _CountryOption {
+  final String code;
+  final String name;
+  const _CountryOption(this.code, this.name);
+}
+
+const List<_CountryOption> _usdCountries = [
+  _CountryOption('US', 'United States (US)'),
+  _CountryOption('CA', 'Canada (CA)'),
+  _CountryOption('GB', 'United Kingdom (GB)'),
+  _CountryOption('DE', 'Germany (DE)'),
+  _CountryOption('FR', 'France (FR)'),
+  _CountryOption('ES', 'Spain (ES)'),
+  _CountryOption('IT', 'Italy (IT)'),
+  _CountryOption('NL', 'Netherlands (NL)'),
+  _CountryOption('IE', 'Ireland (IE)'),
+  _CountryOption('PT', 'Portugal (PT)'),
+  _CountryOption('BE', 'Belgium (BE)'),
+  _CountryOption('AT', 'Austria (AT)'),
+  _CountryOption('CH', 'Switzerland (CH)'),
+  _CountryOption('SE', 'Sweden (SE)'),
+  _CountryOption('NO', 'Norway (NO)'),
+  _CountryOption('DK', 'Denmark (DK)'),
+  _CountryOption('FI', 'Finland (FI)'),
+  _CountryOption('PL', 'Poland (PL)'),
+  _CountryOption('AU', 'Australia (AU)'),
+  _CountryOption('NZ', 'New Zealand (NZ)'),
+  _CountryOption('JP', 'Japan (JP)'),
+  _CountryOption('SG', 'Singapore (SG)'),
+  _CountryOption('HK', 'Hong Kong (HK)'),
+  _CountryOption('AE', 'United Arab Emirates (AE)'),
+  _CountryOption('ZA', 'South Africa (ZA)'),
+  _CountryOption('KE', 'Kenya (KE)'),
+  _CountryOption('GH', 'Ghana (GH)'),
+  _CountryOption('BR', 'Brazil (BR)'),
+  _CountryOption('MX', 'Mexico (MX)'),
+  _CountryOption('IN', 'India (IN)'),
+];
+
 class Recipient {
   final String id;
   final String recipientAccount;
@@ -1583,6 +1960,21 @@ class Recipient {
   final String sourceType;
   final String sourceId;
 
+  /// Per-recipient corridor: 'NGN' (default) or 'USD' (Epic international
+  /// payout). Mirrors the web Payroll page's mixed NGN+USD batches.
+  final String currency;
+
+  // USD (international) beneficiary fields — only meaningful when
+  // currency == 'USD'. Sent with the /transfers contract names below.
+  final String bankName;
+  final String swiftCode;
+  final String routingNumber;
+  final String accountType; // 'checking' | 'savings'
+  final String beneficiaryEmail;
+  final String recipientAddress;
+  final String recipientCity;
+  final String recipientCountry; // ISO-2, default 'US'
+
   Recipient({
     required this.id,
     required this.recipientAccount,
@@ -1592,5 +1984,64 @@ class Recipient {
     required this.remark,
     required this.sourceType,
     required this.sourceId,
+    this.currency = 'NGN',
+    this.bankName = '',
+    this.swiftCode = '',
+    this.routingNumber = '',
+    this.accountType = 'checking',
+    this.beneficiaryEmail = '',
+    this.recipientAddress = '',
+    this.recipientCity = '',
+    this.recipientCountry = 'US',
   });
+
+  bool get isUsd => currency.toUpperCase() == 'USD';
+
+  /// Short label for validation messages: account name, else masked account,
+  /// else a generic "Recipient".
+  String accountDisplayLabel() {
+    if (recipientName.trim().isNotEmpty) return recipientName.trim();
+    final account = recipientAccount.trim();
+    if (account.length >= 4) return '••••${account.substring(account.length - 4)}';
+    return 'Recipient';
+  }
+
+  Recipient copyWith({
+    String? recipientAccount,
+    String? recipientBank,
+    String? recipientName,
+    String? amount,
+    String? remark,
+    String? sourceType,
+    String? sourceId,
+    String? currency,
+    String? bankName,
+    String? swiftCode,
+    String? routingNumber,
+    String? accountType,
+    String? beneficiaryEmail,
+    String? recipientAddress,
+    String? recipientCity,
+    String? recipientCountry,
+  }) {
+    return Recipient(
+      id: id,
+      recipientAccount: recipientAccount ?? this.recipientAccount,
+      recipientBank: recipientBank ?? this.recipientBank,
+      recipientName: recipientName ?? this.recipientName,
+      amount: amount ?? this.amount,
+      remark: remark ?? this.remark,
+      sourceType: sourceType ?? this.sourceType,
+      sourceId: sourceId ?? this.sourceId,
+      currency: currency ?? this.currency,
+      bankName: bankName ?? this.bankName,
+      swiftCode: swiftCode ?? this.swiftCode,
+      routingNumber: routingNumber ?? this.routingNumber,
+      accountType: accountType ?? this.accountType,
+      beneficiaryEmail: beneficiaryEmail ?? this.beneficiaryEmail,
+      recipientAddress: recipientAddress ?? this.recipientAddress,
+      recipientCity: recipientCity ?? this.recipientCity,
+      recipientCountry: recipientCountry ?? this.recipientCountry,
+    );
+  }
 }
