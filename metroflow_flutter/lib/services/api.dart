@@ -219,6 +219,16 @@ class ApiService {
           }
         }
 
+        // Opt in to response encryption on EVERY request — including
+        // bodyless GET/DELETE — so balances, chats and profiles are
+        // ciphertext on the wire too. The server never decrypts GET bodies;
+        // the header is purely the "this client supports encryption" signal.
+        if (PayloadCrypto.isEnabled &&
+            options.extra['mfvRetryPlaintext'] != true) {
+          options.headers[PayloadCrypto.encHeaderName] =
+              PayloadCrypto.encHeaderValue;
+        }
+
         options.headers['Content-Type'] = options.data is FormData
             ? Headers.multipartFormDataContentType
             : Headers.jsonContentType;
