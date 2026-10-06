@@ -26,6 +26,13 @@ class _FundWalletScreenState extends ConsumerState<FundWalletScreen> {
   Wallet? _selectedWallet;
   String _method = 'card';
 
+  // BOTH wallets are loaded so the user can switch which one they fund
+  // BEFORE entering an amount (web parity). Defaults to the walletType this
+  // screen was opened with.
+  Wallet? _userWallet;
+  Wallet? _businessWallet;
+  late String _walletType = widget.walletType == 'business' ? 'business' : 'user';
+
   @override
   void initState() {
     super.initState();
@@ -44,12 +51,22 @@ class _FundWalletScreenState extends ConsumerState<FundWalletScreen> {
       final response = await api.getWallet();
       if (response.statusCode == 200) {
         final data = response.data;
-        final walletData = widget.walletType == 'business'
-            ? data['business_wallet']
-            : data['user_wallet'];
-        if (walletData == null) return;
+        if (!mounted) return;
         setState(() {
-          _selectedWallet = Wallet.fromJson(walletData as Map<String, dynamic>);
+          // GET /wallet returns { user_wallet, business_wallet } (snake_case).
+          if (data['user_wallet'] != null) {
+            _userWallet = Wallet.fromJson(data['user_wallet'] as Map<String, dynamic>);
+          }
+          if (data['business_wallet'] != null) {
+            _businessWallet = Wallet.fromJson(data['business_wallet'] as Map<String, dynamic>);
+          }
+          // Keep the requested wallet when it exists; otherwise fall back to
+          // whichever wallet the backend actually returned.
+          final preferred = _walletType == 'business' ? _businessWallet : _userWallet;
+          _selectedWallet = preferred ?? _userWallet ?? _businessWallet;
+          if (_selectedWallet != null) {
+            _walletType = (_selectedWallet == _businessWallet) ? 'business' : 'user';
+          }
         });
       }
     } catch (e) {
@@ -57,10 +74,25 @@ class _FundWalletScreenState extends ConsumerState<FundWalletScreen> {
     }
   }
 
+  void _switchWallet(String type) {
+    final wallet = type == 'business' ? _businessWallet : _userWallet;
+    if (wallet == null) return;
+    setState(() {
+      _walletType = type;
+      _selectedWallet = wallet;
+    });
+  }
+
   Future<void> _handleContinue() async {
     final amountText = _amountController.text;
     if (amountText.isEmpty || double.tryParse(amountText) == null || double.parse(amountText) <= 0) {
       AppToast.show('Please enter a valid amount', type: AppToastType.warning);
+      return;
+    }
+
+    // Neither wallet is loaded (offline / API failure) — nothing to fund.
+    if (_selectedWallet == null) {
+      AppToast.show('Wallet not loaded — please try again', type: AppToastType.warning);
       return;
     }
 
@@ -183,6 +215,9 @@ class _FundWalletScreenState extends ConsumerState<FundWalletScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final currencySymbol = (_selectedWallet?.currency ?? 'NGN').toUpperCase() == 'USD'
+        ? '\u0024'
+        : '\u20A6';
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
@@ -193,10 +228,12 @@ class _FundWalletScreenState extends ConsumerState<FundWalletScreen> {
               _buildHeader(),
               const SizedBox(height: 16),
               Text(
-                'Choose how you want to fund your ${widget.walletType} wallet',
+                'Choose how you want to fund your $_walletType wallet',
                 style: const TextStyle(fontSize: 16, color: Colors.grey),
               ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 16),
+              _buildWalletSwitcher(),
+              const SizedBox(height: 16),
               _buildMethodCard(
                 icon: Icons.credit_card_outlined,
                 title: 'Card Payment',
@@ -224,7 +261,8 @@ class _FundWalletScreenState extends ConsumerState<FundWalletScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Row(
                   children: [
-                    const Text('\u20A6', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                    Text(currencySymbol,
+                        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
                     const SizedBox(width: 8),
                     Expanded(
                       child: TextField(
@@ -255,7 +293,7 @@ class _FundWalletScreenState extends ConsumerState<FundWalletScreen> {
                         border: Border.all(color: isActive ? AppColors.primary : AppTheme.colors.border),
                       ),
                       child: Text(
-                        '\u20A6${double.parse(val).toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (m) => '${m[1]},')}',
+                        '$currencySymbol${double.parse(val).toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (m) => '${m[1]},')}',
                         style: TextStyle(
                           color: isActive ? AppColors.primary : AppTheme.colors.text,
                           fontWeight: FontWeight.w600,
@@ -293,6 +331,81 @@ class _FundWalletScreenState extends ConsumerState<FundWalletScreen> {
         ),
         const Text('Fund Wallet', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
       ],
+    );
+  }
+
+  /// Compact segmented control to pick WHICH wallet is being funded
+  /// (Personal | Business) with live balances — defaults to the walletType
+  /// the screen was opened with; the funding flow uses the selection.
+  Widget _buildWalletSwitcher() {
+    final options = <_WalletSwitcherOption>[
+      if (_userWallet != null)
+        _WalletSwitcherOption(
+          type: 'user',
+          label: 'Personal',
+          balance: _userWallet!.balance,
+          currency: _userWallet!.currency,
+        ),
+      if (_businessWallet != null)
+        _WalletSwitcherOption(
+          type: 'business',
+          label: 'Business',
+          balance: _businessWallet!.balance,
+          currency: _businessWallet!.currency,
+        ),
+    ];
+    if (options.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: AppTheme.colors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTheme.colors.border),
+      ),
+      child: Row(
+        children: options.map((option) {
+          final isActive = _walletType == option.type;
+          return Expanded(
+            child: GestureDetector(
+              onTap: () => _switchWallet(option.type),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                decoration: BoxDecoration(
+                  color: isActive ? AppColors.primary : Colors.transparent,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      option.label,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                        color: isActive ? Colors.white : AppTheme.colors.text,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${option.currency == 'USD' ? '\u0024' : '\u20A6'}${option.balance.toStringAsFixed(2)}',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: isActive
+                            ? Colors.white.withValues(alpha: 0.85)
+                            : AppTheme.colors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
     );
   }
 
@@ -355,6 +468,20 @@ class _FundWalletScreenState extends ConsumerState<FundWalletScreen> {
       ),
     );
   }
+}
+
+class _WalletSwitcherOption {
+  final String type;
+  final String label;
+  final double balance;
+  final String currency;
+
+  const _WalletSwitcherOption({
+    required this.type,
+    required this.label,
+    required this.balance,
+    required this.currency,
+  });
 }
 
 bool _isWalletVerificationSuccessful(Response response) {

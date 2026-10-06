@@ -11,6 +11,7 @@ import 'providers/theme_provider.dart';
 import 'providers/auth_provider.dart';
 import 'services/api.dart';
 import 'services/app_badge_service.dart';
+import 'services/biometrics.dart';
 import 'services/push_notification_service.dart';
 import 'screens/permission_primer.dart';
 import 'services/socket_service.dart';
@@ -210,6 +211,16 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         return ref.read(callProvider).isRinging;
       } catch (_) {
         return false;
+      }
+    };
+    // The callId currently ringing via the in-app overlay: the foreground
+    // incoming-call push uses it to IGNORE a server-retried duplicate push
+    // for the SAME call (re-presenting reset the ring timer mid-ring).
+    PushNotificationService.instance.currentRingingCallId = () {
+      try {
+        return ref.read(callProvider).call?.id;
+      } catch (_) {
+        return null;
       }
     };
     // A missed-call / call-ended push proves the call is gone — stop the
@@ -563,10 +574,13 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       ],
     );
 
-    // Set logout handler
+    // Set logout handler. Called on SESSION EXPIRY (api.dart's interceptor)
+    // — an AUTOMATIC logout, so the FCM device registration is KEPT: after
+    // the re-login push must keep working without waiting for a fresh
+    // register. Explicit user logouts still unregister (default).
     setLogoutHandler(() {
       final authNotifier = ref.read(authProvider.notifier);
-      authNotifier.logout();
+      authNotifier.logout(unregisterDevice: false);
       _router.go('/login');
     });
   }
@@ -611,6 +625,14 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     
     if ((_appState == AppLifecycleState.inactive || _appState == AppLifecycleState.paused) && 
         state == AppLifecycleState.resumed) {
+      // Biometric capability probes are memoized for the process lifetime
+      // (repeated platform-channel probes cancelled pending fingerprint
+      // prompts on some OEMs). The ONLY realistic moment the underlying
+      // facts change is a fingerprint enrollment made in system settings
+      // while backgrounded — drop the cache on every resume so the next
+      // attempt re-probes fresh.
+      BiometricService.resetCapabilityCache();
+
       // App is coming back to foreground - first re-check auth
       await authNotifier.checkAuth(); // Re-check auth to validate token
       
@@ -637,8 +659,12 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
           // login screen and signs back in (password/Google/biometrics) —
           // biometrics are NEVER auto-triggered (user requirement): they
           // only run when the user taps "Sign in with Biometrics".
+          // KEEP the FCM device registration (unregisterDevice: false):
+          // this is an automatic security logout, and unregistering made
+          // push (call rings, chat alerts) silently stop until the next
+          // login re-registered the device.
           if (updatedAuthState.isAuthenticated && !_isWebViewOpen) {
-            await authNotifier.logout();
+            await authNotifier.logout(unregisterDevice: false);
           }
         } else {
           // Less than 5 minutes - reset idle timer and stay logged in
@@ -707,15 +733,23 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     // FCM device-registration lifecycle: register the push token after every
     // login / biometric restore; unregister on ANY logout path (button,
     // idle timeout, session expiry) — they all flip isAuthenticated.
+    // EXCEPTION: security/idle/session-expiry logouts pass
+    // unregisterDevice: false and arm the notifier's one-shot
+    // keep-registration flag — consume it here so the automatic logouts no
+    // longer kill the device registration (push silently stopped working
+    // after the 5-minute idle logout until the next login).
     ref.listen<AuthState>(authProvider, (previous, next) {
       final wasIn = previous?.isAuthenticated == true;
       final isIn = next.isAuthenticated;
       if (!wasIn && isIn) {
         unawaited(PushNotificationService.instance.registerCurrentDevice());
       } else if (wasIn && !isIn) {
-        unawaited(PushNotificationService.instance.unregisterCurrentDevice());
-        // Clear the launcher badge along with the session.
+        // Clear the launcher badge along with the session (harmless on
+        // security logouts too).
         unawaited(LauncherBadge.clear());
+        if (!ref.read(authProvider.notifier).consumeKeepDeviceRegistration()) {
+          unawaited(PushNotificationService.instance.unregisterCurrentDevice());
+        }
       }
     });
 

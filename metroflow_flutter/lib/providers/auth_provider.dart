@@ -108,6 +108,22 @@ class AuthNotifier extends Notifier<AuthState> {
   final SocketService _socketService = SocketService();
   final GoogleAuthService _googleAuthService = GoogleAuthService();
 
+  /// One-shot flag armed by [logout] when the FCM device registration was
+  /// deliberately KEPT (security/idle/session-expiry logouts pass
+  /// `unregisterDevice: false`). main.dart's auth-state listener consumes it
+  /// via [consumeKeepDeviceRegistration] so IT also skips its unregister —
+  /// without this, the listener re-killed the registration the logout just
+  /// decided to preserve.
+  bool _keepDeviceRegistration = false;
+
+  /// Returns — and clears — the one-shot keep-registration flag for the
+  /// logout that just flipped isAuthenticated.
+  bool consumeKeepDeviceRegistration() {
+    final keep = _keepDeviceRegistration;
+    _keepDeviceRegistration = false;
+    return keep;
+  }
+
   // In-memory cache of the GET /auth/me profile (see getMe()).
   Map<String, dynamic>? _meCache;
   DateTime? _meCacheAt;
@@ -130,7 +146,9 @@ class AuthNotifier extends Notifier<AuthState> {
     _idleTimer?.cancel();
     if (state.isAuthenticated) {
       _idleTimer = Timer(const Duration(minutes: 5), () {
-        logout();
+        // AUTOMATIC security logout — keep the FCM device registration so
+        // push keeps working for the next session on this device.
+        logout(unregisterDevice: false);
       });
     }
   }
@@ -695,17 +713,23 @@ class AuthNotifier extends Notifier<AuthState> {
     }
   }
 
-  Future<void> logout({bool disableBiometrics = false}) async {
+  /// [unregisterDevice] — pass FALSE for AUTOMATIC logouts (5-minute idle
+  /// security logout, session expiry): the FCM device registration is kept
+  /// so push (call rings, chat alerts) keeps working until the next login.
+  /// Explicit user logouts keep the default (true) and unregister.
+  Future<void> logout({bool disableBiometrics = false, bool unregisterDevice = true}) async {
     try {
       _idleTimer?.cancel();
       clearMeCache();
 
-      // Best-effort: remove this device's FCM token from the backend so push
-      // (call rings, chat alerts) stops for the signed-out user.
-      try {
-        await PushNotificationService.instance.unregisterCurrentDevice();
-      } catch (e) {
-        debugPrint('FCM unregister skipped: $e');
+      if (unregisterDevice) {
+        // Best-effort: remove this device's FCM token from the backend so push
+        // (call rings, chat alerts) stops for the signed-out user.
+        try {
+          await PushNotificationService.instance.unregisterCurrentDevice();
+        } catch (e) {
+          debugPrint('FCM unregister skipped: $e');
+        }
       }
 
       // Sign out of the Google account picker too so the next Google
@@ -728,6 +752,10 @@ class AuthNotifier extends Notifier<AuthState> {
         await _revokeBiometricEnrollment();
       }
       
+      // Arm the one-shot keep-registration flag immediately BEFORE the state
+      // flip: main.dart's auth listener reads it for THIS logout only (when
+      // the registration was kept, the listener must not unregister either).
+      _keepDeviceRegistration = !unregisterDevice;
       state = AuthState(
         isAuthenticated: false,
         isLoading: false,
