@@ -503,12 +503,12 @@ class PushNotificationService {
   /// and FCM still reports those as delivered — the ack is the only way the
   /// server knows the rich ring actually rendered). Fire-and-forget, never
   /// throws; must stay STATIC so the background isolate can call it.
-  static void acknowledgeCallPush(Map<String, dynamic> data) {
+  static Future<void> acknowledgeCallPush(Map<String, dynamic> data) async {
     try {
       final callId = (data['callId'] ?? data['callID'] ?? data['call_id'] ?? data['id'] ?? '')
           .toString();
       if (callId.isEmpty) return;
-      unawaited(ApiService().acknowledgeCallPush(callId));
+      await ApiService().acknowledgeCallPush(callId);
     } catch (_) {
       // Never fail a notification render because of an ack.
     }

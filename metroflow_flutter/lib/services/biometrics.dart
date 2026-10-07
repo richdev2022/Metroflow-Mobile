@@ -208,6 +208,48 @@ class BiometricService {
     }
   }
 
+  /// Maps a local_auth platform exception to a user-facing BiometricResult.
+  static BiometricResult _mapLocalAuthError(LocalAuthException e) {
+    final codeString = e.code.toString();
+
+    // Handle specific errors
+    if (codeString.contains('NotAvailable')) {
+      return const BiometricResult(
+        success: false,
+        error: 'Biometric authentication is not available on this device',
+      );
+    } else if (codeString.contains('NotEnrolled')) {
+      return const BiometricResult(
+        success: false,
+        error: 'Please set up biometrics in your device settings first',
+      );
+    } else if (codeString.contains('LockedOut')) {
+      return const BiometricResult(
+        success: false,
+        error: 'Biometric authentication is temporarily locked. Please try again later.',
+      );
+    } else if (codeString.contains('PermanentlyLockedOut')) {
+      return const BiometricResult(
+        success: false,
+        error: 'Biometric authentication is permanently locked. Please use your device password.',
+      );
+    } else if (codeString.contains('UserCanceled')) {
+      return const BiometricResult(
+        success: false,
+        error: 'Authentication was canceled',
+      );
+    }
+
+    // Fallback to description or generic message
+    final description = e.description;
+    return BiometricResult(
+      success: false,
+      error: description != null && description.isNotEmpty
+          ? description
+          : 'Biometric authentication failed',
+    );
+  }
+
   static Future<BiometricResult> _authenticateOnce(String promptMessage) async {
     try {
       // NOTE: no stopAuthentication() here. Firing it immediately before
@@ -230,73 +272,89 @@ class BiometricService {
 
       debugPrint('Starting biometric authentication...');
 
-      // STICKY AUTH (Android multi-trigger fix): in local_auth 3.x the
-      // `persistAcrossBackgrounding` flag IS AuthenticationOptions.stickyAuth
-      // — it is forwarded verbatim (local_auth maps stickyAuth:
-      // persistAcrossBackgrounding into the platform options and
-      // local_auth_android passes it as the `sticky` platform arg). It keeps
-      // the system sheet alive when the app is backgrounded mid-prompt
-      // instead of cancelling and re-prompting. AndroidAuthMessages
-      // (local_auth_android 2.0.8) has NO separate stickyAuth field — this
-      // flag is the only knob. biometricOnly stays FALSE on purpose: the
-      // device-credential (PIN/pattern) fallback is intentional.
-      final result = await _auth.authenticate(
-        localizedReason: promptMessage,
-        biometricOnly: false,
-        persistAcrossBackgrounding: true,
-        sensitiveTransaction: false,
-      );
+      // -------------------------------------------------------------------
+      // ANDROID INSTANT-CANCEL RACE FIX (the "scan 2-3 times" bug):
+      // a BiometricPrompt raised while the FragmentActivity is still
+      // settling (right after launch/unlock/resume, or while a keyboard/
+      // transition animation is in flight) is silently CANCELLED BY THE
+      // SYSTEM before the user ever sees it — the call returns `false` or
+      // throws UserCanceled within a few milliseconds. A real user cancel
+      // takes far longer (the dialog must first become visible). So: any
+      // failure arriving under the 250ms window is treated as a
+      // system-killed prompt and retried automatically (max 2 retries) —
+      // the user no longer has to tap the fingerprint button repeatedly.
+      // Before each raise we also let the current frame settle, which is
+      // the surface condition Android requires for the prompt to stick.
+      // -------------------------------------------------------------------
+      for (int attempt = 0; ; attempt++) {
+        try {
+          await WidgetsBinding.instance.endOfFrame;
+        } catch (_) {
+          // endOfFrame is unavailable in some test shells — never fatal.
+        }
+        if (attempt > 0) {
+          await Future<void>.delayed(const Duration(milliseconds: 350));
+        }
 
-      debugPrint('Biometric result: $result');
+        final sw = Stopwatch()..start();
+        bool result;
+        try {
+          // STICKY AUTH (Android multi-trigger fix): in local_auth 3.x the
+          // `persistAcrossBackgrounding` flag IS AuthenticationOptions.stickyAuth
+          // — it is forwarded verbatim (local_auth maps stickyAuth:
+          // persistAcrossBackgrounding into the platform options and
+          // local_auth_android passes it as the `sticky` platform arg). It keeps
+          // the system sheet alive when the app is backgrounded mid-prompt
+          // instead of cancelling and re-prompting. biometricOnly stays FALSE
+          // on purpose: the device-credential (PIN/pattern) fallback is
+          // intentional.
+          result = await _auth.authenticate(
+            localizedReason: promptMessage,
+            biometricOnly: false,
+            persistAcrossBackgrounding: true,
+            sensitiveTransaction: false,
+          );
+        } on LocalAuthException catch (e) {
+          sw.stop();
+          final codeString = e.code.toString();
+          final cancelledBySystem = codeString.contains('UserCanceled') ||
+              codeString.contains('Canceled') ||
+              codeString.contains('Cancelled');
+          if (cancelledBySystem && sw.elapsedMilliseconds < 250 && attempt < 2) {
+            debugPrint(
+              'Biometric prompt cancelled before showing '
+              '(${e.code}, ${sw.elapsedMilliseconds}ms, attempt $attempt) — auto-retrying',
+            );
+            continue;
+          }
+          debugPrint('Biometric LocalAuthException: code=${e.code}, desc=${e.description}');
+          return _mapLocalAuthError(e);
+        }
+        sw.stop();
 
-      if (result) {
-        return const BiometricResult(success: true);
-      } else {
+        debugPrint('Biometric result: $result '
+            '(${sw.elapsedMilliseconds}ms, attempt $attempt)');
+
+        if (result) {
+          return const BiometricResult(success: true);
+        }
+
+        // Unsuccessful without an exception. Only retry when the failure
+        // arrives "instantly" — the signature of a system-killed prompt.
+        // A dialog the user saw and dismissed takes longer than 250ms.
+        if (sw.elapsedMilliseconds < 250 && attempt < 2) {
+          debugPrint('Biometric prompt cancelled before showing '
+              '(instant false, ${sw.elapsedMilliseconds}ms, attempt $attempt) — auto-retrying');
+          continue;
+        }
         return const BiometricResult(
           success: false,
           error: 'Authentication canceled or failed',
         );
       }
     } on LocalAuthException catch (e) {
-      debugPrint('Biometric LocalAuthException: code=${e.code}, desc=${e.description}');
-      final codeString = e.code.toString();
-      
-      // Handle specific errors
-      if (codeString.contains('NotAvailable')) {
-        return const BiometricResult(
-          success: false,
-          error: 'Biometric authentication is not available on this device',
-        );
-      } else if (codeString.contains('NotEnrolled')) {
-        return const BiometricResult(
-          success: false,
-          error: 'Please set up biometrics in your device settings first',
-        );
-      } else if (codeString.contains('LockedOut')) {
-        return const BiometricResult(
-          success: false,
-          error: 'Biometric authentication is temporarily locked. Please try again later.',
-        );
-      } else if (codeString.contains('PermanentlyLockedOut')) {
-        return const BiometricResult(
-          success: false,
-          error: 'Biometric authentication is permanently locked. Please use your device password.',
-        );
-      } else if (codeString.contains('UserCanceled')) {
-        return const BiometricResult(
-          success: false,
-          error: 'Authentication was canceled',
-        );
-      }
-
-      // Fallback to description or generic message
-      final description = e.description;
-      return BiometricResult(
-        success: false,
-        error: description != null && description.isNotEmpty
-            ? description
-            : 'Biometric authentication failed',
-      );
+      debugPrint('Biometric LocalAuthException (outer): code=${e.code}');
+      return _mapLocalAuthError(e);
     } catch (e) {
       debugPrint('Biometric authentication generic error: $e');
       return const BiometricResult(

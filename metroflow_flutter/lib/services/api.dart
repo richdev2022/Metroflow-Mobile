@@ -1075,6 +1075,21 @@ class ApiService {
         options: Options(extra: {'suppressToast': true}));
   }
 
+  /// PUT /transfers/beneficiaries/:id — edit a saved beneficiary. Changing an
+  /// NGN account's bank/number re-resolves it server-side; intl corridors are
+  /// re-validated. Returns the updated record with verificationStatus.
+  Future<Response> updateBeneficiary(String id, Map<String, dynamic> data) async {
+    return await _dio.put('/transfers/beneficiaries/$id', data: data,
+        options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// POST /transfers/beneficiaries/:id/verify — re-run verification for a
+  /// saved beneficiary (NGN provider resolve / intl corridor validation).
+  Future<Response> verifyBeneficiary(String id) async {
+    return await _dio.post('/transfers/beneficiaries/$id/verify',
+        options: Options(extra: {'suppressToast': true}));
+  }
+
   /// GET /transfers/payout-limits — admin-configured min/max per currency.
   Future<Response> getPayoutLimits() async {
     return await _dio.get('/transfers/payout-limits',
