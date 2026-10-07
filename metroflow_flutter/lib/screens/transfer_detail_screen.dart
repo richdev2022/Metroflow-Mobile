@@ -65,6 +65,22 @@ class _TransferDetailScreenState extends State<TransferDetailScreen> {
   bool _verifying = false;
   bool _reversing = false;
 
+  /// PROVIDER SCRUB (receipt rule): payout provider names must NEVER appear
+  /// on a customer receipt — failure reasons surfaced by the backend can
+  /// carry them (e.g. "DISBURSE FAILED: ..." payloads naming the processor).
+  /// Every known processor identifier is replaced with a neutral phrase
+  /// before render; the useful detail ("Invalid account number", amounts,
+  /// references) is preserved.
+  static final RegExp _providerNameRe = RegExp(
+    r'\b(flutterwave|flw|monnify|squad(?:\s*payments)?|providus|paystack|kora|barter)\b',
+    caseSensitive: false,
+  );
+
+  static String scrubProviderNames(String input) {
+    if (input.isEmpty) return input;
+    return input.replaceAllMapped(_providerNameRe, (_) => 'the payment processor');
+  }
+
   @override
   void initState() {
     super.initState();
@@ -290,6 +306,8 @@ class _TransferDetailScreenState extends State<TransferDetailScreen> {
                           const SizedBox(height: 14),
                           _failureCard(colors),
                         ],
+                        const SizedBox(height: 14),
+                        _brandFooter(colors),
                       ],
                     ),
                   ),
@@ -331,6 +349,32 @@ class _TransferDetailScreenState extends State<TransferDetailScreen> {
       ),
       child: Column(
         children: [
+          // OFFICIAL BRAND: the Metricorex logo leads every receipt — the
+          // white disc keeps the mark legible on both gradient variants.
+          Container(
+            width: 46,
+            height: 46,
+            padding: const EdgeInsets.all(7),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+            ),
+            child: Image.asset(
+              'assets/images/logo-mark.png',
+              fit: BoxFit.contain,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'METRICOREX',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 3.2,
+              color: Colors.white.withValues(alpha: 0.92),
+            ),
+          ),
+          const SizedBox(height: 12),
           Container(
             width: 58,
             height: 58,
@@ -552,10 +596,65 @@ class _TransferDetailScreenState extends State<TransferDetailScreen> {
           const SizedBox(width: 12),
           Expanded(
             child: Text(
-              '${widget.transfer.failureReason}\nThe full amount (including the fee) is returned to your wallet automatically.',
+              '${scrubProviderNames(widget.transfer.failureReason!)}\nThe full amount (including the fee) is returned to your wallet automatically.',
               style: TextStyle(
                   fontSize: 12.5, height: 1.45, color: colors.text),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// BRAND FOOTER: closes the captured receipt with the official logo and
+  /// wordmark so a downloaded/shared PNG is unmistakably a Metricorex
+  /// document. Part of the RepaintBoundary capture (inside _receiptKey).
+  Widget _brandFooter(ThemeColors colors) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: colors.border),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 30,
+            height: 30,
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: colors.primary.withValues(alpha: 0.1),
+              shape: BoxShape.circle,
+            ),
+            child: Image.asset(
+              'assets/images/logo-mark.png',
+              fit: BoxFit.contain,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'METRICOREX',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 2.4,
+                  color: colors.text,
+                ),
+              ),
+              Text(
+                'Official transaction receipt • metricorex.com',
+                style: TextStyle(
+                  fontSize: 10.5,
+                  color: colors.textSecondary,
+                ),
+              ),
+            ],
           ),
         ],
       ),

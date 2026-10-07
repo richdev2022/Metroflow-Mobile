@@ -337,6 +337,18 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
         _cityController.text = recipientCity;
         _stateController.text = recipientState;
         _postalController.text = recipientPostalCode;
+        // FULL PREFILL (USD): pick the payout rail from the saved corridor
+        // details — a stored SWIFT code means the SWIFT rail; a 9-digit ABA
+        // routing number means ACH. The user can still switch rails.
+        if (transferCurrency == 'USD') {
+          final swift = swiftCode.trim();
+          final routing = routingNumber.replaceAll(RegExp(r'[\s-]'), '');
+          if (swift.isNotEmpty) {
+            payoutRail = 'SWIFT';
+          } else if (RegExp(r'^\d{9}$').hasMatch(routing)) {
+            payoutRail = 'ACH';
+          }
+        }
       }
     });
     _scheduleAccountLookup();
@@ -501,7 +513,7 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
       return payoutRail.isNotEmpty && base;
     }
     if (transferCurrency == 'GBP') {
-      return base && /^\d{6}$/.test(routingNumber.replaceAll(RegExp(r'[\s-]'), ''));
+      return base && RegExp(r'^\d{6}$').hasMatch(routingNumber.replaceAll(RegExp(r'[\s-]'), ''));
     }
     if (transferCurrency == 'EUR') {
       return base && RegExp(r'^[A-Z0-9]{8}(?:[A-Z0-9]{3})?$').hasMatch(swiftCode.trim().toUpperCase());

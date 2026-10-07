@@ -24,7 +24,7 @@ class CallDeepLinkHelper {
           ? payload['call'] as Map
           : (payload is Map ? payload : null);
       final callId = (callMap?['id'] ?? idOrCode).toString();
-      String? callingRaw;
+      Map<String, dynamic>? callingRaw;
       String type = (callMap?['type'] ?? 'audio').toString();
       String title = (callMap?['callCode'] ?? '').toString();
       bool isGroupCall = callMap?['isGroupCall'] == true;
