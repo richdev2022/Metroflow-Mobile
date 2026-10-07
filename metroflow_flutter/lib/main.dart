@@ -19,6 +19,7 @@ import 'services/socket_service.dart';
 import 'screens/meeting_deep_link_screen.dart';
 import 'utils/app_feedback.dart';
 import 'utils/app_timezone.dart';
+import 'utils/call_deep_link.dart';
 import 'utils/logger.dart';
 import 'widgets/inapp_banner.dart';
 import 'widgets/maintenance_gate.dart';
@@ -66,6 +67,7 @@ import 'screens/transaction_detail_screen.dart';
 import 'screens/bulk_create_tasks_screen.dart';
 import 'models/payment_transaction.dart';
 import 'screens/fees_screen.dart';
+import 'screens/beneficiaries_screen.dart';
 import 'screens/payment_links_screen.dart';
 import 'screens/ai_credits_screen.dart';
 import 'screens/invoices_screen.dart';
@@ -123,18 +125,42 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       final appLinks = AppLinks();
       Future<void> handle(Uri uri) async {
         Logger.log('App link received: ' + uri.toString());
-        // Supported: metricorex://meetings/<code> (also tolerate host forms)
         final segments = List<String>.from(uri.pathSegments.where((s) => s.isNotEmpty));
-        String? code;
-        if (segments.length >= 2 && segments[0] == 'meetings') {
-          code = segments[1];
-        } else if (uri.host == 'meetings' && segments.isNotEmpty) {
-          code = segments.first;
-        }
-        if (code == null || code.isEmpty) return;
         final ctx = navigatorKey.currentContext;
         if (ctx == null) return;
-        await MeetingDeepLinkScreen.open(ctx, code);
+        // metricorex://meetings/<code> (also tolerate host forms)
+        String? meetingCode;
+        if (segments.length >= 2 && segments[0] == 'meetings') {
+          meetingCode = segments[1];
+        } else if (uri.host == 'meetings' && segments.isNotEmpty) {
+          meetingCode = segments.first;
+        }
+        if (meetingCode != null && meetingCode.isNotEmpty) {
+          await MeetingDeepLinkScreen.open(ctx, meetingCode);
+          return;
+        }
+        // metricorex://calls/<code|uuid> — open the call room directly
+        // (mirrors the web /join-call?call=<id>&auto=1 push tap path).
+        String? callRef;
+        if (segments.length >= 2 && segments[0] == 'calls') {
+          callRef = segments[1];
+        } else if (uri.host == 'calls' && segments.isNotEmpty) {
+          callRef = segments.first;
+        }
+        if (callRef != null && callRef.isNotEmpty) {
+          await CallDeepLinkHelper.openCallRoom(ctx, callRef);
+          return;
+        }
+        // metricorex://transfers/<reference> — transfer history detail view.
+        String? transferRef;
+        if (segments.length >= 2 && segments[0] == 'transfers') {
+          transferRef = segments[1];
+        } else if (uri.host == 'transfers' && segments.isNotEmpty) {
+          transferRef = segments.first;
+        }
+        if (transferRef != null && transferRef.isNotEmpty) {
+          GoRouter.of(ctx).go('/main/transfers');
+        }
       }
 
       appLinks.getInitialLink().then((uri) {
@@ -530,6 +556,10 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
             GoRoute(
               path: 'fees',
               builder: (context, state) => const FeesScreen(),
+            ),
+            GoRoute(
+              path: 'beneficiaries',
+              builder: (context, state) => const BeneficiariesScreen(),
             ),
             GoRoute(
               path: 'payment-links',

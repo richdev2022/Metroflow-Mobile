@@ -124,6 +124,9 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
   bool quoteLoading = false;
   bool quoteConfirmed = false;
 
+  // Admin-configured international payout limits (min/max per currency).
+  Map<String, Map<String, dynamic>> payoutLimits = {};
+
   bool get _isIntlTransfer => transferCurrency != 'NGN';
 
   static const List<Map<String, String>> _intlPayoutCountries = [
@@ -173,6 +176,7 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
     _fetchBanks();
     _fetchOtpRequirement();
     _fetchBeneficiaries();
+    _fetchPayoutLimits();
     // Apply the prefill immediately too — if the bank list is slow, the
     // account number / amount / remark still appear instantly (the bank
     // picker re-applies the code once the list arrives).
@@ -286,12 +290,13 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
     _scheduleAccountLookup();
   }
 
-  /// GET /transfers/beneficiaries — recent recipients for the chip row.
+  /// GET /transfers/beneficiaries — recent recipients for the chip row,
+  /// filtered to the currently selected currency.
   Future<void> _fetchBeneficiaries() async {
     if (beneficiariesLoading) return;
     setState(() => beneficiariesLoading = true);
     try {
-      final response = await ApiService().getBeneficiaries();
+      final response = await ApiService().getBeneficiaries(currency: transferCurrency);
       if (mounted && response.data['success'] == true) {
         final list = response.data['data'];
         setState(() {
@@ -307,17 +312,32 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
     }
   }
 
-  /// One-tap beneficiary: fills bank + account + name and verifies.
+  /// One-tap beneficiary: fills bank + account + name (intl chips also fill
+  /// the corridor fields) and verifies NGN accounts.
   void _applyBeneficiary(Map<String, dynamic> b) {
     final bankCode = (b['bankCode'] ?? b['bank_code'] ?? '').toString();
     final acct = (b['accountNumber'] ?? b['account_number'] ?? '').toString();
     final name = (b['accountName'] ?? b['account_name'] ?? '').toString();
     if (!mounted) return;
     setState(() {
-      if (bankCode.isNotEmpty) selectedBankCode = bankCode;
+      if (bankCode.isNotEmpty && !_isIntlTransfer) selectedBankCode = bankCode;
       accountNumber = acct;
       _accountNumberController.text = acct;
       if (name.isNotEmpty) accountName = name;
+      if (_isIntlTransfer) {
+        bankName = (b['bankName'] ?? '').toString();
+        swiftCode = (b['swiftCode'] ?? '').toString();
+        routingNumber = (b['routingNumber'] ?? '').toString();
+        recipientCountry = (b['recipientCountry'] ?? recipientCountry).toString();
+        recipientAddress = (b['address'] ?? '').toString();
+        recipientCity = (b['city'] ?? '').toString();
+        recipientState = (b['state'] ?? '').toString();
+        recipientPostalCode = (b['postalCode'] ?? '').toString();
+        _addressController.text = recipientAddress;
+        _cityController.text = recipientCity;
+        _stateController.text = recipientState;
+        _postalController.text = recipientPostalCode;
+      }
     });
     _scheduleAccountLookup();
   }
@@ -465,17 +485,28 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
     }
   }
 
-  /// USD beneficiary block completeness (backend rejects intl payouts without
-  /// street address, city, postal code and ISO-2 country).
+  /// International beneficiary block completeness — per corridor:
+  ///  - USD: rail (ACH/SWIFT) + bank + address block.
+  ///  - GBP: bank + 6-digit sort code + address block.
+  ///  - EUR: bank + SWIFT/BIC + city + address block.
   bool get _intlBeneficiaryComplete {
-    return payoutRail.isNotEmpty &&
-        bankName.trim().isNotEmpty &&
+    final base = bankName.trim().isNotEmpty &&
         accountNumber.trim().isNotEmpty &&
         accountName.trim().isNotEmpty &&
         recipientCountry.trim().length == 2 &&
         recipientAddress.trim().isNotEmpty &&
         recipientCity.trim().isNotEmpty &&
         recipientPostalCode.trim().isNotEmpty;
+    if (transferCurrency == 'USD') {
+      return payoutRail.isNotEmpty && base;
+    }
+    if (transferCurrency == 'GBP') {
+      return base && /^\d{6}$/.test(routingNumber.replaceAll(RegExp(r'[\s-]'), ''));
+    }
+    if (transferCurrency == 'EUR') {
+      return base && RegExp(r'^[A-Z0-9]{8}(?:[A-Z0-9]{3})?$').hasMatch(swiftCode.trim().toUpperCase());
+    }
+    return base && payoutRail.isNotEmpty;
   }
 
   void _resetTransferForm() {
@@ -507,6 +538,64 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
     _stateController.clear();
     _postalController.clear();
     _pinController.clear();
+  }
+
+  /// Switch the payout corridor: resets the corridor-specific fields, applies
+  /// the rail + country defaults, and re-fetches quote + beneficiaries.
+  void _switchTransferCurrency(String currency) {
+    if (transferCurrency == currency) return;
+    setState(() {
+      transferCurrency = currency;
+      selectedBankCode = '';
+      accountName = '';
+      bankName = '';
+      swiftCode = '';
+      routingNumber = '';
+      payoutRail = currency == 'NGN' ? '' : (currency == 'USD' ? payoutRail : 'SWIFT');
+      recipientCountry = currency == 'GBP' ? 'GB' : currency == 'EUR' ? 'DE' : 'US';
+      addressSuggestions = [];
+      showAddressSuggestions = false;
+      transferQuote = null;
+      quoteConfirmed = false;
+    });
+    if (currency != 'NGN') {
+      _scheduleQuoteFetch();
+    }
+    _fetchBeneficiaries();
+  }
+
+  /// Admin-configured payout limits hint under the amount field (intl only).
+  String get _intlAmountHint {
+    if (!_isIntlTransfer) return '';
+    final limit = payoutLimits[transferCurrency];
+    if (limit == null) return '';
+    final min = num.tryParse('${limit['min']}');
+    final max = num.tryParse('${limit['max']}');
+    if (min == null || max == null) return '';
+    return 'Min $transferCurrency ${_formatLimit(min)} · Max $transferCurrency ${_formatLimit(max)}';
+  }
+
+  String _formatLimit(num v) {
+    if (v % 1 == 0) return v.toInt().toString();
+    return v.toStringAsFixed(2);
+  }
+
+  Future<void> _fetchPayoutLimits() async {
+    try {
+      final response = await ApiService().getPayoutLimits();
+      final data = response.data is Map ? response.data['data'] : null;
+      if (mounted && data is Map && data['limits'] is Map) {
+        final limits = Map<String, dynamic>.from(data['limits'] as Map);
+        setState(() {
+          payoutLimits = limits.map((k, v) => MapEntry(
+                k.toString().toUpperCase(),
+                v is Map ? Map<String, dynamic>.from(v) : <String, dynamic>{},
+              ));
+        });
+      }
+    } catch (_) {
+      // Hint-only — never blocks the form.
+    }
   }
 
   Future<void> handleResolveAccount() async {
@@ -725,7 +814,9 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
         if (recipientState.trim().isNotEmpty) {
           payload['recipientState'] = recipientState.trim();
         }
-        payload['recipientPostalCode'] = recipientPostalCode.trim();
+        if (recipientPostalCode.trim().isNotEmpty) {
+          payload['recipientPostalCode'] = recipientPostalCode.trim();
+        }
         payload['recipientCountry'] = recipientCountry.trim().toUpperCase();
         if (transferQuote != null && transferQuote!['total_debit'] != null) {
           payload['debitAmount'] = transferQuote!['total_debit'];
@@ -1112,32 +1203,40 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
     ];
   }
 
-  /// USD (international) fields: payout rail, beneficiary identity and the
-  /// Flutterwave-required address block with Nominatim street autocomplete.
+  /// International (USD/GBP/EUR) fields: corridor-specific routing inputs,
+  /// beneficiary identity and the required address block with Nominatim
+  /// street autocomplete.
   List<Widget> _buildIntlTransferFields(ThemeColors colors) {
+    final isUsd = transferCurrency == 'USD';
+    final isGbp = transferCurrency == 'GBP';
+    final isEur = transferCurrency == 'EUR';
     return [
-      _buildField('Payout Rail', Row(
-        children: [
-          Expanded(
-            child: _buildCurrencyToggle(
-              colors,
-              label: 'ACH — U.S. bank (local rails)',
-              selected: payoutRail == 'ACH',
-              onTap: () => setState(() => payoutRail = 'ACH'),
+      // Rail picker only applies to USD — GBP (sort codes) and EUR (SWIFT/IBAN)
+      // always ride the SWIFT rail (auto-set on currency switch).
+      if (isUsd) ...[
+        _buildField('Payout Rail', Row(
+          children: [
+            Expanded(
+              child: _buildCurrencyToggle(
+                colors,
+                label: 'ACH — U.S. bank (local rails)',
+                selected: payoutRail == 'ACH',
+                onTap: () => setState(() => payoutRail = 'ACH'),
+              ),
             ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: _buildCurrencyToggle(
-              colors,
-              label: 'SWIFT — International wire',
-              selected: payoutRail == 'SWIFT',
-              onTap: () => setState(() => payoutRail = 'SWIFT'),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _buildCurrencyToggle(
+                colors,
+                label: 'SWIFT — International wire',
+                selected: payoutRail == 'SWIFT',
+                onTap: () => setState(() => payoutRail = 'SWIFT'),
+              ),
             ),
-          ),
-        ],
-      )),
-      const SizedBox(height: 20),
+          ],
+        )),
+        const SizedBox(height: 20),
+      ],
       _buildField('Bank Name', TextField(
         decoration: InputDecoration(
           hintText: 'e.g. JPMorgan Chase Bank',
@@ -1146,11 +1245,11 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
         style: TextStyle(color: colors.text, fontSize: 16),
         onChanged: (value) => setState(() => bankName = value),
       )),
-      if (payoutRail == 'SWIFT') ...[
+      if (!isGbp) ...[
         const SizedBox(height: 20),
-        _buildField('SWIFT / BIC Code', TextField(
+        _buildField(isEur ? 'SWIFT / BIC Code *' : 'SWIFT / BIC Code', TextField(
           decoration: InputDecoration(
-            hintText: 'e.g. CHASUS33',
+            hintText: isEur ? 'e.g. BECFDE7HKKX' : 'e.g. CHASUS33',
             hintStyle: TextStyle(color: colors.textSecondary),
           ),
           style: TextStyle(color: colors.text, fontSize: 16),
@@ -1158,17 +1257,17 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
           onChanged: (value) => setState(() => swiftCode = value),
         )),
       ],
-      if (payoutRail == 'ACH') ...[
+      if (!isEur) ...[
         const SizedBox(height: 20),
-        _buildField('Routing Number (ABA)', TextField(
+        _buildField(isGbp ? 'Sort Code *' : 'Routing Number (ABA)', TextField(
           decoration: InputDecoration(
-            hintText: 'e.g. 021000021',
+            hintText: isGbp ? '6-digit sort code, e.g. 308463' : 'e.g. 021000021',
             hintStyle: TextStyle(color: colors.textSecondary),
             counterText: '',
           ),
           style: TextStyle(color: colors.text, fontSize: 16),
           keyboardType: TextInputType.number,
-          maxLength: 12,
+          maxLength: isGbp ? 8 : 12,
           onChanged: (value) => setState(() => routingNumber = value),
         )),
       ],
@@ -1214,7 +1313,7 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
               ],
             ),
             const SizedBox(height: 4),
-            Text('Used by Flutterwave for international payouts',
+            Text('Required for secure international payouts',
                 style: TextStyle(fontSize: 11.5, color: colors.textSecondary)),
             const SizedBox(height: 10),
             _buildField('Country', Container(
@@ -1338,11 +1437,14 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
     ];
   }
 
-  /// Live FX quote card (USD payouts): rate, fee, receiving amount and the
-  /// mandatory confirmation checkbox before the transfer can be submitted.
+  /// Live FX quote card (international payouts): Conversion rate, Fee and
+  /// Total only — the platform margin is baked into the conversion rate and
+  /// never shown. Confirmation is mandatory before submit.
   Widget _buildQuoteCard(ThemeColors colors) {
     String fmt(num? v) => (v ?? 0).toStringAsFixed(2);
-    final rate = transferQuote?['marked_up_rate'] ?? transferQuote?['live_rate'];
+    final rate = transferQuote?['conversion_rate'] ??
+        transferQuote?['marked_up_rate'] ??
+        transferQuote?['live_rate'];
     final totalDebit = transferQuote?['total_debit'];
     final fee = transferQuote?['fee'];
     return Container(
@@ -1357,7 +1459,7 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
         children: [
           Row(
             children: [
-              Text('Exchange rate quote',
+              Text('Payout quote',
                   style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: colors.text)),
               const Spacer(),
               if (quoteLoading)
@@ -1372,13 +1474,13 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
             Text('Enter an amount to fetch the live rate.',
                 style: TextStyle(fontSize: 12.5, color: colors.textSecondary))
           else if (transferQuote != null) ...[
-            Text('Rate: 1 USD = ₦${fmt(rate is num ? rate : num.tryParse('$rate'))}',
+            Text('Conversion rate: 1 $transferCurrency = ₦${fmt(rate is num ? rate : num.tryParse('$rate'))}',
                 style: TextStyle(fontSize: 12.5, color: colors.text)),
             if (fee != null)
               Text('Fee: ₦${fmt(fee is num ? fee : num.tryParse('$fee'))}',
                   style: TextStyle(fontSize: 12.5, color: colors.text)),
             if (totalDebit != null)
-              Text('You will be debited: ₦${fmt(totalDebit is num ? totalDebit : num.tryParse('$totalDebit'))}',
+              Text('Total amount: ₦${fmt(totalDebit is num ? totalDebit : num.tryParse('$totalDebit'))}',
                   style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: colors.primary)),
             const SizedBox(height: 8),
             GestureDetector(
@@ -1394,7 +1496,7 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
                   ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text('I confirm the exchange rate and total debit',
+                    child: Text('I confirm the exchange rate and total amount',
                         style: TextStyle(fontSize: 12.5, color: colors.text)),
                   ),
                 ],
@@ -1601,60 +1703,60 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
           // -- Wallet selector (personal / business) --
           _buildTransferWalletSelector(colors),
           const SizedBox(height: 16),
-          // -- Currency toggle: NGN local bank vs USD intl --
+          // -- Currency toggle: NGN local bank vs USD/GBP/EUR international --
           Row(
             children: [
               Expanded(
                 child: _buildCurrencyToggle(
                   colors,
-                  label: 'NGN — Local bank',
+                  label: 'NGN',
                   selected: transferCurrency == 'NGN',
-                  onTap: () {
-                    if (transferCurrency == 'NGN') return;
-                    setState(() {
-                      transferCurrency = 'NGN';
-                      payoutRail = '';
-                      bankName = '';
-                      swiftCode = '';
-                      routingNumber = '';
-                      addressSuggestions = [];
-                      showAddressSuggestions = false;
-                      transferQuote = null;
-                      quoteConfirmed = false;
-                    });
-                  },
+                  onTap: () => _switchTransferCurrency('NGN'),
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               Expanded(
                 child: _buildCurrencyToggle(
                   colors,
-                  label: 'USD — International',
+                  label: 'USD',
                   selected: transferCurrency == 'USD',
-                  onTap: () {
-                    if (transferCurrency == 'USD') return;
-                    setState(() {
-                      transferCurrency = 'USD';
-                      selectedBankCode = '';
-                      accountName = '';
-                      transferQuote = null;
-                      quoteConfirmed = false;
-                    });
-                    _scheduleQuoteFetch();
-                  },
+                  onTap: () => _switchTransferCurrency('USD'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildCurrencyToggle(
+                  colors,
+                  label: 'GBP',
+                  selected: transferCurrency == 'GBP',
+                  onTap: () => _switchTransferCurrency('GBP'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildCurrencyToggle(
+                  colors,
+                  label: 'EUR',
+                  selected: transferCurrency == 'EUR',
+                  onTap: () => _switchTransferCurrency('EUR'),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 20),
           if (!_isIntlTransfer) ..._buildNgnTransferFields(colors),
-          if (_isIntlTransfer) ..._buildIntlTransferFields(colors),
+          if (_isIntlTransfer) ...[
+            if (beneficiaries.isNotEmpty) ..._buildBeneficiaryChips(colors),
+            ..._buildIntlTransferFields(colors),
+          ],
           const SizedBox(height: 20),
           _buildField('Amount (${_isIntlTransfer ? '$transferCurrency — amount recipient receives' : 'NGN'})', TextField(
             controller: _amountController,
             decoration: InputDecoration(
               hintText: _isIntlTransfer ? 'e.g. 500' : 'Enter amount',
               hintStyle: TextStyle(color: colors.textSecondary),
+              helperText: _intlAmountHint,
+              helperStyle: TextStyle(color: colors.textSecondary, fontSize: 11),
             ),
             style: TextStyle(color: colors.text, fontSize: 16),
             keyboardType:

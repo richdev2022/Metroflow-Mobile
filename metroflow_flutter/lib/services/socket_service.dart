@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:socket_io_client/socket_io_client.dart' as socket_io;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import '../utils/logger.dart';
+import 'api.dart';
 
 class SocketService {
   static final SocketService _instance = SocketService._internal();
@@ -16,6 +17,21 @@ class SocketService {
   /// identity server-side (see server/lib/socket.ts).
   String? _authToken;
   String? get authToken => _authToken;
+
+  /// Guards the auth-failure reconnect (one retry per connect_error burst).
+  bool _reauthInProgress = false;
+
+  /// Rebuilds the socket from scratch with the CURRENT auth token. Used when
+  /// the server rejects a handshake as auth_failed_token_invalid — plain
+  /// auto-reconnect would replay the same stale handshake auth.
+  void _forceReconnect(String userId, String businessId) {
+    try {
+      _socket?.disconnect();
+      _socket?.dispose();
+    } catch (_) {}
+    _socket = null;
+    connect(userId, businessId);
+  }
 
   String get _socketBaseUrl {
     final configured = dotenv.env['EXPO_PUBLIC_API_BASE_URL'] ?? 'https://api.metricorex.com';
@@ -165,6 +181,37 @@ class SocketService {
 
     _socket?.on('disconnect', (_) {
       Logger.log('Disconnected from socket');
+    });
+
+    // AUTH FAILURE -> RE-AUTH: the server now REJECTS handshakes whose token
+    // is invalid/expired (previously it silently downgraded the socket to a
+    // guest, which never joins user:{id} — call:incoming and personal events
+    // stopped reaching the app entirely, i.e. "only web rings"). On this
+    // error, pull the FRESH token from secure storage (the API interceptor
+    // refreshes/rotates it) and rebuild the connection with it once.
+    _socket?.on('connect_error', (err) {
+      final message = err?.toString() ?? '';
+      Logger.log('Socket connect error: $message');
+      if (message.contains('auth_failed_token_invalid') &&
+          !_reauthInProgress) {
+        _reauthInProgress = true;
+        Future(() async {
+          try {
+            // Local import via the ApiService singleton's storage keeps this
+            // file free of a service->service dependency.
+            final storage = ApiService().storage;
+            final fresh = await storage.getToken();
+            if (fresh != null && fresh.isNotEmpty && fresh != _authToken) {
+              _authToken = fresh;
+              _forceReconnect(userId, businessId);
+            }
+          } catch (e) {
+            Logger.log('Socket re-auth failed: $e');
+          } finally {
+            _reauthInProgress = false;
+          }
+        });
+      }
     });
 
     _socket?.on('reconnect', (_) {
