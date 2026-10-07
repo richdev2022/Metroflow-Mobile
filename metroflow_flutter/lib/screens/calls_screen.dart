@@ -222,7 +222,7 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
     _calls.sort((a, b) => b.createdAt.compareTo(a.createdAt));
   }
 
-  Future<void> _openCallModal(Call call, {String? password}) async {
+  Future<void> _openCallModal(Call call, {String? password, bool isRetry = false}) async {
     try {
       final response = await _api.joinCall(call.id, password: password);
       if (response.data['success'] == true && mounted) {
@@ -265,6 +265,21 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
         final entered = await _promptForCallPassword(call);
         if (entered != null && entered.isNotEmpty) {
           await _openCallModal(call, password: entered);
+        }
+        return;
+      }
+      // Transient server error (5xx / network hiccup) → ONE automatic retry
+      // before giving up. The callee's phone is already ringing at this
+      // point, so dropping straight to an error leaves the caller stranded
+      // with no room and a ghost call.
+      final transient = e is DioException &&
+          (e.type == DioExceptionType.connectionError ||
+              e.type == DioExceptionType.connectionTimeout ||
+              (e.response?.statusCode ?? 0) >= 500);
+      if (transient && !isRetry) {
+        await Future<void>.delayed(const Duration(milliseconds: 900));
+        if (mounted) {
+          await _openCallModal(call, password: password, isRetry: true);
         }
         return;
       }

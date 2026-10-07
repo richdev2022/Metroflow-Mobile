@@ -43,6 +43,82 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   final Map<String, String> _typingNames = {};
   final Map<String, Timer> _typingTimers = {};
   late final void Function(dynamic) _typingUpdatedHandler;
+  late final void Function(dynamic) _messageCreatedHandler;
+
+  /// ChatDetailScreen owns the SAME onMessageCreated socket slot while it is
+  /// open (single-slot handlers) and nulls it on dispose — re-attach our
+  /// handlers whenever we come back so the list keeps live-updating.
+  void _registerSocketHandlers() {
+    _socket.onConversationCreated = _conversationCreatedHandler;
+    _socket.onMessageCreated = _messageCreatedHandler;
+  }
+
+  void _handleMessageCreated(dynamic data) {
+    if (!mounted) return;
+    if (data is! Map) return;
+    final conversationId = data['conversationId']?.toString() ??
+        data['conversation_id']?.toString() ?? '';
+    if (conversationId.isEmpty) return;
+    final index = _conversations.indexWhere((item) => item.id == conversationId);
+    if (index == -1) return; // unknown conversation — full refetch will pick it up
+    // Derive the same preview the backend lastMessage CASE produces.
+    final deleted = data['deletedForEveryone'] == true || data['deleted_for_everyone'] == true;
+    final content = (data['content'] ?? '').toString().trim();
+    final attachmentType = (data['attachmentType'] ?? data['attachment_type'] ?? '').toString();
+    final attachmentUrl = data['attachmentUrl'] ?? data['attachment_url'];
+    final attachmentName = (data['attachmentName'] ?? data['attachment_name'] ?? '').toString();
+    String preview;
+    if (deleted) {
+      preview = 'This message was deleted';
+    } else if (content.isNotEmpty) {
+      preview = content;
+    } else if (attachmentType == 'image') {
+      preview = '📷 Photo';
+    } else if (attachmentType == 'video') {
+      preview = '🎬 Video';
+    } else if (attachmentType == 'audio') {
+      preview = '🎤 Voice note';
+    } else if (attachmentType == 'sticker') {
+      preview = 'Sticker';
+    } else if (attachmentType == 'gif') {
+      preview = 'GIF';
+    } else if (attachmentUrl != null) {
+      preview = attachmentName.isNotEmpty ? '📎 $attachmentName' : '📎 Attachment';
+    } else {
+      preview = 'Message';
+    }
+    final currentUserId = ref.read(authProvider).userId;
+    final senderId = (data['senderId'] ?? data['sender_id'] ?? '').toString();
+    setState(() {
+      final conv = _conversations[index];
+      final fromOther = senderId.isNotEmpty && senderId != currentUserId;
+      final lastAt = DateTime.tryParse((data['createdAt'] ?? data['created_at'] ?? '').toString())?.toLocal();
+      _conversations[index] = Conversation(
+        id: conv.id,
+        name: conv.name,
+        type: conv.type,
+        createdBy: conv.createdBy,
+        createdAt: conv.createdAt,
+        updatedAt: DateTime.now(),
+        participants: conv.participants,
+        lastMessage: preview,
+        lastMessageAt: lastAt ?? conv.lastMessageAt,
+        lastMessageSenderId: senderId.isNotEmpty ? senderId : conv.lastMessageSenderId,
+        unreadCount: fromOther ? conv.unreadCount + 1 : conv.unreadCount,
+        isGroupFlag: conv.isGroupFlag,
+        displayName: conv.displayName,
+        displayAvatarUrl: conv.displayAvatarUrl,
+        otherUserLastSeenAt: conv.otherUserLastSeenAt,
+        otherUserPresenceStatus: conv.otherUserPresenceStatus,
+      );
+      // Most-recent-first, like the server ordering.
+      final updated = _conversations.removeAt(index);
+      _conversations.insert(0, updated);
+      // Keep the launcher badge in sync while the hub is open.
+      final totalUnread = _conversations.fold<int>(0, (sum, c) => sum + c.unreadCount);
+      ref.read(chatUnreadProvider.notifier).set(totalUnread);
+    });
+  }
 
   @override
   void initState() {
@@ -65,7 +141,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         }
       });
     };
-    _socket.onConversationCreated = _conversationCreatedHandler;
+    _messageCreatedHandler = _handleMessageCreated;
+    _registerSocketHandlers();
     // Typing presence — same pattern as the other chat listeners: assign a
     // stored handler here and unregister the exact instance in dispose.
     _typingUpdatedHandler = _handleTypingUpdated;
@@ -90,13 +167,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => ChatDetailScreen(conversation: match.first)),
-    ).then((_) => _loadConversations());
+    ).then((_) {
+      _registerSocketHandlers();
+      _loadConversations();
+    });
   }
 
   @override
   void dispose() {
     if (_socket.onConversationCreated == _conversationCreatedHandler) {
       _socket.onConversationCreated = null;
+    }
+    if (_socket.onMessageCreated == _messageCreatedHandler) {
+      _socket.onMessageCreated = null;
     }
     if (_socket.onChatTypingUpdated == _typingUpdatedHandler) {
       _socket.onChatTypingUpdated = null;

@@ -43,6 +43,9 @@
                         <key>CFBundleURLSchemes</key>
                         <array>
                                 <string>$(GOOGLE_IOS_URL_SCHEME)</string>
+                                <!-- metricorex:// deep links (meeting link
+                                     interstitial "Open in the app" button) -->
+                                <string>metricorex</string>
                         </array>
                 </dict>
         </array>
