@@ -59,6 +59,12 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
   String? _verifiedName;
   bool _verifiedResolved = false;
 
+  /// EDIT MODE: when non-null the add-sheet edits this saved beneficiary id
+  /// (prefilled fields, PUT instead of POST on save).
+  String? _editingId;
+  /// IDs of list items with a re-verification in flight (per-row spinners).
+  final Set<String> _verifyingIds = {};
+
   bool get _isIntl => _currency != 'NGN';
 
   @override
@@ -226,11 +232,16 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
     }
     setState(() => _saving = true);
     try {
-      final response = await ApiService().createBeneficiary(_formPayload());
+      final editing = _editingId != null;
+      final response = editing
+          ? await ApiService().updateBeneficiary(_editingId!, _formPayload())
+          : await ApiService().createBeneficiary(_formPayload());
       if (mounted && response.data['success'] == true) {
         Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Beneficiary saved')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(editing
+                ? 'Beneficiary updated'
+                : 'Beneficiary saved')));
         _fetchBeneficiaries();
       } else {
         final msg = response.data is Map
@@ -249,6 +260,94 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  /// One-tap VERIFY CTA for a saved beneficiary: re-runs the server-side
+  /// verification (NGN provider resolve / intl corridor validation) and
+  /// refreshes the row's verification chip in place.
+  Future<void> _verifySavedBeneficiary(Map<String, dynamic> b) async {
+    final id = b['id']?.toString() ?? '';
+    if (id.isEmpty || _verifyingIds.contains(id)) return;
+    setState(() => _verifyingIds.add(id));
+    try {
+      final response = await ApiService().verifyBeneficiary(id);
+      final data = response.data is Map ? response.data['data'] : null;
+      if (mounted && response.data['success'] == true && data is Map) {
+        setState(() {
+          b['verificationStatus'] =
+              (data['verificationStatus'] ?? 'unverified').toString();
+          final resolved = (data['accountName'] ?? '').toString();
+          if (resolved.isNotEmpty &&
+              (b['accountName'] ?? '').toString().isEmpty) {
+            b['accountName'] = resolved;
+          }
+        });
+        final msg = (response.data['message'] ?? 'Verification complete')
+            .toString();
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(msg)));
+      } else {
+        final msg = response.data is Map
+            ? (response.data['error']?.toString() ?? 'Could not verify this beneficiary')
+            : 'Could not verify this beneficiary';
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(msg)));
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(ApiService.extractErrorMessage(e))));
+      }
+    } finally {
+      if (mounted) setState(() => _verifyingIds.remove(id));
+    }
+  }
+
+  /// Verification chip for a saved beneficiary row.
+  Widget _verificationChip(Map<String, dynamic> b, ThemeColors colors) {
+    final status = (b['verificationStatus'] ?? 'unverified').toString();
+    late final String label;
+    late final Color bg;
+    late final Color fg;
+    late final IconData icon;
+    switch (status) {
+      case 'resolved':
+        label = 'Verified';
+        bg = Colors.green.withValues(alpha: 0.12);
+        fg = Colors.green.shade700;
+        icon = Icons.verified_rounded;
+      case 'format':
+        label = 'Validated';
+        bg = colors.primary.withValues(alpha: 0.12);
+        fg = colors.primary;
+        icon = Icons.rule_rounded;
+      default:
+        label = 'Unverified';
+        bg = const Color(0xFFF59E0B).withValues(alpha: 0.14);
+        fg = const Color(0xFFB45309);
+        icon = Icons.error_outline_rounded;
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: fg),
+          const SizedBox(width: 4),
+          Text(label,
+              style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  color: fg)),
+        ],
+      ),
+    );
   }
 
   Future<void> _deleteBeneficiary(Map<String, dynamic> b) async {
@@ -287,19 +386,36 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
     }
   }
 
-  void _openAddSheet() {
-    _accountNumberController.clear();
-    _accountNameController.clear();
-    _bankNameController.clear();
-    _routingController.clear();
-    _swiftController.clear();
-    _addressController.clear();
-    _cityController.clear();
-    _stateController.clear();
-    _postalController.clear();
-    _emailController.clear();
-    _formBankCode = '';
-    _formAccountType = '';
+  void _openAddSheet({Map<String, dynamic>? existing}) {
+    _editingId = existing?['id']?.toString();
+    if (existing != null) {
+      // EDIT: prefill every field from the saved record.
+      _accountNumberController.text = (existing['accountNumber'] ?? '').toString();
+      _accountNameController.text = (existing['accountName'] ?? '').toString();
+      _bankNameController.text = (existing['bankName'] ?? '').toString();
+      _routingController.text = (existing['routingNumber'] ?? '').toString();
+      _swiftController.text = (existing['swiftCode'] ?? '').toString();
+      _addressController.text = (existing['address'] ?? '').toString();
+      _cityController.text = (existing['city'] ?? '').toString();
+      _stateController.text = (existing['state'] ?? '').toString();
+      _postalController.text = (existing['postalCode'] ?? '').toString();
+      _emailController.text = (existing['email'] ?? '').toString();
+      _formBankCode = (existing['bankCode'] ?? '').toString();
+      _formAccountType = (existing['accountType'] ?? '').toString();
+    } else {
+      _accountNumberController.clear();
+      _accountNameController.clear();
+      _bankNameController.clear();
+      _routingController.clear();
+      _swiftController.clear();
+      _addressController.clear();
+      _cityController.clear();
+      _stateController.clear();
+      _postalController.clear();
+      _emailController.clear();
+      _formBankCode = '';
+      _formAccountType = '';
+    }
     _verifiedName = null;
     _verifiedResolved = false;
     showModalBottomSheet(
@@ -370,7 +486,10 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
                 children: [
                   Row(
                     children: [
-                      Text('Add beneficiary ($_currency)',
+                      Text(
+                          _editingId != null
+                              ? 'Edit beneficiary ($_currency)'
+                              : 'Add beneficiary ($_currency)',
                           style: TextStyle(
                               fontSize: 17,
                               fontWeight: FontWeight.w800,
@@ -665,8 +784,13 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
                                   height: 14,
                                   child: CircularProgressIndicator(
                                       strokeWidth: 2))
-                              : const Icon(Icons.save_rounded, size: 16),
-                          label: const Text('Save'),
+                              : Icon(_editingId != null
+                                  ? Icons.update_rounded
+                                  : Icons.save_rounded,
+                                  size: 16),
+                          label: Text(_editingId != null
+                              ? 'Save changes'
+                              : 'Save'),
                         ),
                       ),
                     ],
@@ -802,6 +926,9 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
                               if (swift.isNotEmpty) 'SWIFT: $swift',
                               if (country.isNotEmpty) country,
                             ].join(' · ');
+                            final vStatus =
+                                (b['verificationStatus'] ?? 'unverified')
+                                    .toString();
                             return Container(
                               padding: const EdgeInsets.all(14),
                               decoration: BoxDecoration(
@@ -809,7 +936,9 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
                                 border: Border.all(color: colors.border),
                                 borderRadius: BorderRadius.circular(14),
                               ),
-                              child: Row(
+                              child: Column(
+                                children: [
+                              Row(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   CircleAvatar(
@@ -896,6 +1025,60 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
                                     icon: Icon(Icons.delete_outline_rounded,
                                         size: 20, color: colors.textSecondary),
                                     onPressed: () => _deleteBeneficiary(b),
+                                  ),
+                                ],
+                              ),
+                                  const SizedBox(height: 8),
+                                  // VERIFICATION STATUS + ACTIONS: status chip
+                                  // (Verified / Validated / Unverified) with an
+                                  // Edit action and a Verify CTA for anything not
+                                  // yet provider-verified.
+                                  Row(
+                                    children: [
+                                      _verificationChip(b, colors),
+                                      const Spacer(),
+                                      TextButton.icon(
+                                        onPressed: () =>
+                                            _openAddSheet(existing: b),
+                                        icon: const Icon(Icons.edit_outlined,
+                                            size: 15),
+                                        label: const Text('Edit'),
+                                        style: TextButton.styleFrom(
+                                          foregroundColor: colors.primary,
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 10),
+                                          minimumSize: const Size(0, 32),
+                                        ),
+                                      ),
+                                      if (vStatus != 'resolved') ...[
+                                        const SizedBox(width: 4),
+                                        TextButton.icon(
+                                          onPressed: _verifyingIds
+                                                  .contains(b['id']?.toString() ?? '')
+                                              ? null
+                                              : () => _verifySavedBeneficiary(b),
+                                          icon: _verifyingIds.contains(
+                                                      b['id']?.toString() ?? '')
+                                              ? const SizedBox(
+                                                  width: 12,
+                                                  height: 12,
+                                                  child: CircularProgressIndicator(
+                                                      strokeWidth: 2))
+                                              : const Icon(
+                                                  Icons.verified_rounded,
+                                                  size: 15),
+                                          label: const Text('Verify'),
+                                          style: TextButton.styleFrom(
+                                            foregroundColor: vStatus == 'unverified'
+                                                ? const Color(0xFFB45309)
+                                                : colors.primary,
+                                            padding: const EdgeInsets.symmetric(
+                                                horizontal: 10),
+                                            minimumSize: const Size(0, 32),
+                                          ),
+                                        ),
+                                      ],
+                                    ],
                                   ),
                                 ],
                               ),

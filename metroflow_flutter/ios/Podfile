@@ -51,6 +51,15 @@ post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
 
+    # Normalize pod deployment targets: many pods still declare 9.0/10.0/11.0,
+    # which Xcode 26 warns about (supported range 12.0-26.x) and future Xcode
+    # may hard-fail. The app min is iOS 13.0, so force every pod to match.
+    target.build_configurations.each do |config|
+      if config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
+        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
+      end
+    end
+
     # permission_handler_apple: enable ONLY the permissions the app requests
     # (official plugin requirement). Any permission NOT listed here returns
     # denied instantly without an OS dialog — add it here when the app
