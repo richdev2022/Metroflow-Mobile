@@ -985,6 +985,21 @@ class ApiService {
     return await _dio.get('/transfers/banks');
   }
 
+  /// International address autocomplete — rides the backend
+  /// /geo/address-suggest proxy (OpenStreetMap Nominatim). Going through the
+  /// backend keeps web and mobile on ONE provider/UA identity: Nominatim's
+  /// edge 503s generic browser UAs, and mobile app stores also discourage
+  /// third-party direct calls. Beneficiaries screen falls back to a direct
+  /// Nominatim query if this endpoint is unreachable.
+  Future<Response> getAddressSuggestions(String query, String countryCode,
+      {bool suppressToast = true}) async {
+    return await _dio.get('/geo/address-suggest', queryParameters: {
+      'q': query,
+      if (countryCode.trim().isNotEmpty) 'cc': countryCode.trim().toLowerCase(),
+    }, options: Options(extra: {'suppressToast': suppressToast}));
+  }
+
+
   Future<Response> resolveAccount(String bankCode, String accountNumber, {bool suppressToast = false}) async {
     return await _dio.post('/transfers/account-lookup', data: {
       'bank_code': bankCode,
