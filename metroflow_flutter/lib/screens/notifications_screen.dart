@@ -1,9 +1,62 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../providers/notifications_provider.dart';
 import '../models/notification.dart';
 import '../theme/app_theme.dart';
+
+/// Deep-link map for in-app notification taps.
+///
+/// The backend stores web-style actionUrls ("/wallet", "/calls/{code}",
+/// "/meetings/{code}", "/subscriptions", "/invoices", "/bills",
+/// "/savings"). Mobile uses the `/main/...` shell, so every tap is routed
+/// by (a) the notification type first, then (b) the stored actionUrl —
+/// falling back to the dashboard when the target screen does not exist on
+/// mobile. Mirrors the push-tap routing in PushNotificationService.
+void _navigateForNotification(BuildContext context, AppNotification notification) {
+  final actionUrl = notification.actionUrl ?? '';
+  final type = notification.type.toLowerCase();
+
+  String target;
+  if (type == 'chat' || type == 'chat_message' || actionUrl.startsWith('/chat')) {
+    target = '/main/chat';
+  } else if (type == 'call' ||
+      type == 'missed_call' ||
+      type == 'incoming_call' ||
+      actionUrl.startsWith('/calls')) {
+    target = '/main/calls';
+  } else if (type == 'meeting' || actionUrl.startsWith('/meetings')) {
+    target = '/main/meetings';
+  } else if (type == 'task' || type == 'assignment' || actionUrl.startsWith('/tasks')) {
+    target = '/main/board';
+  } else if (type == 'invoice' || actionUrl.startsWith('/invoices')) {
+    target = '/main/invoices';
+  } else if (actionUrl.startsWith('/subscriptions')) {
+    target = '/main/subscriptions';
+  } else if (type == 'credit' ||
+      type == 'debit' ||
+      type == 'reversal' ||
+      type == 'transfer' ||
+      type == 'transaction' ||
+      actionUrl.startsWith('/wallet') ||
+      actionUrl.startsWith('/transactions') ||
+      actionUrl.startsWith('/transfers')) {
+    // Wallet money movement (credits, debits, reversals) — the transfers
+    // screen is the mobile transaction history.
+    target = '/main/transfers';
+  } else {
+    // Bills, savings and any other web-only destinations land on the
+    // dashboard instead of doing nothing.
+    target = '/main';
+  }
+
+  try {
+    GoRouter.of(context).go(target);
+  } catch (e) {
+    debugPrint('Notification navigation failed: $e');
+  }
+}
 
 class NotificationsScreen extends ConsumerStatefulWidget {
   const NotificationsScreen({super.key});
@@ -113,6 +166,14 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                   onAction: (action) {
                     ref.read(notificationsProvider.notifier).takeAction(notification.id, action);
                   },
+                  onTap: () {
+                    // Tapping a notification: mark it read and deep-link to
+                    // the relevant screen (chat, calls, meetings, wallet…).
+                    if (!notification.isRead) {
+                      ref.read(notificationsProvider.notifier).markAsRead(notification.id);
+                    }
+                    _navigateForNotification(context, notification);
+                  },
                 );
               },
             );
@@ -127,11 +188,13 @@ class _NotificationCard extends StatelessWidget {
   final AppNotification notification;
   final VoidCallback onMarkAsRead;
   final Function(String) onAction;
+  final VoidCallback? onTap;
 
   const _NotificationCard({
     required this.notification,
     required this.onMarkAsRead,
     required this.onAction,
+    this.onTap,
   });
 
   @override
@@ -141,13 +204,20 @@ class _NotificationCard extends StatelessWidget {
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: isUnread ? colors.primary.withValues(alpha: 0.05) : colors.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: colors.border),
       ),
-      child: Column(
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
@@ -224,6 +294,9 @@ class _NotificationCard extends StatelessWidget {
             ],
           ),
         ],
+        ),
+      ),
+      ),
       ),
     );
   }

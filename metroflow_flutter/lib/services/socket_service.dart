@@ -13,6 +13,40 @@ class SocketService {
   socket_io.Socket? _socket;
   bool get isConnected => _socket?.connected ?? false;
 
+  /// Waits until the signaling socket is (re)connected, or gives up after
+  /// [timeout] and returns false.
+  ///
+  /// WHY THIS EXISTS: Android routinely kills background sockets, and a call
+  /// screen opened from a push tap can reach the join sequence BEFORE the
+  /// auto-reconnect has landed. Every mediasoup ack emit then throws
+  /// "Bad state: Socket is not connected" and the call fails. Callers await
+  /// this instead of emitting into the void. Nudges the socket manager so a
+  /// stuck-in-limbo connection retries immediately.
+  Future<bool> waitForConnection({
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    final socket = _socket;
+    if (socket == null) return false;
+    if (socket.connected) return true;
+
+    final completer = Completer<bool>();
+    void onConnect(dynamic _) {
+      if (!completer.isCompleted) completer.complete(true);
+    }
+
+    socket.on('connect', onConnect);
+    try {
+      // Nudge the manager: harmless when already connecting/reconnecting.
+      try {
+        socket.connect();
+      } catch (_) {}
+      return await completer.future.timeout(timeout, onTimeout: () => false);
+    } finally {
+      socket.off('connect', onConnect);
+    }
+  }
+
+
   /// Auth token attached to the socket handshake so the backend can verify
   /// identity server-side (see server/lib/socket.ts).
   String? _authToken;
@@ -626,10 +660,20 @@ class SocketService {
     _socket?.emit('call:raise-hand', data);
   }
 
-  Future<dynamic> _emitAck(String event, [dynamic data]) {
+  Future<dynamic> _emitAck(String event, [dynamic data]) async {
     final socket = _socket;
-    if (socket == null || !socket.connected) {
+    if (socket == null) {
       return Future.error(StateError('Socket is not connected'));
+    }
+    // The OS kills background sockets on Android; a call opened from a push
+    // tap used to reach the first ack before the auto-reconnect landed and
+    // abort with "Bad state: Socket is not connected". Wait for the socket
+    // (up to 8s) instead of failing instantly.
+    if (!socket.connected) {
+      final ok = await waitForConnection(timeout: const Duration(seconds: 8));
+      if (!ok || !_socket!.connected) {
+        return Future.error(StateError('Socket is not connected'));
+      }
     }
 
     final completer = Completer<dynamic>();
