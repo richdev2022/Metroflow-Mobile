@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:app_links/app_links.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'models/transfer.dart';
@@ -15,6 +16,7 @@ import 'services/biometrics.dart';
 import 'services/push_notification_service.dart';
 import 'screens/permission_primer.dart';
 import 'services/socket_service.dart';
+import 'screens/meeting_deep_link_screen.dart';
 import 'utils/app_feedback.dart';
 import 'utils/app_timezone.dart';
 import 'utils/logger.dart';
@@ -111,6 +113,41 @@ class MyApp extends ConsumerStatefulWidget {
 
 class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   late final GoRouter _router;
+  StreamSubscription<Uri>? _appLinksSub;
+
+  /// metricorex:// deep links (the web meeting interstitial's "Open in the
+  /// app" button fires metricorex://meetings/<code>). Also covers cold
+  /// starts via getInitialLink — the app opens straight onto the meeting.
+  void _setupAppLinks() {
+    try {
+      final appLinks = AppLinks();
+      Future<void> handle(Uri uri) async {
+        Logger.log('App link received: ' + uri.toString());
+        // Supported: metricorex://meetings/<code> (also tolerate host forms)
+        final segments = List<String>.from(uri.pathSegments.where((s) => s.isNotEmpty));
+        String? code;
+        if (segments.length >= 2 && segments[0] == 'meetings') {
+          code = segments[1];
+        } else if (uri.host == 'meetings' && segments.isNotEmpty) {
+          code = segments.first;
+        }
+        if (code == null || code.isEmpty) return;
+        final ctx = navigatorKey.currentContext;
+        if (ctx == null) return;
+        await MeetingDeepLinkScreen.open(ctx, code);
+      }
+
+      appLinks.getInitialLink().then((uri) {
+        if (uri != null) handle(uri);
+      }).catchError((_) {});
+      _appLinksSub = appLinks.uriLinkStream.listen(
+        (uri) => handle(uri),
+        onError: (Object e) => Logger.error('App links stream error: ' + e.toString()),
+      );
+    } catch (e) {
+      Logger.error('App links setup failed: ' + e.toString());
+    }
+  }
   AppLifecycleState _appState = AppLifecycleState.resumed;
   String? _currentRoute;
   final _storage = StorageService();
@@ -277,6 +314,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _setupGlobalChatNotifications();
     _setupPushNotifications();
+    _setupAppLinks();
 
     _router = GoRouter(
       navigatorKey: navigatorKey,
@@ -587,6 +625,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _appLinksSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -731,13 +770,10 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     });
 
     // FCM device-registration lifecycle: register the push token after every
-    // login / biometric restore; unregister on ANY logout path (button,
-    // idle timeout, session expiry) — they all flip isAuthenticated.
-    // EXCEPTION: security/idle/session-expiry logouts pass
-    // unregisterDevice: false and arm the notifier's one-shot
-    // keep-registration flag — consume it here so the automatic logouts no
-    // longer kill the device registration (push silently stopped working
-    // after the 5-minute idle logout until the next login).
+    // login / biometric restore. The registration is KEPT on every logout
+    // path (button, idle timeout, session expiry) so calls and chats still
+    // ring via push while the user is signed out — parity with the web
+    // client. The next login re-assigns the token to the new user.
     ref.listen<AuthState>(authProvider, (previous, next) {
       final wasIn = previous?.isAuthenticated == true;
       final isIn = next.isAuthenticated;
@@ -747,9 +783,10 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         // Clear the launcher badge along with the session (harmless on
         // security logouts too).
         unawaited(LauncherBadge.clear());
-        if (!ref.read(authProvider.notifier).consumeKeepDeviceRegistration()) {
-          unawaited(PushNotificationService.instance.unregisterCurrentDevice());
-        }
+        // KEEP the device registered across ALL logouts (manual + automatic):
+        // calls and chats must still ring via push while the user is signed
+        // out — same behaviour as the web client. registerCurrentDevice() on
+        // the next login re-assigns the token to whoever signs in.
       }
     });
 

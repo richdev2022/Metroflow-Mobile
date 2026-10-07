@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -317,7 +318,20 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       // the room (see CallNotifier.stopOutboundRing).
       ref.read(callProvider.notifier).startOutboundRing(call.id);
 
-      final joinResponse = await _api.joinCall(call.id);
+      // Join with ONE automatic retry on transient failures (5xx / network)
+      // — the callee's phone is already ringing at this point, so a single
+      // hiccup must not leave the caller stranded with no room.
+      Response joinResponse;
+      try {
+        joinResponse = await _api.joinCall(call.id);
+      } on DioException catch (joinErr) {
+        final transient = joinErr.type == DioExceptionType.connectionError ||
+            joinErr.type == DioExceptionType.connectionTimeout ||
+            (joinErr.response?.statusCode ?? 0) >= 500;
+        if (!transient) rethrow;
+        await Future<void>.delayed(const Duration(milliseconds: 900));
+        joinResponse = await _api.joinCall(call.id);
+      }
       if (!mounted) return;
       final userName = await _storage.getUserName();
       if (!mounted) return;
