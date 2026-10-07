@@ -526,12 +526,19 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
         }
       }
       
-      // Check minimum amount for epic transfers
-      final hasInvalidAmount = _recipients.any((r) => (double.tryParse(r.amount) ?? 0) < 100);
-      if (hasInvalidAmount) {
+      // Check minimum amount for epic transfers — per currency: NGN keeps the
+      // historical ₦100 floor; USD/GBP/EUR rows follow the provider rails
+      // (min 10 in the payout currency, not 100 NGN applied to dollars).
+      final minByCurrency = {'NGN': 100.0, 'USD': 10.0, 'GBP': 10.0, 'EUR': 10.0};
+      final tooLow = _recipients
+          .where((r) => (double.tryParse(r.amount) ?? 0) < (minByCurrency[r.currency.toUpperCase()] ?? 100.0))
+          .toList();
+      if (tooLow.isNotEmpty) {
         if (mounted) {
+          final first = tooLow.first;
+          final floor = minByCurrency[first.currency.toUpperCase()] ?? 100.0;
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('All amounts must be at least 100')),
+            SnackBar(content: Text('All amounts must be at least ${first.currency} $floor')),
           );
         }
         return;
