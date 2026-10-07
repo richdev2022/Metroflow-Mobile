@@ -123,6 +123,12 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
   Map<String, dynamic>? transferQuote;
   bool quoteLoading = false;
   bool quoteConfirmed = false;
+  // Quote lock window — web-parity countdown: the backend's expires_at /
+  // expires_in_seconds drives a live "Rate locks in M:SS" chip; a lapsed
+  // quote shows "Quote expired" + a one-tap refresh and can't be confirmed.
+  DateTime? _quoteExpiresAt;
+  DateTime? _quoteNow;
+  Timer? _quoteTick;
 
   // Admin-configured international payout limits (min/max per currency).
   Map<String, Map<String, dynamic>> payoutLimits = {};
@@ -188,6 +194,7 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
     _lookupDebounce?.cancel();
     _addressDebounce?.cancel();
     _quoteDebounce?.cancel();
+    _quoteTick?.cancel();
     _addressController.dispose();
     _cityController.dispose();
     _stateController.dispose();
@@ -489,13 +496,83 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
         transferQuote = data is Map ? Map<String, dynamic>.from(data) : null;
         quoteConfirmed = false;
       });
+      _armQuoteLock();
     } catch (e) {
       debugPrint('Quote fetch failed: $e');
-      if (mounted) setState(() => transferQuote = null);
+      if (mounted) {
+        setState(() {
+          transferQuote = null;
+          _quoteExpiresAt = null;
+          _quoteNow = null;
+        });
+        _quoteTick?.cancel();
+      }
     } finally {
       if (mounted) setState(() => quoteLoading = false);
     }
   }
+
+  /// (Re)start the quote lock countdown from the server deadline
+  /// (expires_at ISO, falling back to expires_in_seconds).
+  void _armQuoteLock() {
+    _quoteTick?.cancel();
+    if (transferQuote == null) {
+      _quoteExpiresAt = null;
+      _quoteNow = null;
+      return;
+    }
+    final iso = transferQuote?['expires_at']?.toString();
+    final ttl = double.tryParse('${transferQuote?['expires_in_seconds']}');
+    DateTime? expires;
+    if (iso != null && iso.isNotEmpty) {
+      expires = DateTime.tryParse(iso)?.toLocal();
+    }
+    expires ??= (ttl != null && ttl > 0)
+        ? DateTime.now().add(Duration(seconds: ttl.round()))
+        : null;
+    _quoteExpiresAt = expires;
+    if (expires == null) {
+      _quoteNow = null;
+      return;
+    }
+    _quoteNow = DateTime.now();
+    _quoteTick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() => _quoteNow = DateTime.now());
+      // A lapsed quote can no longer be confirmed — drop the flag so the
+      // submit gate blocks the transfer (web-parity behavior).
+      if (_quoteExpired && quoteConfirmed) {
+        setState(() => quoteConfirmed = false);
+      }
+    });
+  }
+
+  /// "Refresh quote" — re-runs the quote fetch immediately (no debounce).
+  Future<void> _refreshQuote() async {
+    final amt = double.tryParse(amount);
+    if (amt == null || amt <= 0) return;
+    await _fetchQuote();
+  }
+
+  bool get _quoteExpired =>
+      transferQuote != null &&
+      _quoteExpiresAt != null &&
+      (_quoteNow ?? DateTime.now()).isAfter(_quoteExpiresAt!);
+
+  String? get _quoteCountdownText {
+    if (transferQuote == null || _quoteExpiresAt == null) return null;
+    final now = _quoteNow ?? DateTime.now();
+    final remaining = _quoteExpiresAt!.difference(now).inSeconds;
+    if (remaining <= 0) return null;
+    return '${remaining ~/ 60}:${(remaining % 60).toString().padLeft(2, '0')}';
+  }
+
+  /// Submit-time guard: the render-time chip can lag the wall clock by up to
+  /// 1s, so the handler re-checks against the actual deadline.
+  bool get _quoteExpiredNow =>
+      transferQuote != null &&
+      _quoteExpiresAt != null &&
+      DateTime.now().isAfter(_quoteExpiresAt!);
 
   /// International beneficiary block completeness — per corridor:
   ///  - USD: rail (ACH/SWIFT) + bank + address block.
@@ -692,6 +769,15 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
               content: Text('Exchange rate quote unavailable — please check the amount and try again')));
+        }
+        return;
+      }
+      // Submit-time expiry guard: the render-time chip can lag the wall clock
+      // by up to 1s, so re-check against the actual deadline.
+      if (_quoteExpiredNow) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('Exchange rate quote expired — tap Refresh quote for the current rate')));
         }
         return;
       }
@@ -1459,11 +1545,16 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
         transferQuote?['live_rate'];
     final totalDebit = transferQuote?['total_debit'];
     final fee = transferQuote?['fee'];
+    final countdown = _quoteCountdownText;
+    final expired = _quoteExpired;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: colors.primaryBg,
-        border: Border.all(color: colors.primary.withValues(alpha: 0.35)),
+        border: Border.all(
+            color: expired
+                ? colors.error.withValues(alpha: 0.45)
+                : colors.primary.withValues(alpha: 0.35)),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
@@ -1479,6 +1570,20 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
                     width: 14,
                     height: 14,
                     child: CircularProgressIndicator(strokeWidth: 2)),
+              if (transferQuote != null && !expired && countdown != null) ...[
+                const SizedBox(width: 8),
+                Icon(Icons.timer_outlined, size: 14, color: colors.primary),
+                const SizedBox(width: 4),
+                Text('Rate locks in $countdown',
+                    style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: colors.primary)),
+              ],
+              if (expired) ...[
+                const SizedBox(width: 8),
+                Icon(Icons.error_outline_rounded, size: 14, color: colors.error),
+                const SizedBox(width: 4),
+                Text('Quote expired',
+                    style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: colors.error)),
+              ],
             ],
           ),
           const SizedBox(height: 8),
@@ -1495,25 +1600,50 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
               Text('Total amount: ₦${fmt(totalDebit is num ? totalDebit : num.tryParse('$totalDebit'))}',
                   style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: colors.primary)),
             const SizedBox(height: 8),
-            GestureDetector(
-              onTap: () => setState(() => quoteConfirmed = !quoteConfirmed),
-              child: Row(
+            if (expired)
+              Row(
                 children: [
-                  Icon(
-                    quoteConfirmed
-                        ? Icons.check_box_rounded
-                        : Icons.check_box_outline_blank_rounded,
-                    size: 20,
-                    color: quoteConfirmed ? colors.primary : colors.textSecondary,
+                  Expanded(
+                    child: Text('This quote has expired — refresh for the current rate.',
+                        style: TextStyle(fontSize: 12, color: colors.error)),
                   ),
                   const SizedBox(width: 8),
-                  Expanded(
-                    child: Text('I confirm the exchange rate and total amount',
-                        style: TextStyle(fontSize: 12.5, color: colors.text)),
+                  TextButton.icon(
+                    onPressed: quoteLoading ? null : _refreshQuote,
+                    icon: quoteLoading
+                        ? const SizedBox(
+                            width: 12,
+                            height: 12,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.refresh_rounded, size: 16),
+                    label: const Text('Refresh quote'),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      visualDensity: VisualDensity.compact,
+                    ),
                   ),
                 ],
+              )
+            else
+              GestureDetector(
+                onTap: () => setState(() => quoteConfirmed = !quoteConfirmed),
+                child: Row(
+                  children: [
+                    Icon(
+                      quoteConfirmed
+                          ? Icons.check_box_rounded
+                          : Icons.check_box_outline_blank_rounded,
+                      size: 20,
+                      color: quoteConfirmed ? colors.primary : colors.textSecondary,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text('I confirm the exchange rate and total amount',
+                          style: TextStyle(fontSize: 12.5, color: colors.text)),
+                    ),
+                  ],
+                ),
               ),
-            ),
           ],
         ],
       ),
