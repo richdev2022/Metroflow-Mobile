@@ -32,7 +32,7 @@
 - ✅ KYC Verification flow (BVN/NIN + OTP)
 - ✅ Wallet Management (Personal & Business wallets)
 - ✅ Payroll & Employees
-- ✅ Transfers (single, bulk & international) & History
+- ✅ Transfers (single, bulk & international) & History — dispute filing from transfer details, **chat-list previews for voice notes/files** ("🎤 Voice note" / "📎 filename"), and call joins that always send a JSON body (Express-5 bodyless-POST fix) with one automatic retry
 - ✅ **Payment Links** — create & share links, track payments
 - ✅ **Smart Invoices** — itemised invoices, share public checkout, track status
 - ✅ **MetricAi Credit Packs** — purchase AI credit top-ups from your wallet
@@ -43,7 +43,8 @@
 - ✅ Profile & Settings
 - ✅ Theme Switching (Light/Dark/System)
 - ✅ Biometrics (Fingerprint/FaceID) — per-account keys, activation prompt on login (skippable to Settings), stickyAuth + in-flight guards against Android's double-trigger
-- ✅ Push notifications — FCM with incoming-call data payloads that render the full-screen ringing UI, foreground-swallow fix, token kept on idle security logout
+- ✅ Push notifications — FCM with incoming-call data payloads that render the full-screen ringing UI, foreground-swallow fix, **token kept across ALL logouts** so calls and chats still ring while signed out (parity with web; re-login re-assigns the token)
+- ✅ **Deep links** — `metricorex://meetings/<code>` opens the meeting join screen (meeting link interstitial's "Open in the app" button lands here); scheme registered on Android (intent-filter) and iOS (CFBundleURLTypes) via `app_links`
 - ✅ Roles & permissions screen with per-call error isolation (no blank screens, no wrongful logouts)
 - ✅ **5-slide onboarding** summarising the full business feature set (work, meetings, money, get-paid, MetricAi & security)
 - ✅ **Grouped navigation** — the More sheet and drawer share one taxonomy (Work & Team · Money · Get Paid · MetricAi · App) so 20+ destinations stay scannable; Wallet/Payroll keep their KYC gate
