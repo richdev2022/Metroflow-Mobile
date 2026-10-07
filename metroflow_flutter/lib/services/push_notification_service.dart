@@ -96,6 +96,11 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     final data = message.data;
     final type = _normalizePushType(data['type']);
     if (type == 'incoming_call') {
+      // Delivery receipt: cancels the server's 8s escalation that would
+      // otherwise re-send the call as a visible tray notification (OEMs
+      // silently drop data-only FCM messages, so the server cannot tell
+      // delivery from a drop — this ack is how it knows we got it).
+      unawaited(PushNotificationService.acknowledgeCallPush(data));
       await PushNotificationService.showCallNotification(
         callerName: (data['caller_name'] ?? data['callerName'] ?? data['callerId'] ?? 'Incoming call').toString(),
         callType: (data['call_type'] ?? data['callType'] ?? 'video').toString(),
@@ -491,6 +496,24 @@ class PushNotificationService {
     }
   }
 
+  /// POST /calls/push-ack — delivery receipt for an incoming-call push.
+  /// Works from BOTH isolates (background handler + foreground stream): it is
+  /// what cancels the backend's 8s escalation to a visible tray notification
+  /// (OEM launchers drop data-only FCM messages while the app is swiped away,
+  /// and FCM still reports those as delivered — the ack is the only way the
+  /// server knows the rich ring actually rendered). Fire-and-forget, never
+  /// throws; must stay STATIC so the background isolate can call it.
+  static void acknowledgeCallPush(Map<String, dynamic> data) {
+    try {
+      final callId = (data['callId'] ?? data['callID'] ?? data['call_id'] ?? data['id'] ?? '')
+          .toString();
+      if (callId.isEmpty) return;
+      unawaited(ApiService().acknowledgeCallPush(callId));
+    } catch (_) {
+      // Never fail a notification render because of an ack.
+    }
+  }
+
   /// Creates the "calls" + "general" notification channels if missing.
   /// Split out so BOTH the main isolate and the background isolate guarantee
   /// a fresh install's first background push lands in an existing channel.
@@ -566,6 +589,9 @@ class PushNotificationService {
       final type = _normalizePushType(data['type']);
       switch (type) {
         case 'incoming_call':
+          // Delivery receipt (foreground): cancels the server's visible-tray
+          // escalation for this call.
+          unawaited(acknowledgeCallPush(data));
           // iOS hybrid pushes carry an aps.alert: the SYSTEM already posted
           // a banner — never stack a local notification on top of it.
           final systemShowed = message.notification != null;
@@ -724,6 +750,11 @@ class PushNotificationService {
           break;
         case 'missed_call':
           _navigate('/main/calls');
+          break;
+        case 'transaction':
+          // Transfer reversals / payment alerts — land on the transfers list
+          // where the referenced transaction (and its reversal) is visible.
+          _navigate('/main/transfers');
           break;
         case 'chat_message':
           // Deep-link into the EXACT conversation (not just the chat list).

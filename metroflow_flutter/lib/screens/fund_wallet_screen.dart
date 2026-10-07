@@ -553,7 +553,7 @@ String _getBankName(VirtualAccount? account) {
       final accounts = responseBody['accounts'] as List?;
       if (accounts != null && accounts.isNotEmpty) {
         final firstAccount = accounts.first as Map;
-        return firstAccount['bankName'] ?? 'Monnify';
+        return firstAccount['bankName'] ?? 'Bank Transfer';
       }
     }
   }
@@ -568,7 +568,8 @@ String _getBankName(VirtualAccount? account) {
   if (bankCode == '058') return 'GTBank';
   if (bankCode == '035') return 'Wema Bank';
   if (bankCode == '232') return 'Sterling Bank';
-  return provider ?? 'Unknown Bank';
+  // Provider names are never shown to customers — fall back to a neutral label.
+  return 'Bank Transfer';
 }
 
 class _BankInfoModal extends StatelessWidget {

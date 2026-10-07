@@ -318,26 +318,39 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       // the room (see CallNotifier.stopOutboundRing).
       ref.read(callProvider.notifier).startOutboundRing(call.id);
 
-      // Join with ONE automatic retry on transient failures (5xx / network)
-      // — the callee's phone is already ringing at this point, so a single
-      // hiccup must not leave the caller stranded with no room.
-      Response joinResponse;
+      // REST-join is a REGISTRATION step, not a gate: the callee's phone is
+      // already ringing at this point, and the call room itself is opened via
+      // the socket `call:join` handshake inside VideoCallScreen (which mints
+      // its own provider credentials). A join failure (500/410 race, duplicate
+      // participant row) used to be rethrown here and surfaced as
+      // "failed to join call" — stranding the caller even though the room was
+      // joinable. Web NEVER REST-joins before entering the room; match that:
+      // attempt it (with ONE retry on transient failures) but treat every
+      // failure as non-fatal and open the room anyway.
+      Map<String, dynamic>? callingCredentials;
       try {
-        joinResponse = await _api.joinCall(call.id);
-      } on DioException catch (joinErr) {
-        final transient = joinErr.type == DioExceptionType.connectionError ||
-            joinErr.type == DioExceptionType.connectionTimeout ||
-            (joinErr.response?.statusCode ?? 0) >= 500;
-        if (!transient) rethrow;
-        await Future<void>.delayed(const Duration(milliseconds: 900));
-        joinResponse = await _api.joinCall(call.id);
+        Response joinResponse;
+        try {
+          joinResponse = await _api.joinCall(call.id);
+        } on DioException catch (joinErr) {
+          final transient = joinErr.type == DioExceptionType.connectionError ||
+              joinErr.type == DioExceptionType.connectionTimeout ||
+              (joinErr.response?.statusCode ?? 0) >= 500;
+          if (!transient) rethrow;
+          await Future<void>.delayed(const Duration(milliseconds: 900));
+          joinResponse = await _api.joinCall(call.id);
+        }
+        final joinData = joinResponse.data['data'];
+        final callingRaw = joinData is Map ? joinData['calling'] : null;
+        if (callingRaw is Map) {
+          callingCredentials = Map<String, dynamic>.from(callingRaw);
+        }
+      } catch (joinErr) {
+        Logger.error('Caller REST join failed (non-fatal): $joinErr');
       }
       if (!mounted) return;
       final userName = await _storage.getUserName();
       if (!mounted) return;
-      // Provider credentials from the join response (absent = default flow).
-      final joinData = joinResponse.data['data'];
-      final callingRaw = joinData is Map ? joinData['calling'] : null;
       await VideoCallScreen.showModal(
         context: context,
         roomId: call.id,
@@ -353,7 +366,7 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
             Logger.error('leaveCall failed (non-fatal): $e');
           }
         },
-        calling: callingRaw is Map ? Map<String, dynamic>.from(callingRaw) : null,
+        calling: callingCredentials,
       );
       // Modal closed → we left the room; make sure the ringback is silenced.
       if (mounted) ref.read(callProvider.notifier).stopOutboundRing();

@@ -510,8 +510,7 @@ class _TransferDetailScreenState extends State<TransferDetailScreen> {
         _DetailRow('Remark', t.remark),
       _DetailRow(
           'Fee', '${t.currency} ${t.fee.toStringAsFixed(2)}'),
-      if (t.paymentProvider != null && t.paymentProvider!.isNotEmpty)
-        _DetailRow('Via', t.paymentProvider!.toUpperCase()),
+      // Payout provider intentionally hidden from customers.
       _DetailRow('Date', TransferDetailScreen.formatDate(t.createdAt)),
       _DetailRow('Status', _status.toUpperCase()),
     ];
