@@ -132,6 +132,37 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
   Future<void> _lookupAddressSuggestions() async {
     setState(() => _addressSuggestLoading = true);
     try {
+      // PRIMARY: the backend /geo/address-suggest proxy — the SAME provider
+      // path the web app uses (one Nominatim identity, shared response
+      // shape, server-side politeness cache).
+      final response = await ApiService().getAddressSuggestions(
+        _addressController.text.trim(),
+        _formCountry,
+      );
+      final payload = response.data is Map ? response.data['data'] : null;
+      final list = payload is List ? payload : const [];
+      if (!mounted) return;
+      setState(() {
+        _addressSuggestions = list
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+        _showAddressSuggestions =
+            _addressSuggestions.isNotEmpty && !_addressPickLock;
+      });
+    } catch (e) {
+      debugPrint('Backend address autocomplete failed, trying direct Nominatim: $e');
+      await _lookupAddressSuggestionsDirect();
+    } finally {
+      if (mounted) setState(() => _addressSuggestLoading = false);
+    }
+  }
+
+  /// FALLBACK: direct Nominatim query with the identified app UA (the
+  /// behavior before the proxy existed — kept so autocomplete still works
+  /// when the backend is unreachable).
+  Future<void> _lookupAddressSuggestionsDirect() async {
+    try {
       final response = await _nominatim.get(
         'https://nominatim.openstreetmap.org/search',
         queryParameters: {
@@ -164,8 +195,6 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
           _showAddressSuggestions = false;
         });
       }
-    } finally {
-      if (mounted) setState(() => _addressSuggestLoading = false);
     }
   }
 
