@@ -713,11 +713,13 @@ class AuthNotifier extends Notifier<AuthState> {
     }
   }
 
-  /// [unregisterDevice] — pass FALSE for AUTOMATIC logouts (5-minute idle
-  /// security logout, session expiry): the FCM device registration is kept
-  /// so push (call rings, chat alerts) keeps working until the next login.
-  /// Explicit user logouts keep the default (true) and unregister.
-  Future<void> logout({bool disableBiometrics = false, bool unregisterDevice = true}) async {
+  /// [unregisterDevice] defaults to FALSE: the FCM token stays registered
+  /// after sign-out (manual or automatic) so calls and chats STILL ring as
+  /// push notifications while the user is logged out — parity with the web
+  /// client, whose service-worker subscription persists across logouts. The
+  /// backend re-assigns the token to whoever logs in next (register-device
+  /// upserts by token), so a shared phone simply switches owners on login.
+  Future<void> logout({bool disableBiometrics = false, bool unregisterDevice = false}) async {
     try {
       _idleTimer?.cancel();
       clearMeCache();

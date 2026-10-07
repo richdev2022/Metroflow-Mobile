@@ -1953,8 +1953,13 @@ class ApiService {
     return await _dio.put('/calls/$id', data: data);
   }
 
+  /// Always send a JSON body: the backend runs Express 5, where a bodyless
+  /// POST leaves `req.body` undefined and routes that destructure it crash
+  /// with a 500 (this silently killed every passwordless call join).
   Future<Response> joinCall(String id, {String? password}) async {
-    return await _dio.post('/calls/$id/join', data: password != null ? {'password': password} : null);
+    return await _dio.post('/calls/$id/join', data: <String, dynamic>{
+      if (password != null) 'password': password,
+    });
   }
 
 
