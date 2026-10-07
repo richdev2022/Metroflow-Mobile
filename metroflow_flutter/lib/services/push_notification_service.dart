@@ -767,6 +767,32 @@ class PushNotificationService {
           } catch (_) {}
           _navigate('/main/chat');
           break;
+        case 'meeting':
+        case 'meeting_invite':
+          _navigate('/main/meetings');
+          break;
+        case 'invoice':
+          _navigate('/main/invoices');
+          break;
+        case 'subscription':
+          _navigate('/main/subscriptions');
+          break;
+        case 'task':
+        case 'assignment':
+          _navigate('/main/board');
+          break;
+        case 'credit':
+        case 'debit':
+        case 'reversal':
+        case 'transfer':
+          // Wallet money movement — the transfers screen is the mobile
+          // transaction history (mirrors the in-app notifications map).
+          _navigate('/main/transfers');
+          break;
+        case 'chat':
+        case 'chat_new':
+          _navigate('/main/chat');
+          break;
         default:
           _navigate('/main/notifications');
       }

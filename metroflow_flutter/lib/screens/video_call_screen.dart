@@ -401,6 +401,14 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       'videoEnabled': _isVideoEnabled,
     };
 
+    // Android routinely kills background sockets; a call opened from a push
+    // tap can reach this point before the auto-reconnect lands. Give the
+    // signaling socket a moment instead of emitting into the void.
+    if (!_socket.isConnected && mounted) {
+      setState(() => _connectionLabel = 'Reconnecting…');
+      await _socket.waitForConnection(timeout: const Duration(seconds: 8));
+    }
+
     dynamic ack;
     var ackFailed = false;
     try {
@@ -856,6 +864,24 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   /// produce → consume existing). Shared by both join paths: straight-in and
   /// post-admission.
   Future<void> _startMediasoupSession() async {
+    // MediaSoup rides the app signaling socket for every ack. If the socket
+    // is not connected yet (cold start from a push tap, OS killed the
+    // background socket), the first ack emit would fail instantly — wait for
+    // it first (the ack layer itself also waits 8s as a second line).
+    if (!_socket.isConnected) {
+      if (mounted) {
+        setState(() => _connectionLabel = 'Reconnecting…');
+      }
+      final reconnected = await _socket.waitForConnection(
+        timeout: const Duration(seconds: 12),
+      );
+      if (!reconnected) {
+        _surfaceMediaFailure(Exception(
+          'Signalling socket unavailable — check your internet connection and try again.',
+        ));
+        return;
+      }
+    }
     try {
       final room = MediasoupRoomService(
         roomId: widget.roomId,
