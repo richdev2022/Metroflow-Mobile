@@ -95,6 +95,11 @@ class ApiService {
   late final Dio _dio;
   final StorageService _storage = StorageService();
 
+  /// Read-only access to the session storage (source of truth for the auth
+  /// token) — used by SocketService to re-handshake with a fresh token after
+  /// the server rejects an expired one.
+  StorageService get storage => _storage;
+
   static String? extractResponseMessage(dynamic data) {
     if (data is Map) {
       final message = data['message'] ?? data['error'];
@@ -1055,8 +1060,36 @@ class ApiService {
   }
 
   /// GET /transfers/beneficiaries — recent transfer recipients (chips row).
-  Future<Response> getBeneficiaries() async {
-    return await _dio.get('/transfers/beneficiaries');
+  /// `currency` filters to one corridor (NGN/USD/GBP/EUR).
+  Future<Response> getBeneficiaries({String? currency, int limit = 100}) async {
+    return await _dio.get('/transfers/beneficiaries', queryParameters: {
+      if (currency != null) 'currency': currency,
+      'limit': limit,
+    }, options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// POST /transfers/beneficiaries — save a beneficiary with verification
+  /// (NGN resolves the account name; intl corridors are format-validated).
+  Future<Response> createBeneficiary(Map<String, dynamic> data) async {
+    return await _dio.post('/transfers/beneficiaries', data: data,
+        options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// GET /transfers/payout-limits — admin-configured min/max per currency.
+  Future<Response> getPayoutLimits() async {
+    return await _dio.get('/transfers/payout-limits',
+        options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// POST /calls/push-ack — delivery receipt for an incoming-call push.
+  /// Fire-and-forget; cancels the server's visible-tray fallback.
+  Future<void> acknowledgeCallPush(String callId) async {
+    try {
+      await _dio.post('/calls/push-ack', data: {'callId': callId},
+          options: Options(extra: {'suppressToast': true}));
+    } catch (_) {
+      // never fail an ack
+    }
   }
 
   /// DELETE /transfers/beneficiaries/:id — remove a saved recipient.

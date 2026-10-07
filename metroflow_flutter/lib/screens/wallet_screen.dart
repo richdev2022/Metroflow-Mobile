@@ -382,7 +382,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
         final accounts = responseBody['accounts'] as List?;
         if (accounts != null && accounts.isNotEmpty) {
           final firstAccount = accounts.first as Map;
-          return firstAccount['bankName'] ?? 'Monnify';
+          return firstAccount['bankName'] ?? 'Bank Transfer';
         }
       }
     }
@@ -393,12 +393,12 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
         return data['bank_name'].toString();
       }
     }
-    // Default to bank code or provider
+    // Default to bank code or a neutral label (provider names are never shown).
     final bankCode = account['bank_code'];
     if (bankCode == '058') return 'GTBank';
     if (bankCode == '035') return 'Wema Bank';
     if (bankCode == '232') return 'Sterling Bank';
-    return provider ?? 'Unknown Bank';
+    return 'Bank Transfer';
   }
 
   Widget _buildQuickAction(IconData icon, String label, VoidCallback onTap) {
@@ -686,6 +686,23 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                           Expanded(
                             child: _buildQuickAction(Icons.swap_horiz, 'View Transfers',
                               () => context.push('/main/transfers')),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: _buildQuickAction(Icons.people_alt_rounded, 'Beneficiaries',
+                              () => context.push('/main/beneficiaries')),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _buildQuickAction(Icons.receipt_long_rounded, 'Fees & Pricing',
+                              () => context.push('/main/fees')),
                           ),
                         ],
                       ),
