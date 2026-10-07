@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -59,6 +62,20 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
   String? _verifiedName;
   bool _verifiedResolved = false;
 
+  // ---- Address autofill (OpenStreetMap Nominatim) — parity with the
+  // international transfer sheet and the web beneficiary page: debounced
+  // queries as the user types the street address, one tap fills
+  // street/city/state/postcode.
+  List<Map<String, dynamic>> _addressSuggestions = [];
+  bool _addressSuggestLoading = false;
+  bool _showAddressSuggestions = false;
+  bool _addressPickLock = false;
+  Timer? _addressDebounce;
+  final Dio _nominatim = Dio(BaseOptions(
+    connectTimeout: const Duration(seconds: 8),
+    receiveTimeout: const Duration(seconds: 8),
+  ));
+
   /// EDIT MODE: when non-null the add-sheet edits this saved beneficiary id
   /// (prefilled fields, PUT instead of POST on save).
   String? _editingId;
@@ -72,10 +89,15 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
     super.initState();
     _fetchBeneficiaries();
     _fetchBanks();
+    // Address autofill: react to every keystroke in the street field.
+    _addressController.addListener(_scheduleAddressLookup);
   }
 
   @override
   void dispose() {
+    _addressController.removeListener(_scheduleAddressLookup);
+    _addressDebounce?.cancel();
+    _nominatim.close();
     _accountNumberController.dispose();
     _accountNameController.dispose();
     _bankNameController.dispose();
@@ -87,6 +109,104 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
     _postalController.dispose();
     _emailController.dispose();
     super.dispose();
+  }
+
+  /// Debounced Nominatim lookup: fires ~400ms after the user stops typing
+  /// the street address (only for international beneficiaries with a
+  /// country selected).
+  void _scheduleAddressLookup() {
+    _addressDebounce?.cancel();
+    final q = _addressController.text.trim();
+    if (!_isIntl || q.length < 3 || _formCountry.isEmpty) {
+      if (mounted && (_showAddressSuggestions || _addressSuggestions.isNotEmpty)) {
+        setState(() {
+          _showAddressSuggestions = false;
+          _addressSuggestions = [];
+        });
+      }
+      return;
+    }
+    _addressDebounce = Timer(const Duration(milliseconds: 400), _lookupAddressSuggestions);
+  }
+
+  Future<void> _lookupAddressSuggestions() async {
+    setState(() => _addressSuggestLoading = true);
+    try {
+      final response = await _nominatim.get(
+        'https://nominatim.openstreetmap.org/search',
+        queryParameters: {
+          'format': 'jsonv2',
+          'addressdetails': 1,
+          'limit': 5,
+          'countrycodes': _formCountry.toLowerCase(),
+          'q': _addressController.text.trim(),
+        },
+        options: Options(headers: {
+          'Accept': 'application/json',
+          'User-Agent': 'Metroflow-Mobile/1.0 (support@metricorex.com)',
+        }),
+      );
+      final list = response.data is List ? response.data as List : const [];
+      if (!mounted) return;
+      setState(() {
+        _addressSuggestions = list
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+        _showAddressSuggestions =
+            _addressSuggestions.isNotEmpty && !_addressPickLock;
+      });
+    } catch (e) {
+      debugPrint('Address autocomplete failed: $e');
+      if (mounted) {
+        setState(() {
+          _addressSuggestions = [];
+          _showAddressSuggestions = false;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _addressSuggestLoading = false);
+    }
+  }
+
+  /// Fill street/city/state/postcode from a picked Nominatim result.
+  void _pickAddressSuggestion(Map<String, dynamic> item) {
+    final address = item['address'] is Map
+        ? Map<String, dynamic>.from(item['address'] as Map)
+        : <String, dynamic>{};
+    _addressPickLock = true;
+    final houseNumber = address['house_number']?.toString() ?? '';
+    final road = address['road']?.toString() ?? '';
+    String street = [houseNumber, road]
+        .where((p) => p.trim().isNotEmpty)
+        .join(' ')
+        .trim();
+    if (street.isEmpty) {
+      final name = item['name']?.toString() ?? '';
+      final display = item['display_name']?.toString() ?? '';
+      street = name.isNotEmpty
+          ? name
+          : (display.isNotEmpty ? display.split(',').first : '');
+    }
+    final city = (address['city'] ??
+            address['town'] ??
+            address['village'] ??
+            address['suburb'] ??
+            address['county'] ??
+            '')
+        .toString();
+    final state = address['state']?.toString() ?? '';
+    final postal = address['postcode']?.toString() ?? '';
+    setState(() {
+      _addressController.text = street;
+      _cityController.text = city;
+      _stateController.text = state;
+      _postalController.text = postal;
+      _showAddressSuggestions = false;
+      _addressSuggestions = [];
+    });
+    // Re-enable lookups once the programmatic value change settles.
+    Timer(const Duration(milliseconds: 500), () => _addressPickLock = false);
   }
 
   Future<void> _fetchBanks() async {
@@ -387,6 +507,10 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
   }
 
   void _openAddSheet({Map<String, dynamic>? existing}) {
+    // Programmatic prefill/clear below would fire the address listener and
+    // pop suggestions over the prefilled record — latch the pick lock first.
+    _addressPickLock = true;
+    _addressDebounce?.cancel();
     _editingId = existing?['id']?.toString();
     if (existing != null) {
       // EDIT: prefill every field from the saved record.
@@ -418,6 +542,10 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
     }
     _verifiedName = null;
     _verifiedResolved = false;
+    _showAddressSuggestions = false;
+    _addressSuggestions = [];
+    // Release the pick lock once the programmatic text changes have settled.
+    Timer(const Duration(milliseconds: 500), () => _addressPickLock = false);
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -695,8 +823,81 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
                         ],
                       ),
                     ),
-                    field('Street address', _addressController,
-                        hint: 'e.g. 1801 Main St'),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                            Text('Street address',
+                                style: TextStyle(
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: colors.text)),
+                            if (_addressSuggestLoading)
+                              const SizedBox(
+                                  width: 12,
+                                  height: 12,
+                                  child: CircularProgressIndicator(strokeWidth: 2)),
+                          ]),
+                          const SizedBox(height: 6),
+                          TextField(
+                            controller: _addressController,
+                            style: TextStyle(color: colors.text, fontSize: 15),
+                            decoration: InputDecoration(
+                              hintText: 'Start typing the street address…',
+                              hintStyle: TextStyle(
+                                  color: colors.textSecondary, fontSize: 14),
+                              filled: true,
+                              fillColor: colors.background,
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 12),
+                              border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide(color: colors.border)),
+                              enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide(color: colors.border)),
+                            ),
+                          ),
+                          if (_showAddressSuggestions &&
+                              _addressSuggestions.isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            Container(
+                              constraints: const BoxConstraints(maxHeight: 190),
+                              decoration: BoxDecoration(
+                                color: colors.background,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: colors.border),
+                              ),
+                              child: ListView.builder(
+                                shrinkWrap: true,
+                                itemCount: _addressSuggestions.length,
+                                itemBuilder: (context, idx) {
+                                  final suggestion = _addressSuggestions[idx];
+                                  return InkWell(
+                                    onTap: () =>
+                                        _pickAddressSuggestion(suggestion),
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 12, vertical: 10),
+                                      child: Text(
+                                        suggestion['display_name']?.toString() ??
+                                            '',
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                            color: colors.text, fontSize: 13.5),
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
                     Row(children: [
                       Expanded(
                           child: field('City', _cityController, hint: 'City')),
