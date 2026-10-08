@@ -104,33 +104,73 @@ class _TeamRolesScreenState extends State<TeamRolesScreen> {
   }
 
   Future<void> _load() async {
-    // DECOUPLED LOADING (was Future.wait = all-or-nothing): GET /roles/me
-    // legitimately answers 401 "Unauthorized" for personal accounts (no
-    // business workspace) and that ONE throw left the screen stuck on a
-    // permanent empty state hiding the roles list. Each call now fails
-    // independently; only a failure of the ROLES call itself is fatal.
-    // (The 401s no longer trip the session-expiry logout either — the three
-    // methods send suppressSessionLogout in their dio extra.)
+    // ENDLESS-SPINNER FIX: this loader used to (a) fire its three calls
+    // SEQUENTIALLY — a slow/hung endpoint stacked 3 x 30s dio timeouts, and
+    // (b) run the post-processing OUTSIDE any guard, so an unexpected
+    // exception between the first check and the final setState left
+    // _isLoading stuck at true FOREVER (the reported "loads endlessly").
+    // Now: the calls run in PARALLEL with hard per-call timeouts, every
+    // failure is independent (only the ROLES call is fatal), and a
+    // try/catch/finally guarantees the spinner ALWAYS resolves to either
+    // content or the retryable error state.
+    // (The 401s do not trip the session-expiry logout — the three methods
+    // send suppressSessionLogout in their dio extra.)
     dynamic rolesRes;
     dynamic permRes;
     dynamic meRes;
-    try {
-      rolesRes = await ApiService().getRoles();
-    } catch (e) {
-      debugPrint('getRoles failed: $e');
-    }
-    try {
-      permRes = await ApiService().getRolePermissions();
-    } catch (e) {
-      debugPrint('getRolePermissions failed: $e');
-    }
-    try {
-      meRes = await ApiService().getMyTeamRole();
-    } catch (e) {
-      debugPrint('getMyTeamRole failed: $e');
-    }
+    const perCallTimeout = Duration(seconds: 45);
+    await Future.wait<void>([
+      () async {
+        try {
+          rolesRes = await ApiService()
+              .getRoles()
+              .timeout(perCallTimeout);
+        } catch (e) {
+          debugPrint('getRoles failed: $e');
+        }
+      }(),
+      () async {
+        try {
+          permRes = await ApiService()
+              .getRolePermissions()
+              .timeout(perCallTimeout);
+        } catch (e) {
+          debugPrint('getRolePermissions failed: $e');
+        }
+      }(),
+      () async {
+        try {
+          meRes = await ApiService()
+              .getMyTeamRole()
+              .timeout(perCallTimeout);
+        } catch (e) {
+          debugPrint('getMyTeamRole failed: $e');
+        }
+      }(),
+    ]);
 
     if (!mounted) return;
+
+    try {
+      await _applyLoadedData(rolesRes, permRes, meRes);
+    } catch (e) {
+      debugPrint('Roles render-data error: $e');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _loadFailed = rolesRes == null;
+        });
+      }
+    } finally {
+      // Absolute guarantee: the spinner can never outlive _load().
+      if (mounted && _isLoading) setState(() => _isLoading = false);
+    }
+  }
+
+  /// Pure data shaping — extracted so any surprise exception lands in the
+  /// guard above instead of killing the load cycle.
+  Future<void> _applyLoadedData(
+      dynamic rolesRes, dynamic permRes, dynamic meRes) async {
 
     // REAL error: the roles list itself failed → error state with retry.
     if (rolesRes == null) {

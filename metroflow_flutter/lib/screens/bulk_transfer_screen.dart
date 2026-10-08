@@ -38,6 +38,15 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
   bool _loading = true;
   bool _showOtpModal = false;
   bool _submitting = false;
+
+  // ---- Salary payout quote lock (web parity): per-intl-currency rates for
+  // the final payout step — Conversion rate, Fee, Total debit (NGN), a live
+  // "Rate locks in M:SS" countdown and the admin-configured limits. The
+  // quote endpoint bakes the margin into the rate and returns limits.
+  final Map<String, Map<String, dynamic>> _salaryQuotes = {};
+  DateTime? _salaryQuoteNow;
+  Timer? _salaryQuoteTick;
+  bool _salaryQuotesLoading = false;
   /// Live OTP-for-transactions configuration — re-checked when the screen
   /// loads and again at submit time. When the server has OTP verification
   /// switched off, the "Request OTP" step is skipped entirely.
@@ -120,6 +129,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
   void dispose() {
     _bankSearchController.dispose();
     _otpTimer?.cancel();
+    _salaryQuoteTick?.cancel();
     for (final timer in _lookupTimers.values) {
       timer.cancel();
     }
@@ -133,7 +143,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
     if (recipient.isEmpty) return;
     // USD (international) rows have NO NGN account lookup — Flutterwave has
     // no account resolution there, the beneficiary details are typed in.
-    if (recipient.first.isUsd) return;
+    if (recipient.first.isIntl) return;
     final account = recipient.first.recipientAccount.trim();
     final bank = recipient.first.recipientBank.trim();
     if (bank.isEmpty || account.length != 10) return;
@@ -165,6 +175,12 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
               .map((e) => Employee.fromJson(e as Map<String, dynamic>))
               .toList();
         });
+        // Salary payouts with international employees lock their rates here
+        // so the final payout step shows the same quote card as the single
+        // transfer sheet.
+        if (_salaryIntlTotals.isNotEmpty) {
+          unawaited(_fetchSalaryQuotes());
+        }
       }
 
       if (walletRes.data != null && mounted) {
@@ -241,27 +257,40 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
           case 'amount':
             return r.copyWith(amount: value);
           case 'currency':
-            // Corridor switch clears the OTHER side's fields so a stale
-            // NGN bank code never rides along with a USD payout (and vice
-            // versa) — mirrors the web behaviour.
-            if (value == 'USD') {
+            // Corridor switch clears the OTHER side's fields so a stale NGN
+            // bank code never rides along with an international payout (and
+            // vice versa) — mirrors the web behaviour. GBP/EUR share the USD
+            // field set but default their own country; GBP keeps a
+            // personal/corporate account type, EUR needs none.
+            if (value == 'NGN') {
               return r.copyWith(
-                currency: 'USD',
-                recipientBank: '',
-                recipientName: '',
-                recipientCountry: r.recipientCountry.isEmpty ? 'US' : r.recipientCountry,
+                currency: 'NGN',
+                bankName: '',
+                swiftCode: '',
+                routingNumber: '',
+                accountType: 'checking',
+                beneficiaryEmail: '',
+                recipientAddress: '',
+                recipientCity: '',
+                recipientState: '',
+                recipientPostalCode: '',
+                recipientCountry: 'US',
               );
             }
             return r.copyWith(
-              currency: 'NGN',
-              bankName: '',
-              swiftCode: '',
-              routingNumber: '',
-              accountType: 'checking',
-              beneficiaryEmail: '',
-              recipientAddress: '',
-              recipientCity: '',
-              recipientCountry: 'US',
+              currency: value,
+              recipientBank: '',
+              recipientName: '',
+              accountType: value == 'USD'
+                  ? 'checking'
+                  : value == 'GBP'
+                      ? 'personal'
+                      : '',
+              recipientCountry: value == 'USD'
+                  ? (r.recipientCountry.isEmpty ? 'US' : r.recipientCountry)
+                  : value == 'GBP'
+                      ? 'GB'
+                      : 'DE',
             );
           case 'bankName':
             return r.copyWith(bankName: value);
@@ -277,6 +306,10 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
             return r.copyWith(recipientAddress: value);
           case 'recipientCity':
             return r.copyWith(recipientCity: value);
+          case 'recipientState':
+            return r.copyWith(recipientState: value);
+          case 'recipientPostalCode':
+            return r.copyWith(recipientPostalCode: value);
           case 'recipientCountry':
             return r.copyWith(recipientCountry: value);
           default:
@@ -286,7 +319,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
     });
     // Auto-verify as soon as a full 10-digit account number is typed
     // (NGN rows only — USD rows have no lookup).
-    if (field == 'recipientAccount' && !_recipients.any((r) => r.id == id && r.isUsd)) {
+    if (field == 'recipientAccount' && !_recipients.any((r) => r.id == id && r.isIntl)) {
       _scheduleRecipientLookup(id);
     }
   }
@@ -306,7 +339,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
       ),
     );
     // USD (international) rows have no NGN account-name lookup.
-    if (recipient.isUsd) return;
+    if (recipient.isIntl) return;
     if (recipient.recipientBank.isEmpty || recipient.recipientAccount.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -364,6 +397,13 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
   }
 
   /// SWIFT/BIC: 8 or 11 alphanumeric characters.
+  /// BIC/SWIFT: 8 or 11 alphanumeric characters with a letter bank prefix.
+  bool _isValidBic(String bic) {
+    final v = bic.trim();
+    return RegExp(r'^[A-Za-z0-9]{8}(?:[A-Za-z0-9]{3})?$').hasMatch(v) &&
+        RegExp(r'[A-Za-z]').hasMatch(v);
+  }
+
   bool _isValidSwift(String swift) =>
       RegExp(r'^[A-Za-z0-9]{8}(?:[A-Za-z0-9]{3})?$').hasMatch(swift.trim());
 
@@ -373,16 +413,37 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
     if (r.amount.trim().isEmpty || (double.tryParse(r.amount) ?? 0) <= 0) {
       return 'enter a valid amount';
     }
-    if (r.isUsd) {
-      if (r.bankName.trim().isEmpty) return 'bank name is required for USD transfers';
-      if (!_isValidSwift(r.swiftCode)) {
-        return 'SWIFT code must be 8 or 11 characters';
-      }
-      if (!_isValidAbaRouting(r.routingNumber.trim())) {
-        return 'routing number must be a valid 9-digit ABA number';
-      }
+    if (r.isIntl) {
+      // Per-corridor contracts (Flutterwave international payout docs):
+      // USD needs an ABA routing number + street address; GBP accepts a
+      // 6-digit sort code OR a BIC; EUR requires a BIC. Both European
+      // corridors need street, city and postcode.
+      final ccy = r.currency.toUpperCase();
+      if (r.bankName.trim().isEmpty) return 'bank name is required for $ccy transfers';
       if (r.recipientAccount.trim().isEmpty) return 'account number is required';
       if (r.recipientName.trim().isEmpty) return 'account name is required';
+      if (ccy == 'USD') {
+        if (!_isValidAbaRouting(r.routingNumber.trim())) {
+          return 'routing number must be a valid 9-digit ABA number';
+        }
+        if (r.swiftCode.trim().isNotEmpty && !_isValidSwift(r.swiftCode)) {
+          return 'SWIFT code must be 8 or 11 characters';
+        }
+        if (r.recipientAddress.trim().isEmpty) return "beneficiary street address is required for USD transfers";
+      } else {
+        final routingClean = r.routingNumber.trim();
+        final isSortCode = RegExp(r'^\d{6}$').hasMatch(routingClean);
+        final isBic = RegExp(r'^[A-Za-z0-9]{8}(?:[A-Za-z0-9]{3})?$').hasMatch(routingClean) &&
+            RegExp(r'[A-Za-z]').hasMatch(routingClean);
+        if (ccy == 'EUR') {
+          if (!_isValidSwift(r.swiftCode)) return 'SWIFT/BIC code must be 8 or 11 characters for EUR transfers';
+        } else if (!isSortCode && !isBic && !_isValidSwift(r.swiftCode)) {
+          return 'enter a 6-digit UK sort code or an 8/11-character BIC';
+        }
+        if (r.recipientAddress.trim().isEmpty) return "beneficiary street address is required for $ccy transfers";
+        if (r.recipientCity.trim().isEmpty) return "beneficiary city is required for $ccy transfers";
+        if (r.recipientPostalCode.trim().isEmpty) return "beneficiary postal code is required for $ccy transfers";
+      }
     } else {
       if (r.recipientBank.isEmpty) return 'select a bank';
       if (!RegExp(r'^\d{10}$').hasMatch(r.recipientAccount.trim())) {
@@ -414,7 +475,8 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
 
     if (_transferType == 'epic') {
       // Per-currency completeness: NGN rows need bank + 10-digit account;
-      // USD rows need bank name + SWIFT + valid ABA routing + account.
+      // international rows follow their corridor contract (ABA / sort code
+      // or BIC / IBAN + address block).
       for (final r in _recipients) {
         final error = _recipientValidationError(r);
         if (error != null) {
@@ -426,6 +488,24 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
           }
           return;
         }
+      }
+    }
+
+    if (_transferType == 'salary') {
+      // Quote-lock guard: an expired international rate must not survive into
+      // submission — refresh first so the user confirms the CURRENT rate.
+      final expired = _salaryIntlTotals.keys
+          .where(_salaryQuotes.containsKey)
+          .where(_salaryQuoteExpired)
+          .toList();
+      if (expired.isNotEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(
+                  'The ${expired.join(", ")} exchange rate quote expired — tap Refresh quote and try again')));
+        }
+        unawaited(_fetchSalaryQuotes());
+        return;
       }
     }
 
@@ -574,12 +654,14 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
           // Row currency — the wallet-currency guard stays server-side.
           'currency': recipient.currency.toUpperCase(),
           'remark': recipient.remark,
-          if (recipient.isUsd) ...{
+          if (recipient.isIntl) ...{
             'bankName': recipient.bankName.trim(),
             'swiftCode': recipient.swiftCode.trim(),
             'routingNumber': recipient.routingNumber.trim(),
             'recipientAddress': recipient.recipientAddress.trim(),
             'recipientCity': recipient.recipientCity.trim(),
+            'recipientState': recipient.recipientState.trim(),
+            'recipientPostalCode': recipient.recipientPostalCode.trim(),
             'recipientCountry': recipient.recipientCountry.trim().toUpperCase(),
             'accountType': recipient.accountType,
             if (recipient.beneficiaryEmail.trim().isNotEmpty)
@@ -631,12 +713,14 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
               'accountName': r.recipientName.trim(),
               'currency': r.currency.toUpperCase(),
               'remark': r.remark,
-              if (r.isUsd) ...{
+              if (r.isIntl) ...{
                 'recipientBankName': r.bankName.trim(),
                 'recipientSwiftCode': r.swiftCode.trim(),
                 'recipientRoutingNumber': r.routingNumber.trim(),
                 'recipientAddress': r.recipientAddress.trim(),
                 'recipientCity': r.recipientCity.trim(),
+                'recipientState': r.recipientState.trim(),
+                'recipientPostalCode': r.recipientPostalCode.trim(),
                 'recipientCountry': r.recipientCountry.trim().toUpperCase(),
                 'beneficiaryEmail': r.beneficiaryEmail.trim(),
                 'accountType': r.accountType,
@@ -687,14 +771,102 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
     }
   }
 
+  Map<String, double> get _salaryIntlTotals {
+    final totals = <String, double>{};
+    for (final emp in _employees) {
+      final c = (emp.salaryCurrency || 'NGN').toUpperCase();
+      if (c == 'NGN') continue;
+      totals[c] = (totals[c] ?? 0) + (emp.netSalary as num).toDouble();
+    }
+    return totals;
+  }
+
+  Future<void> _fetchSalaryQuotes() async {
+    final groups = _salaryIntlTotals;
+    if (groups.isEmpty) return;
+    _salaryQuotesLoading = true;
+    try {
+      final fresh = <String, Map<String, dynamic>>{};
+      for (final entry in groups.entries) {
+        if (entry.value <= 0) continue;
+        try {
+          final res = await ApiService().getTransferQuote(
+            amount: entry.value,
+            sourceCurrency: 'NGN',
+            destinationCurrency: entry.key,
+          );
+          final data = res.data is Map ? res.data['data'] : null;
+          if (data is Map) fresh[entry.key] = Map<String, dynamic>.from(data);
+        } catch (_) {
+          // A failed quote leaves that corridor unlocked — the summary shows
+          // a refresh action instead of silently blocking the payout.
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _salaryQuotes
+          ..clear()
+          ..addAll(fresh);
+        _salaryQuoteNow = DateTime.now();
+      });
+      _salaryQuoteTick?.cancel();
+      if (fresh.isNotEmpty) {
+        _salaryQuoteTick = Timer.periodic(const Duration(seconds: 1), (_) {
+          if (!mounted) return;
+          setState(() => _salaryQuoteNow = DateTime.now());
+        });
+      }
+    } finally {
+      _salaryQuotesLoading = false;
+      if (mounted) setState(() {});
+    }
+  }
+
+  bool _salaryQuoteExpired(String ccy) {
+    final q = _salaryQuotes[ccy];
+    final iso = q?['expires_at']?.toString();
+    if (iso == null || iso.isEmpty) return false;
+    final expires = DateTime.tryParse(iso);
+    if (expires == null) return false;
+    return DateTime.now().isAfter(expires);
+  }
+
+  String? _salaryQuoteCountdown(String ccy) {
+    final q = _salaryQuotes[ccy];
+    final iso = q?['expires_at']?.toString();
+    if (iso == null || iso.isEmpty) return null;
+    final expires = DateTime.tryParse(iso);
+    if (expires == null) return null;
+    final remaining = expires.difference(DateTime.now()).inSeconds;
+    if (remaining <= 0) return null;
+    return '${remaining ~/ 60}:${(remaining % 60).toString().padLeft(2, '0')}';
+  }
+
+  String _currencySymbolFor(String ccy) {
+    switch (ccy.toUpperCase()) {
+      case 'USD':
+        return '\u0024';
+      case 'GBP':
+        return '\u00A3';
+      case 'EUR':
+        return '\u20AC';
+      default:
+        return '\u20A6';
+    }
+  }
+
   /// Per-currency totals — the summary card renders one line per currency
   /// ("NGN 12,000 · USD 300") for mixed-corridor Epic batches.
   Map<String, double> get _totalsByCurrency {
     if (_transferType == 'salary') {
-      return {
-        'NGN': _employees.fold<double>(
-            0, (sum, emp) => sum + (emp.netSalary as num).toDouble()),
-      };
+      // Payroll is NOT NGN-only: the backend pays each employee in their own
+      // salary currency (NGN/USD/GBP/EUR), so the summary groups per currency.
+      final totals = <String, double>{};
+      for (final emp in _employees) {
+        final c = (emp.salaryCurrency || 'NGN').toUpperCase();
+        totals[c] = (totals[c] ?? 0) + (emp.netSalary as num).toDouble();
+      }
+      return totals;
     }
     final totals = <String, double>{};
     for (final r in _recipients) {
@@ -1130,7 +1302,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
                 ),
             ],
           ),
-          if (isUsd) ...[
+          if (isUsd || _isEurGbpRow(recipient)) ...[
             _buildUsdFields(recipient),
           ] else ...[
             _buildField(
@@ -1199,12 +1371,12 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
           ],
           const SizedBox(height: 16),
           _buildField(
-            'Amount${isUsd ? ' (USD)' : ' (NGN)'}',
+            'Amount${recipient.isIntl ? ' (${recipient.currency.toUpperCase()})' : ' (NGN)'}',
             TextField(
               decoration: InputDecoration(
                 hintText: 'Enter amount (min: 100)',
                 hintStyle: TextStyle(color: colors.textSecondary),
-                prefixText: isUsd ? '\u0024 ' : '\u20A6 ',
+                prefixText: _currencySymbol(recipient.currency),
                 prefixStyle: TextStyle(color: colors.text, fontSize: 16),
               ),
               style: TextStyle(color: colors.text, fontSize: 16),
@@ -1229,7 +1401,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
-        children: ['NGN', 'USD'].map((currency) {
+        children: const ['NGN', 'USD', 'GBP', 'EUR'].map((currency) {
           final isSelected = recipient.currency.toUpperCase() == currency;
           return GestureDetector(
             onTap: () => _updateRecipient(recipient.id, 'currency', currency),
@@ -1254,15 +1426,48 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
     );
   }
 
-  /// USD (international) beneficiary fields — validated per the backend's
-  /// corridor rules: bank name required, SWIFT 8/11, 9-digit ABA routing
-  /// with the 3-7-1 checksum. No account-name lookup exists on this route.
+  /// Currency display symbol for a corridor code.
+  String _currencySymbol(String currency) {
+    switch (currency.toUpperCase()) {
+      case 'USD':
+        return '\u0024 ';
+      case 'GBP':
+        return '\u00A3 ';
+      case 'EUR':
+        return '\u20AC ';
+      default:
+        return '\u20A6 ';
+    }
+  }
+
+  bool _isEurGbpRow(Recipient recipient) {
+    final c = recipient.currency.toUpperCase();
+    return c == 'GBP' || c == 'EUR';
+  }
+
+  /// International (USD/GBP/EUR) beneficiary fields — per-corridor contracts
+  /// from the Flutterwave international payout docs: USD needs a 9-digit ABA
+  /// routing number and a street address; GBP accepts a 6-digit sort code OR
+  /// a BIC; EUR needs a BIC. European corridors require street, city and
+  /// postcode (Flutterwave requires city). No account-name lookup exists on
+  /// these rails.
   Widget _buildUsdFields(Recipient recipient) {
     final colors = AppTheme.colors;
+    final ccy = recipient.currency.toUpperCase();
+    final isEur = ccy == 'EUR';
+    final isGbp = ccy == 'GBP';
     final routing = recipient.routingNumber.trim();
-    final routingValid = routing.isEmpty || _isValidAbaRouting(routing);
+    final routingValid = routing.isEmpty ||
+        (isGbp
+            ? RegExp(r'^\d{6}$').hasMatch(routing.replaceAll(RegExp(r'[\s-]'), '')) ||
+                (_isValidBic(routing))
+            : isEur
+                ? true
+                : _isValidAbaRouting(routing));
     final swift = recipient.swiftCode.trim();
-    final swiftValid = swift.isEmpty || _isValidSwift(swift);
+    final swiftValid = swift.isEmpty ||
+        _isValidSwift(swift) ||
+        (isGbp && _isValidBic(swift));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1282,7 +1487,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
         ),
         const SizedBox(height: 16),
         _buildField(
-          'SWIFT / BIC *',
+          isEur ? 'SWIFT / BIC *' : (isGbp ? 'SWIFT / BIC (optional)' : 'SWIFT / BIC'),
           TextField(
             decoration: InputDecoration(
               hintText: '8 or 11 characters (e.g. CHASUS33)',
@@ -1296,36 +1501,42 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
             onChanged: (value) => _updateRecipient(recipient.id, 'swiftCode', value),
           ),
         ),
-        const SizedBox(height: 16),
-        _buildField(
-          'Routing Number (ABA, 9 digits) *',
-          TextField(
-            decoration: InputDecoration(
-              hintText: 'e.g. 021000021',
-              hintStyle: TextStyle(color: colors.textSecondary),
-              errorText: routingValid
-                  ? null
-                  : 'Invalid ABA checksum — double-check with the beneficiary',
-              counterText: '',
+        if (!isEur) ...[
+          const SizedBox(height: 16),
+          _buildField(
+            isGbp ? 'Sort Code or BIC *' : 'Routing Number (ABA, 9 digits) *',
+            TextField(
+              decoration: InputDecoration(
+                hintText: isGbp ? '6-digit sort code (308463) or BIC' : 'e.g. 021000021',
+                hintStyle: TextStyle(color: colors.textSecondary),
+                errorText: routingValid
+                    ? null
+                    : isGbp
+                        ? 'Enter a 6-digit sort code or an 8/11-character BIC'
+                        : 'Invalid ABA checksum — double-check with the beneficiary',
+                counterText: '',
+              ),
+              style: TextStyle(color: colors.text, fontSize: 16),
+              keyboardType: isGbp ? TextInputType.text : TextInputType.number,
+              maxLength: isGbp ? 11 : 9,
+              textCapitalization: isGbp ? TextCapitalization.characters : TextCapitalization.none,
+              controller: TextEditingController(text: recipient.routingNumber)
+                ..selection = TextSelection.collapsed(offset: recipient.routingNumber.length),
+              onChanged: (value) => _updateRecipient(recipient.id, 'routingNumber',
+                  isGbp ? value.toUpperCase().replaceAll(RegExp(r'[^0-9A-Z]'), '') : value),
             ),
-            style: TextStyle(color: colors.text, fontSize: 16),
-            keyboardType: TextInputType.number,
-            maxLength: 9,
-            controller: TextEditingController(text: recipient.routingNumber)
-              ..selection = TextSelection.collapsed(offset: recipient.routingNumber.length),
-            onChanged: (value) => _updateRecipient(recipient.id, 'routingNumber', value),
           ),
-        ),
+        ],
         const SizedBox(height: 16),
         _buildField(
           'Account Number *',
           TextField(
             decoration: InputDecoration(
-              hintText: 'Beneficiary account number',
+              hintText: isEur ? 'IBAN' : (isGbp ? 'UK account number' : 'Beneficiary account number'),
               hintStyle: TextStyle(color: colors.textSecondary),
             ),
             style: TextStyle(color: colors.text, fontSize: 16),
-            keyboardType: TextInputType.number,
+            keyboardType: isEur ? TextInputType.text : TextInputType.number,
             controller: TextEditingController(text: recipient.recipientAccount)
               ..selection = TextSelection.collapsed(offset: recipient.recipientAccount.length),
             onChanged: (value) => _updateRecipient(recipient.id, 'recipientAccount', value),
@@ -1342,15 +1553,24 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
               borderRadius: BorderRadius.circular(12),
             ),
             child: DropdownButtonFormField<String>(
-              initialValue: (recipient.accountType == 'savings') ? 'savings' : 'checking',
+              initialValue: isGbp
+                  ? (recipient.accountType == 'corporate' ? 'corporate' : 'personal')
+                  : (recipient.accountType == 'depository' ? 'depository' : 'checking'),
               dropdownColor: colors.surface,
               style: TextStyle(color: colors.text, fontSize: 16),
               icon: Icon(Icons.expand_more, color: colors.textSecondary),
               decoration: const InputDecoration(border: InputBorder.none),
-              items: const [
-                DropdownMenuItem(value: 'checking', child: Text('Checking')),
-                DropdownMenuItem(value: 'savings', child: Text('Savings')),
-              ],
+              items: isGbp
+                  ? const [
+                      DropdownMenuItem(value: 'personal', child: Text('Personal')),
+                      DropdownMenuItem(value: 'corporate', child: Text('Corporate')),
+                    ]
+                  : const [
+                      // USD contract: checking | depository ("Use checking
+                      // for Grey virtual accounts").
+                      DropdownMenuItem(value: 'checking', child: Text('Checking')),
+                      DropdownMenuItem(value: 'depository', child: Text('Depository')),
+                    ],
               onChanged: (value) {
                 if (value != null) {
                   _updateRecipient(recipient.id, 'accountType', value);
@@ -1390,7 +1610,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
         ),
         const SizedBox(height: 16),
         _buildField(
-          'Street Address',
+          isEur || isGbp ? 'Street Address *' : 'Street Address',
           TextField(
             decoration: InputDecoration(
               hintText: 'Beneficiary street address',
@@ -1404,7 +1624,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
         ),
         const SizedBox(height: 16),
         _buildField(
-          'City',
+          'City${isEur || isGbp ? ' *' : ''}',
           TextField(
             decoration: InputDecoration(
               hintText: 'e.g. New York',
@@ -1416,6 +1636,22 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
             onChanged: (value) => _updateRecipient(recipient.id, 'recipientCity', value),
           ),
         ),
+        if (isEur || isGbp) ...[
+          const SizedBox(height: 16),
+          _buildField(
+            'Postal code *',
+            TextField(
+              decoration: InputDecoration(
+                hintText: 'ZIP / postcode',
+                hintStyle: TextStyle(color: colors.textSecondary),
+              ),
+              style: TextStyle(color: colors.text, fontSize: 16),
+              controller: TextEditingController(text: recipient.recipientPostalCode)
+                ..selection = TextSelection.collapsed(offset: recipient.recipientPostalCode.length),
+              onChanged: (value) => _updateRecipient(recipient.id, 'recipientPostalCode', value),
+            ),
+          ),
+        ],
         const SizedBox(height: 16),
         _buildField(
           'Country',
@@ -1587,6 +1823,104 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
               ],
             ),
           ),
+          // Salary quote lock: per-intl-corridor rate card (web parity) —
+          // Conversion rate / Fee / Total debit + live countdown + limits.
+          if (transferType == 'salary' && _salaryQuotes.isNotEmpty) ...[
+            for (final entry in _salaryQuotes.entries)
+              _salaryQuoteRow(entry.key, entry.value, colors),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _salaryQuoteRow(String ccy, Map<String, dynamic> quote, ThemeColors colors) {
+    final countdown = _salaryQuoteCountdown(ccy);
+    final expired = _salaryQuoteExpired(ccy);
+    final sym = _currencySymbolFor(ccy);
+    String fmt(dynamic v) {
+      final n = v is num ? v : num.tryParse('$v') ?? 0;
+      return n.toStringAsFixed(n.truncateToDouble() == n ? 0 : 2);
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: colors.background,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+            color: expired
+                ? AppColors.error.withValues(alpha: 0.45)
+                : colors.primary.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.currency_exchange_rounded,
+                  size: 14,
+                  color: expired ? AppColors.error : colors.primary),
+              const SizedBox(width: 6),
+              Text('$ccy quote',
+                  style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: expired ? AppColors.error : colors.text)),
+              const Spacer(),
+              if (quote['expires_at'] == null)
+                Text('unavailable',
+                    style: TextStyle(fontSize: 11.5, color: colors.textSecondary))
+              else if (expired)
+                Text('Quote expired',
+                    style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.error))
+              else if (countdown != null)
+                Text('Rate locks in $countdown',
+                    style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: colors.primary)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text('Conversion rate: 1 $ccy = \u20A6${fmt(quote['conversion_rate'])}',
+              style: TextStyle(fontSize: 12, color: colors.text)),
+          if (quote['fee'] != null)
+            Text('Fee: \u20A6${fmt(quote['fee'])}',
+                style: TextStyle(fontSize: 12, color: colors.text)),
+          if (quote['total_debit'] != null)
+            Text('Total debit: \u20A6${fmt(quote['total_debit'])}',
+                style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: colors.primary)),
+          if (quote['limits'] is Map) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Limits: ${sym}${fmt((quote['limits'] as Map)['min'])} - ${sym}${fmt((quote['limits'] as Map)['max'])} per transfer',
+              style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
+            ),
+          ],
+          if (expired)
+            TextButton.icon(
+              onPressed: _salaryQuotesLoading ? null : () => unawaited(_fetchSalaryQuotes()),
+              icon: _salaryQuotesLoading
+                  ? const SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.refresh_rounded, size: 14),
+              label: const Text('Refresh quote',
+                  style: TextStyle(fontSize: 12.5)),
+              style: TextButton.styleFrom(
+                  foregroundColor: colors.primary,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  minimumSize: const Size(0, 30)),
+            ),
         ],
       ),
     );
@@ -1971,15 +2305,17 @@ class Recipient {
   /// payout). Mirrors the web Payroll page's mixed NGN+USD batches.
   final String currency;
 
-  // USD (international) beneficiary fields — only meaningful when
-  // currency == 'USD'. Sent with the /transfers contract names below.
+  // International (USD/GBP/EUR) beneficiary fields — only meaningful when
+  // currency != 'NGN'. Sent with the /transfers contract names below.
   final String bankName;
   final String swiftCode;
   final String routingNumber;
-  final String accountType; // 'checking' | 'savings'
+  final String accountType; // USD: 'checking'|'depository'; GBP: 'personal'|'corporate'
   final String beneficiaryEmail;
   final String recipientAddress;
   final String recipientCity;
+  final String recipientState;
+  final String recipientPostalCode;
   final String recipientCountry; // ISO-2, default 'US'
 
   Recipient({
@@ -1999,10 +2335,15 @@ class Recipient {
     this.beneficiaryEmail = '',
     this.recipientAddress = '',
     this.recipientCity = '',
+    this.recipientState = '',
+    this.recipientPostalCode = '',
     this.recipientCountry = 'US',
   });
 
   bool get isUsd => currency.toUpperCase() == 'USD';
+
+  /// Any international corridor (USD, GBP or EUR).
+  bool get isIntl => currency.toUpperCase() != 'NGN';
 
   /// Short label for validation messages: account name, else masked account,
   /// else a generic "Recipient".
@@ -2029,6 +2370,8 @@ class Recipient {
     String? beneficiaryEmail,
     String? recipientAddress,
     String? recipientCity,
+    String? recipientState,
+    String? recipientPostalCode,
     String? recipientCountry,
   }) {
     return Recipient(
@@ -2048,6 +2391,8 @@ class Recipient {
       beneficiaryEmail: beneficiaryEmail ?? this.beneficiaryEmail,
       recipientAddress: recipientAddress ?? this.recipientAddress,
       recipientCity: recipientCity ?? this.recipientCity,
+      recipientState: recipientState ?? this.recipientState,
+      recipientPostalCode: recipientPostalCode ?? this.recipientPostalCode,
       recipientCountry: recipientCountry ?? this.recipientCountry,
     );
   }
