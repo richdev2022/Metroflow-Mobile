@@ -749,20 +749,38 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
                   if (_isIntl) ...[
                     field('Bank Name *', _bankNameController,
                         hint: 'e.g. Bank of America'),
+                    // SWIFT/BIC is a REQUIRED meta field on every intl
+                    // corridor (USD, GBP and EUR — Flutterwave intl docs);
+                    // the routing identifier is per-corridor.
                     if (_currency == 'USD')
-                      field('Routing Number (ABA)',
+                      field('Routing Number (ABA) *',
                           _routingController,
                           keyboard: TextInputType.number,
                           maxLength: 12,
                           hint: '9 digits, e.g. 021000021'),
+                    if (_currency == 'USD')
+                      field('SWIFT / BIC Code *',
+                          _swiftController,
+                          maxLength: 11,
+                          hint: 'e.g. CHASUS33'),
                     if (_currency == 'GBP')
                       field('Sort Code *', _routingController,
                           keyboard: TextInputType.number,
-                          maxLength: 8,
-                          hint: '6 digits, e.g. 308463'),
-                    if (_currency == 'EUR')
+                          maxLength: 11,
+                          hint: '6-digit sort code, e.g. 308463'),
+                    if (_currency == 'GBP')
+                      field('SWIFT / BIC Code *',
+                          _swiftController,
+                          maxLength: 11,
+                          hint: 'e.g. BUKBGB22'),
+                    if (_currency == 'EUR') ...[
                       field('SWIFT / BIC *', _swiftController,
                           maxLength: 11, hint: 'e.g. BECFDE7HKKX'),
+                      field('Routing Number (BIC) *',
+                          _routingController,
+                          maxLength: 11,
+                          hint: 'e.g. BECFDE7HKKX'),
+                    ],
                     if (_currency == 'USD')
                       Padding(
                         padding: const EdgeInsets.only(bottom: 12),
@@ -775,9 +793,11 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
                                     fontWeight: FontWeight.w600,
                                     color: colors.text)),
                             const SizedBox(height: 6),
+                            // Flutterwave USD accepts checking | depository
+                            // ONLY — "savings" is not a valid intl value.
                             Wrap(
                               spacing: 8,
-                              children: ['checking', 'savings'].map((t) {
+                              children: ['checking', 'depository'].map((t) {
                                 final selected =
                                     (_formAccountType.isEmpty
                                             ? 'checking'
