@@ -985,6 +985,21 @@ class ApiService {
     return await _dio.get('/transfers/banks');
   }
 
+  /// International address autocomplete — rides the backend
+  /// /geo/address-suggest proxy (OpenStreetMap Nominatim). Going through the
+  /// backend keeps web and mobile on ONE provider/UA identity: Nominatim's
+  /// edge 503s generic browser UAs, and mobile app stores also discourage
+  /// third-party direct calls. Beneficiaries screen falls back to a direct
+  /// Nominatim query if this endpoint is unreachable.
+  Future<Response> getAddressSuggestions(String query, String countryCode,
+      {bool suppressToast = true}) async {
+    return await _dio.get('/geo/address-suggest', queryParameters: {
+      'q': query,
+      if (countryCode.trim().isNotEmpty) 'cc': countryCode.trim().toLowerCase(),
+    }, options: Options(extra: {'suppressToast': suppressToast}));
+  }
+
+
   Future<Response> resolveAccount(String bankCode, String accountNumber, {bool suppressToast = false}) async {
     return await _dio.post('/transfers/account-lookup', data: {
       'bank_code': bankCode,
@@ -1645,6 +1660,35 @@ class ApiService {
 
   Future<Response> createConversation(Map<String, dynamic> data) async {
     return await _dio.post('/chat/conversations', data: data);
+  }
+
+  // ---- Chat guest contacts ("add anyone by email") ------------------------
+  // Registered workspace members resolve to a normal DM; unknown emails get
+  // an invite email + an Invited badge row in the chat list.
+
+  /// GET /chat/contacts/lookup?email=
+  Future<Response> lookupChatContact(String email, {bool suppressToast = true}) async {
+    return await _dio.get('/chat/contacts/lookup',
+        queryParameters: {'email': email},
+        options: Options(extra: {'suppressToast': suppressToast}));
+  }
+
+  /// POST /chat/contacts/invite { email }
+  Future<Response> inviteChatContact(String email, {bool suppressToast = false}) async {
+    return await _dio.post('/chat/contacts/invite', data: {'email': email},
+        options: Options(extra: {'suppressToast': suppressToast}));
+  }
+
+  /// GET /chat/contacts — the caller's invited (guest) contacts.
+  Future<Response> getChatGuestContacts({bool suppressToast = true}) async {
+    return await _dio.get('/chat/contacts',
+        options: Options(extra: {'suppressToast': suppressToast}));
+  }
+
+  /// DELETE /chat/contacts/:id
+  Future<Response> deleteChatGuestContact(String contactId, {bool suppressToast = true}) async {
+    return await _dio.delete('/chat/contacts/$contactId',
+        options: Options(extra: {'suppressToast': suppressToast}));
   }
 
   Future<Response> getConversationMessages(String conversationId, {int page = 1, int limit = 50}) async {
