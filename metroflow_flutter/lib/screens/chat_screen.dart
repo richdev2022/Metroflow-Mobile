@@ -30,6 +30,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   final SocketService _socket = SocketService();
   final TextEditingController _searchController = TextEditingController();
   List<Conversation> _conversations = [];
+  // Invited (guest) contacts — people brought in by email who have not
+  // registered yet. Rendered in the list with an "Invited" badge.
+  List<Map<String, dynamic>> _guestContacts = [];
   List<User> _teamMembers = [];
   bool _isLoading = true;
   String? _loadError;
@@ -241,6 +244,23 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     return '$firstName is typing…';
   }
 
+  Future<void> _loadGuestContacts() async {
+    try {
+      final res = await _api.getChatGuestContacts();
+      final data = res.data is Map ? res.data['data'] : null;
+      final contacts = data is Map && data['contacts'] is List ? data['contacts'] as List : const [];
+      if (!mounted) return;
+      setState(() {
+        _guestContacts = contacts
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      });
+    } catch (_) {
+      // Non-fatal — the invited strip simply stays hidden.
+    }
+  }
+
   Future<void> _loadConversations() async {
     setState(() => _loadError = null);
     try {
@@ -262,6 +282,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         // Re-sync the bottom-nav chat badge with server truth
         final totalUnread = _conversations.fold<int>(0, (sum, c) => sum + c.unreadCount);
         ref.read(chatUnreadProvider.notifier).set(totalUnread);
+        // Invited (guest) contacts ride along — a failure is non-fatal.
+        _loadGuestContacts();
       } else {
         if (!mounted) return;
         setState(() => _loadError = 'Couldn\'t load conversations');
@@ -494,11 +516,113 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                                 physics: const AlwaysScrollableScrollPhysics(),
                                 padding: const EdgeInsets.fromLTRB(24, 8, 24, 96),
                                 // +1 = the pinned MetricAi entry at the top.
-                                itemCount: filtered.length + 1,
+                                // +1 = pinned MetricAi entry, +N = invited
+                                // (guest) contacts waiting for registration.
+                                itemCount: filtered.length + 1 + _guestContacts.length,
                                 separatorBuilder: (context, index) => const SizedBox(height: 4),
                                 itemBuilder: (context, index) {
                                   if (index == 0) {
                                     return _MetricAiEntry(colors: colors);
+                                  }
+                                  final guestIndex = index - 1 - filtered.length;
+                                  if (guestIndex >= 0 && guestIndex < _guestContacts.length) {
+                                    final guest = _guestContacts[guestIndex];
+                                    final email = (guest['email'] ?? '').toString();
+                                    return Dismissible(
+                                      key: ValueKey('guest-${guest['id']}'),
+                                      direction: DismissDirection.endToStart,
+                                      background: Container(
+                                        alignment: Alignment.centerRight,
+                                        padding: const EdgeInsets.only(right: 20),
+                                        color: AppColors.error.withValues(alpha: 0.15),
+                                        child: const Icon(Icons.delete_outline_rounded,
+                                            color: AppColors.error),
+                                      ),
+                                      onDismissed: (_) async {
+                                        setState(() => _guestContacts.removeAt(guestIndex));
+                                        try {
+                                          await _api.deleteChatGuestContact(
+                                              guest['id']?.toString() ?? '');
+                                        } catch (_) {}
+                                      },
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 12, vertical: 10),
+                                        decoration: BoxDecoration(
+                                          color: colors.surface,
+                                          borderRadius: BorderRadius.circular(12),
+                                          border: Border.all(color: colors.border),
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            CircleAvatar(
+                                              radius: 18,
+                                              backgroundColor:
+                                                  colors.surfaceVariant,
+                                              child: Icon(Icons.person_add_alt_rounded,
+                                                  size: 18,
+                                                  color: colors.textSecondary),
+                                            ),
+                                            const SizedBox(width: 10),
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Row(
+                                                    children: [
+                                                      Flexible(
+                                                        child: Text(email,
+                                                            maxLines: 1,
+                                                            overflow: TextOverflow
+                                                                .ellipsis,
+                                                            style: TextStyle(
+                                                                fontSize: 14,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w600,
+                                                                color: colors
+                                                                    .text)),
+                                                      ),
+                                                      const SizedBox(width: 6),
+                                                      Container(
+                                                        padding: const EdgeInsets
+                                                            .symmetric(
+                                                            horizontal: 6,
+                                                            vertical: 2),
+                                                        decoration: BoxDecoration(
+                                                          color: const Color(
+                                                              0xFFFEF3C7),
+                                                          borderRadius:
+                                                              BorderRadius
+                                                                  .circular(999),
+                                                        ),
+                                                        child: const Text(
+                                                            'Invited',
+                                                            style: TextStyle(
+                                                                fontSize: 9.5,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w700,
+                                                                color: Color(
+                                                                    0xFF92400E))),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                  const SizedBox(height: 2),
+                                                  Text(
+                                                      'Waiting for them to join Metricorex',
+                                                      style: TextStyle(
+                                                          fontSize: 11.5,
+                                                          color: colors
+                                                              .textSecondary)),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    );
                                   }
                                   final conversation = filtered[index - 1];
                                   // Real display name: backend displayName ->
@@ -842,8 +966,68 @@ class _CreateConversationDialogState extends State<_CreateConversationDialog> {
   final List<String> _selectedMemberIds = [];
   bool _isCreating = false;
 
+  // ---- Add anyone by email: the search field doubles as an email resolver.
+  // Typing a full email that matches NO teammate triggers a debounced lookup:
+  // registered members select for a normal DM, unknown emails offer Invite
+  // (guest contact + invite email, "Invited" badge in the chat list).
+  Timer? _lookupDebounce;
+  Map<String, dynamic>? _emailLookup;
+  bool _lookupLoading = false;
+  bool _inviting = false;
+
+  bool get _searchLooksLikeEmail =>
+      RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
+          .hasMatch(_searchController.text.trim().toLowerCase());
+
+  void _onSearchChanged(String value) {
+    setState(() {});
+    _lookupDebounce?.cancel();
+    _emailLookup = null;
+    if (!_searchLooksLikeEmail) return;
+    _lookupDebounce = Timer(const Duration(milliseconds: 400), _lookupEmail);
+  }
+
+  Future<void> _lookupEmail() async {
+    final email = _searchController.text.trim().toLowerCase();
+    setState(() => _lookupLoading = true);
+    try {
+      final res = await _api.lookupChatContact(email);
+      final data = res.data is Map ? res.data['data'] : null;
+      if (!mounted) return;
+      setState(() => _emailLookup = data is Map ? Map<String, dynamic>.from(data) : null);
+    } catch (_) {
+      if (mounted) setState(() => _emailLookup = null);
+    } finally {
+      if (mounted) setState(() => _lookupLoading = false);
+    }
+  }
+
+  Future<void> _inviteGuest() async {
+    final email = _searchController.text.trim().toLowerCase();
+    if (_inviting) return;
+    setState(() => _inviting = true);
+    try {
+      final res = await _api.inviteChatContact(email);
+      final ok = res.data is Map && res.data['success'] == true;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(ok
+                ? (res.data['message']?.toString() ?? 'Invitation sent')
+                : ApiService.extractErrorMessage(res))));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(ApiService.extractErrorMessage(e))));
+      }
+    } finally {
+      if (mounted) setState(() => _inviting = false);
+    }
+  }
+
   @override
   void dispose() {
+    _lookupDebounce?.cancel();
     _nameController.dispose();
     _searchController.dispose();
     super.dispose();
@@ -1055,10 +1239,11 @@ class _CreateConversationDialogState extends State<_CreateConversationDialog> {
             ],
             TextField(
               controller: _searchController,
-              onChanged: (_) => setState(() {}),
+              onChanged: _onSearchChanged,
+              keyboardType: TextInputType.emailAddress,
               style: TextStyle(color: colors.text, fontSize: 14),
               decoration: InputDecoration(
-                hintText: 'Search team members...',
+                hintText: 'Search team members or add by email...',
                 hintStyle: TextStyle(color: colors.textSecondary, fontSize: 13.5),
                 prefixIcon: Icon(Icons.search_rounded,
                     size: 20, color: colors.textSecondary),
@@ -1073,6 +1258,81 @@ class _CreateConversationDialogState extends State<_CreateConversationDialog> {
                 ),
               ),
             ),
+            // Email lookup row — appears when the search text is an email
+            // that did not match any teammate.
+            if (_searchLooksLikeEmail) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: colors.surfaceVariant,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: _lookupLoading
+                    ? const SizedBox(
+                        height: 18,
+                        width: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : _emailLookup == null
+                        ? Text('Checking…',
+                            style: TextStyle(fontSize: 12.5, color: colors.textSecondary))
+                        : (_emailLookup!['registered'] == true
+                            ? Builder(builder: (context) {
+                                final lookupName =
+                                    (_emailLookup?['name'] ?? 'user').toString();
+                                return Row(children: [
+                                Expanded(
+                                  child: Text(
+                                    'Registered: $lookupName',
+                                    style: TextStyle(fontSize: 12.5, color: colors.text),
+                                  ),
+                                ),
+                                TextButton.icon(
+                                  onPressed: () => _toggleMember(
+                                      _emailLookup!['userId']?.toString() ?? ''),
+                                  icon: const Icon(Icons.add_rounded, size: 14),
+                                  label: const Text('Select',
+                                      style: TextStyle(fontSize: 12.5)),
+                                  style: TextButton.styleFrom(
+                                      foregroundColor: colors.primary,
+                                      minimumSize: const Size(0, 30),
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8)),
+                                ),
+                              ]);
+                              }),
+                            : Row(children: [
+                                Expanded(
+                                  child: Text(
+                                    _emailLookup!['invited'] == true
+                                        ? 'Already invited — see the Invited badge in your chat list.'
+                                        : 'Not on Metricorex yet — guest',
+                                    style: TextStyle(
+                                        fontSize: 12.5, color: colors.textSecondary),
+                                  ),
+                                ),
+                                if (_emailLookup!['invited'] != true)
+                                  TextButton.icon(
+                                    onPressed: _inviting ? null : _inviteGuest,
+                                    icon: _inviting
+                                        ? const SizedBox(
+                                            width: 12,
+                                            height: 12,
+                                            child: CircularProgressIndicator(
+                                                strokeWidth: 2))
+                                        : const Icon(Icons.send_rounded, size: 13),
+                                    label: const Text('Invite',
+                                        style: TextStyle(fontSize: 12.5)),
+                                    style: TextButton.styleFrom(
+                                        foregroundColor: colors.primary,
+                                        minimumSize: const Size(0, 30),
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 8)),
+                                  ),
+                              ]),
+              ),
+            ),
+            ],
             const SizedBox(height: 8),
             Flexible(
               child: availableMembers.isEmpty

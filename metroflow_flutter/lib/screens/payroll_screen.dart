@@ -42,6 +42,18 @@ class _PayrollScreenState extends State<PayrollScreen> {
   String _addCurrency = 'NGN';
   String _addEmploymentType = '';
   String _addBankCode = '';
+  // International employee bank details (USD/GBP/EUR corridors) — collected
+  // when the salary currency is not NGN. Sent through the payroll import
+  // endpoint, which stores the beneficiary_* columns.
+  final _addBankNameController = TextEditingController();
+  final _addRoutingController = TextEditingController();
+  final _addSwiftController = TextEditingController();
+  final _addBeneficiaryAddressController = TextEditingController();
+  final _addBeneficiaryCityController = TextEditingController();
+  final _addBeneficiaryStateController = TextEditingController();
+  final _addBeneficiaryPostalController = TextEditingController();
+  String _addBeneficiaryCountry = 'US';
+  bool get _addIsIntl => _addCurrency != 'NGN';
   bool _isAddingEmployee = false;
   bool _planUpgradeRequired = false;
   List<dynamic> _adjustments = [];
@@ -113,6 +125,14 @@ class _PayrollScreenState extends State<PayrollScreen> {
     _addCurrency = 'NGN';
     _addEmploymentType = '';
     _addBankCode = '';
+    _addBankNameController.clear();
+    _addRoutingController.clear();
+    _addSwiftController.clear();
+    _addBeneficiaryAddressController.clear();
+    _addBeneficiaryCityController.clear();
+    _addBeneficiaryStateController.clear();
+    _addBeneficiaryPostalController.clear();
+    _addBeneficiaryCountry = 'US';
   }
 
   Future<void> _fetchBanks() async {
@@ -802,6 +822,21 @@ class _PayrollScreenState extends State<PayrollScreen> {
           'account_number': _addAccountNumberController.text.trim(),
         if (_addAccountNameController.text.trim().isNotEmpty)
           'account_name': _addAccountNameController.text.trim(),
+        // International corridors (per the Flutterwave payout contract):
+        // bank name + routing/sort + SWIFT + the European/US address block.
+        if (_addIsIntl) ...[
+          'bank_name': _addBankNameController.text.trim(),
+          'routing_number': _addRoutingController.text.trim(),
+          'swift_code': _addSwiftController.text.trim().toUpperCase(),
+          'beneficiary_address': _addBeneficiaryAddressController.text.trim(),
+          'beneficiary_city': _addBeneficiaryCityController.text.trim(),
+          'beneficiary_state': _addBeneficiaryStateController.text.trim(),
+          'beneficiary_postal_code': _addBeneficiaryPostalController.text.trim(),
+          'beneficiary_country': _addBeneficiaryCountry,
+          'bank_country': _addBeneficiaryCountry,
+          if (_addCurrency == 'GBP') 'account_type': 'personal',
+          if (_addCurrency == 'USD') 'account_type': 'checking',
+        ],
       };
       final res = await ApiService().importPayrollEmployees([row]);
       final ok = res.data is Map && res.data['success'] == true;
@@ -915,6 +950,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
                           items: const [
                             DropdownMenuItem(value: 'NGN', child: Text('NGN - Naira')),
                             DropdownMenuItem(value: 'USD', child: Text('USD - Dollar')),
+                            DropdownMenuItem(value: 'GBP', child: Text('GBP - British Pound')),
+                            DropdownMenuItem(value: 'EUR', child: Text('EUR - Euro')),
                           ],
                           onChanged: _isAddingEmployee
                               ? null
@@ -937,33 +974,94 @@ class _PayrollScreenState extends State<PayrollScreen> {
                               ? null
                               : (value) => setState(() => _addEmploymentType = value ?? ''),
                         ),
-                        _addLabel('Bank'),
-                        DropdownButtonFormField<String>(
-                          value: _addBankCode.isEmpty ? null : _addBankCode,
-                          isExpanded: true,
-                          dropdownColor: colors.surface,
-                          decoration: const InputDecoration(
-                            hintText: 'Select bank',
-                            isDense: true,
-                            border: OutlineInputBorder(),
+                        if (!_addIsIntl) ...[
+                          _addLabel('Bank'),
+                          DropdownButtonFormField<String>(
+                            value: _addBankCode.isEmpty ? null : _addBankCode,
+                            isExpanded: true,
+                            dropdownColor: colors.surface,
+                            decoration: const InputDecoration(
+                              hintText: 'Select bank',
+                              isDense: true,
+                              border: OutlineInputBorder(),
+                            ),
+                            items: _banks
+                                .where((b) => b.code.isNotEmpty)
+                                .map((bank) => DropdownMenuItem(
+                                      value: bank.code,
+                                      child: Text(
+                                        bank.name,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ))
+                                .toList(),
+                            onChanged: _isAddingEmployee
+                                ? null
+                                : (value) => setState(() => _addBankCode = value ?? ''),
                           ),
-                          items: _banks
-                              .where((b) => b.code.isNotEmpty)
-                              .map((bank) => DropdownMenuItem(
-                                    value: bank.code,
-                                    child: Text(
-                                      bank.name,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ))
-                              .toList(),
-                          onChanged: _isAddingEmployee
-                              ? null
-                              : (value) => setState(() => _addBankCode = value ?? ''),
-                        ),
-                        _addLabel('Account number'),
-                        field(_addAccountNumberController, '10-digit account number',
-                            keyboard: TextInputType.number, enabled: !_isAddingEmployee),
+                          _addLabel('Account number'),
+                          field(_addAccountNumberController, '10-digit account number',
+                              keyboard: TextInputType.number, enabled: !_isAddingEmployee),
+                        ] else ...[
+                          // International employee bank details — the fields
+                          // the Flutterwave USD/GBP/EUR payout contract needs.
+                          _addLabel('Bank name *'),
+                          field(_addBankNameController, 'e.g. JPMorgan Chase Bank',
+                              enabled: !_isAddingEmployee),
+                          _addLabel('Account number / IBAN *'),
+                          field(_addAccountNumberController,
+                              _addCurrency == 'EUR' ? 'IBAN' : 'Beneficiary account number',
+                              enabled: !_isAddingEmployee),
+                          _addLabel(
+                              _addCurrency == 'GBP' ? 'Sort code or BIC *' : 'Routing number (ABA) *'),
+                          field(_addRoutingController,
+                              _addCurrency == 'GBP' ? '6-digit sort code or BIC' : '9-digit ABA routing number',
+                              enabled: !_isAddingEmployee),
+                          _addLabel(_addCurrency == 'USD' ? 'SWIFT / BIC' : 'SWIFT / BIC *'),
+                          field(_addSwiftController, '8 or 11 characters (e.g. CHASUS33)',
+                              enabled: !_isAddingEmployee),
+                          _addLabel('Street address *'),
+                          field(_addBeneficiaryAddressController, 'Beneficiary street address',
+                              enabled: !_isAddingEmployee),
+                          _addLabel('City *'),
+                          field(_addBeneficiaryCityController, 'e.g. New York',
+                              enabled: !_isAddingEmployee),
+                          _addLabel('State / Province'),
+                          field(_addBeneficiaryStateController, 'State',
+                              enabled: !_isAddingEmployee),
+                          if (_addCurrency != 'USD') ...[
+                            _addLabel('Postal code *'),
+                            field(_addBeneficiaryPostalController, 'ZIP / postcode',
+                                enabled: !_isAddingEmployee),
+                          ],
+                          _addLabel('Country *'),
+                          DropdownButtonFormField<String>(
+                            value: _addBeneficiaryCountry,
+                            isExpanded: true,
+                            dropdownColor: colors.surface,
+                            decoration: const InputDecoration(
+                              isDense: true,
+                              border: OutlineInputBorder(),
+                            ),
+                            items: const [
+                              DropdownMenuItem(value: 'US', child: Text('United States (US)')),
+                              DropdownMenuItem(value: 'GB', child: Text('United Kingdom (GB)')),
+                              DropdownMenuItem(value: 'DE', child: Text('Germany (DE)')),
+                              DropdownMenuItem(value: 'FR', child: Text('France (FR)')),
+                              DropdownMenuItem(value: 'IE', child: Text('Ireland (IE)')),
+                              DropdownMenuItem(value: 'NL', child: Text('Netherlands (NL)')),
+                              DropdownMenuItem(value: 'ES', child: Text('Spain (ES)')),
+                              DropdownMenuItem(value: 'IT', child: Text('Italy (IT)')),
+                              DropdownMenuItem(value: 'PT', child: Text('Portugal (PT)')),
+                              DropdownMenuItem(value: 'AT', child: Text('Austria (AT)')),
+                              DropdownMenuItem(value: 'BE', child: Text('Belgium (BE)')),
+                            ],
+                            onChanged: _isAddingEmployee
+                                ? null
+                                : (value) =>
+                                    setState(() => _addBeneficiaryCountry = value ?? 'US'),
+                          ),
+                        ],
                         const SizedBox(height: 24),
                       ],
                     ),
@@ -1512,7 +1610,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
                         const SizedBox(height: 12),
                         Wrap(
                           spacing: 8,
-                          children: ['NGN', 'USD'].map((currency) {
+                          children: const ['NGN', 'USD', 'GBP', 'EUR'].map((currency) {
                             final isSelected = _adjCurrency == currency;
                             return GestureDetector(
                               onTap: () => setState(() => _adjCurrency = currency),
@@ -1633,7 +1731,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
                         Wrap(
                           spacing: 8,
                           runSpacing: 8,
-                          children: ['NGN', 'USD'].map((currency) {
+                          children: const ['NGN', 'USD', 'GBP', 'EUR'].map((currency) {
                             final isSelected = _editEmployeeData['salary_currency'] == currency;
                             return GestureDetector(
                               onTap: () => setState(() => _editEmployeeData['salary_currency'] = currency),

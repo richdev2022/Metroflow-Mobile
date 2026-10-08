@@ -132,6 +132,37 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
   Future<void> _lookupAddressSuggestions() async {
     setState(() => _addressSuggestLoading = true);
     try {
+      // PRIMARY: the backend /geo/address-suggest proxy — the SAME provider
+      // path the web app uses (one Nominatim identity, shared response
+      // shape, server-side politeness cache).
+      final response = await ApiService().getAddressSuggestions(
+        _addressController.text.trim(),
+        _formCountry,
+      );
+      final payload = response.data is Map ? response.data['data'] : null;
+      final list = payload is List ? payload : const [];
+      if (!mounted) return;
+      setState(() {
+        _addressSuggestions = list
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+        _showAddressSuggestions =
+            _addressSuggestions.isNotEmpty && !_addressPickLock;
+      });
+    } catch (e) {
+      debugPrint('Backend address autocomplete failed, trying direct Nominatim: $e');
+      await _lookupAddressSuggestionsDirect();
+    } finally {
+      if (mounted) setState(() => _addressSuggestLoading = false);
+    }
+  }
+
+  /// FALLBACK: direct Nominatim query with the identified app UA (the
+  /// behavior before the proxy existed — kept so autocomplete still works
+  /// when the backend is unreachable).
+  Future<void> _lookupAddressSuggestionsDirect() async {
+    try {
       final response = await _nominatim.get(
         'https://nominatim.openstreetmap.org/search',
         queryParameters: {
@@ -164,8 +195,6 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
           _showAddressSuggestions = false;
         });
       }
-    } finally {
-      if (mounted) setState(() => _addressSuggestLoading = false);
     }
   }
 
@@ -957,23 +986,27 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
                       ),
                     ),
                   const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed:
-                              _verifying || _saving ? null : _verifyBeneficiary,
-                          icon: _verifying
-                              ? const SizedBox(
-                                  width: 14,
-                                  height: 14,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2))
-                              : const Icon(Icons.verified_rounded, size: 16),
-                          label: const Text('Verify account'),
+                  // Verify-before-save is an NGN-only flow: foreign rails
+                  // cannot resolve account names, and POSTing an intl
+                  // beneficiary from edit mode would create a duplicate row.
+                  if (!_isIntl) ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed:
+                                _verifying || _saving ? null : _verifyBeneficiary,
+                            icon: _verifying
+                                ? const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2))
+                                : const Icon(Icons.verified_rounded, size: 16),
+                            label: const Text('Verify account'),
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 10),
+                        const SizedBox(width: 10),
                       Expanded(
                         child: ElevatedButton.icon(
                           onPressed: _saving || _verifying
@@ -996,6 +1029,7 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
                       ),
                     ],
                   ),
+                  ],
                 ],
               ),
             ),
@@ -1016,20 +1050,27 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
         systemOverlayStyle: SystemUiOverlayStyle.light,
         title: const Text('Beneficiaries'),
         actions: [
-          IconButton(
-            tooltip: 'Add beneficiary',
-            icon: const Icon(Icons.person_add_alt_rounded),
-            onPressed: _openAddSheet,
-          ),
+          // Global beneficiaries are NOT hand-added (Flutterwave exposes no
+          // save-beneficiary API for USD/GBP/EUR) — intl rows are captured
+          // automatically after a first successful transfer, so the add
+          // entry points are NGN-only.
+          if (!_isIntl)
+            IconButton(
+              tooltip: 'Add beneficiary',
+              icon: const Icon(Icons.person_add_alt_rounded),
+              onPressed: _openAddSheet,
+            ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        backgroundColor: colors.primary,
-        foregroundColor: Colors.white,
-        onPressed: _openAddSheet,
-        icon: const Icon(Icons.person_add_alt_rounded),
-        label: const Text('Add'),
-      ),
+      floatingActionButton: _isIntl
+          ? null
+          : FloatingActionButton.extended(
+              backgroundColor: colors.primary,
+              foregroundColor: Colors.white,
+              onPressed: _openAddSheet,
+              icon: const Icon(Icons.person_add_alt_rounded),
+              label: const Text('Add'),
+            ),
       body: Column(
         children: [
           SizedBox(
@@ -1251,7 +1292,13 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
                                           minimumSize: const Size(0, 32),
                                         ),
                                       ),
-                                      if (vStatus != 'resolved') ...[
+                                      // Row Verify CTA is NGN-only: foreign
+                                      // rails (ACH/SEPA/SWIFT) cannot resolve
+                                      // account names through the provider,
+                                      // and Flutterwave exposes no
+                                      // verify-beneficiary endpoint for intl.
+                                      if (vStatus != 'resolved' &&
+                                          currency.toUpperCase() == 'NGN') ...[
                                         const SizedBox(width: 4),
                                         TextButton.icon(
                                           onPressed: _verifyingIds
