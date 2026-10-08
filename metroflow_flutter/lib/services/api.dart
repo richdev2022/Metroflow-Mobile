@@ -1662,6 +1662,35 @@ class ApiService {
     return await _dio.post('/chat/conversations', data: data);
   }
 
+  // ---- Chat guest contacts ("add anyone by email") ------------------------
+  // Registered workspace members resolve to a normal DM; unknown emails get
+  // an invite email + an Invited badge row in the chat list.
+
+  /// GET /chat/contacts/lookup?email=
+  Future<Response> lookupChatContact(String email, {bool suppressToast = true}) async {
+    return await _dio.get('/chat/contacts/lookup',
+        queryParameters: {'email': email},
+        options: Options(extra: {'suppressToast': suppressToast}));
+  }
+
+  /// POST /chat/contacts/invite { email }
+  Future<Response> inviteChatContact(String email, {bool suppressToast = false}) async {
+    return await _dio.post('/chat/contacts/invite', data: {'email': email},
+        options: Options(extra: {'suppressToast': suppressToast}));
+  }
+
+  /// GET /chat/contacts — the caller's invited (guest) contacts.
+  Future<Response> getChatGuestContacts({bool suppressToast = true}) async {
+    return await _dio.get('/chat/contacts',
+        options: Options(extra: {'suppressToast': suppressToast}));
+  }
+
+  /// DELETE /chat/contacts/:id
+  Future<Response> deleteChatGuestContact(String contactId, {bool suppressToast = true}) async {
+    return await _dio.delete('/chat/contacts/$contactId',
+        options: Options(extra: {'suppressToast': suppressToast}));
+  }
+
   Future<Response> getConversationMessages(String conversationId, {int page = 1, int limit = 50}) async {
     return await _dio.get('/chat/conversations/$conversationId/messages', queryParameters: {
       'page': page,
