@@ -986,23 +986,27 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
                       ),
                     ),
                   const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed:
-                              _verifying || _saving ? null : _verifyBeneficiary,
-                          icon: _verifying
-                              ? const SizedBox(
-                                  width: 14,
-                                  height: 14,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2))
-                              : const Icon(Icons.verified_rounded, size: 16),
-                          label: const Text('Verify account'),
+                  // Verify-before-save is an NGN-only flow: foreign rails
+                  // cannot resolve account names, and POSTing an intl
+                  // beneficiary from edit mode would create a duplicate row.
+                  if (!_isIntl) ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed:
+                                _verifying || _saving ? null : _verifyBeneficiary,
+                            icon: _verifying
+                                ? const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2))
+                                : const Icon(Icons.verified_rounded, size: 16),
+                            label: const Text('Verify account'),
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 10),
+                        const SizedBox(width: 10),
                       Expanded(
                         child: ElevatedButton.icon(
                           onPressed: _saving || _verifying
@@ -1025,6 +1029,7 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
                       ),
                     ],
                   ),
+                  ],
                 ],
               ),
             ),
@@ -1045,20 +1050,27 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
         systemOverlayStyle: SystemUiOverlayStyle.light,
         title: const Text('Beneficiaries'),
         actions: [
-          IconButton(
-            tooltip: 'Add beneficiary',
-            icon: const Icon(Icons.person_add_alt_rounded),
-            onPressed: _openAddSheet,
-          ),
+          // Global beneficiaries are NOT hand-added (Flutterwave exposes no
+          // save-beneficiary API for USD/GBP/EUR) — intl rows are captured
+          // automatically after a first successful transfer, so the add
+          // entry points are NGN-only.
+          if (!_isIntl)
+            IconButton(
+              tooltip: 'Add beneficiary',
+              icon: const Icon(Icons.person_add_alt_rounded),
+              onPressed: _openAddSheet,
+            ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        backgroundColor: colors.primary,
-        foregroundColor: Colors.white,
-        onPressed: _openAddSheet,
-        icon: const Icon(Icons.person_add_alt_rounded),
-        label: const Text('Add'),
-      ),
+      floatingActionButton: _isIntl
+          ? null
+          : FloatingActionButton.extended(
+              backgroundColor: colors.primary,
+              foregroundColor: Colors.white,
+              onPressed: _openAddSheet,
+              icon: const Icon(Icons.person_add_alt_rounded),
+              label: const Text('Add'),
+            ),
       body: Column(
         children: [
           SizedBox(
@@ -1280,7 +1292,13 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
                                           minimumSize: const Size(0, 32),
                                         ),
                                       ),
-                                      if (vStatus != 'resolved') ...[
+                                      // Row Verify CTA is NGN-only: foreign
+                                      // rails (ACH/SEPA/SWIFT) cannot resolve
+                                      // account names through the provider,
+                                      // and Flutterwave exposes no
+                                      // verify-beneficiary endpoint for intl.
+                                      if (vStatus != 'resolved' &&
+                                          currency.toUpperCase() == 'NGN') ...[
                                         const SizedBox(width: 4),
                                         TextButton.icon(
                                           onPressed: _verifyingIds
