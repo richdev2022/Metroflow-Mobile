@@ -357,6 +357,11 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
           beneficiaryEmail = (b['email'] ?? '').toString();
           _beneficiaryEmailController.text = beneficiaryEmail;
         }
+        if (transferCurrency == 'GBP') {
+          // GBP meta contract: personal | corporate (restores the saved type).
+          final savedType = (b['accountType'] ?? '').toString().trim().toLowerCase();
+          accountType = savedType == 'corporate' ? 'corporate' : 'personal';
+        }
         // FULL PREFILL (USD): pick the payout rail from the saved corridor
         // details — a stored SWIFT code means the SWIFT rail; a 9-digit ABA
         // routing number means ACH. The user can still switch rails.
@@ -587,10 +592,11 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
       _quoteExpiresAt != null &&
       DateTime.now().isAfter(_quoteExpiresAt!);
 
-  /// International beneficiary block completeness — per corridor:
-  ///  - USD: rail (ACH/SWIFT) + bank + address block.
-  ///  - GBP: bank + 6-digit sort code + address block.
-  ///  - EUR: bank + SWIFT/BIC + city + address block.
+  /// International beneficiary block completeness — per corridor
+  /// (Flutterwave intl payout docs, meta[0] contracts):
+  ///  - USD: rail + ABA routing + SWIFT/BIC + bank + email + address block.
+  ///  - GBP: sort code or BIC + SWIFT/BIC + personal|corporate + address block.
+  ///  - EUR: BIC routing_number AND swift_code + bank + address block.
   bool get _intlBeneficiaryComplete {
     final base = bankName.trim().isNotEmpty &&
         accountNumber.trim().isNotEmpty &&
@@ -599,19 +605,29 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
         recipientAddress.trim().isNotEmpty &&
         recipientCity.trim().isNotEmpty &&
         recipientPostalCode.trim().isNotEmpty;
+    bool isBic(String v) {
+      final s = v.trim().toUpperCase();
+      return RegExp(r'^[A-Z0-9]{8}(?:[A-Z0-9]{3})?$').hasMatch(s) &&
+          RegExp(r'[A-Z]').hasMatch(s);
+    }
     if (transferCurrency == 'USD') {
       final email = beneficiaryEmail.trim();
       return payoutRail.isNotEmpty &&
           base &&
+          isBic(swiftCode) &&
           email.isNotEmpty &&
           email.contains('@') &&
           email.contains('.');
     }
     if (transferCurrency == 'GBP') {
-      return base && RegExp(r'^\d{6}$').hasMatch(routingNumber.replaceAll(RegExp(r'[\s-]'), ''));
+      final routingOk = RegExp(r'^\d{6}$').hasMatch(routingNumber.replaceAll(RegExp(r'[\s-]'), '')) || isBic(routingNumber);
+      return base &&
+          routingOk &&
+          isBic(swiftCode) &&
+          ['personal', 'corporate'].contains(accountType.trim().toLowerCase());
     }
     if (transferCurrency == 'EUR') {
-      return base && RegExp(r'^[A-Z0-9]{8}(?:[A-Z0-9]{3})?$').hasMatch(swiftCode.trim().toUpperCase());
+      return base && isBic(routingNumber) && isBic(swiftCode);
     }
     return base && payoutRail.isNotEmpty;
   }
@@ -636,7 +652,6 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
       recipientState = '';
       recipientPostalCode = '';
       accountType = 'checking';
-      beneficiaryEmail = '';
       addressSuggestions = [];
       showAddressSuggestions = false;
       transferQuote = null;
@@ -663,7 +678,9 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
       routingNumber = '';
       payoutRail = currency == 'NGN' ? '' : (currency == 'USD' ? payoutRail : 'SWIFT');
       recipientCountry = currency == 'GBP' ? 'GB' : currency == 'EUR' ? 'DE' : 'US';
-      accountType = 'checking';
+      // Corridor account-type default: USD checking|depository,
+      // GBP personal|corporate (both are REQUIRED meta fields).
+      accountType = currency == 'GBP' ? 'personal' : 'checking';
       beneficiaryEmail = '';
       _beneficiaryEmailController.clear();
       addressSuggestions = [];
@@ -940,14 +957,18 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
           payload['recipientPostalCode'] = recipientPostalCode.trim();
         }
         payload['recipientCountry'] = recipientCountry.trim().toUpperCase();
+        // USD meta[0] contract: account_type (checking|depository) + the
+        // beneficiary's email ride the payout payload. GBP meta mirrors EUR
+        // (swift + European address block) plus account_type
+        // personal|corporate. EUR/GBP samples carry no email.
         if (transferCurrency == 'USD') {
-          // USD meta[0] contract: account_type + beneficiary email ride the
-          // payout payload. GBP uses personal|corporate (not collected here)
-          // and the EUR/GBP samples carry no email — USD-only keeps the
-          // payload doc-exact.
           payload['accountType'] =
               accountType.trim().isEmpty ? 'checking' : accountType.trim().toLowerCase();
           payload['beneficiaryEmail'] = beneficiaryEmail.trim();
+        }
+        if (transferCurrency == 'GBP') {
+          payload['accountType'] =
+              accountType.trim().isEmpty ? 'personal' : accountType.trim().toLowerCase();
         }
         if (transferQuote != null && transferQuote!['total_debit'] != null) {
           payload['debitAmount'] = transferQuote!['total_debit'];
@@ -1411,30 +1432,59 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
         style: TextStyle(color: colors.text, fontSize: 16),
         onChanged: (value) => setState(() => bankName = value),
       )),
-      if (!isGbp) ...[
+      const SizedBox(height: 20),
+      // SWIFT/BIC is a REQUIRED meta field on every international corridor
+      // (USD, GBP and EUR alike — Flutterwave intl payout docs).
+      _buildField('SWIFT / BIC Code *', TextField(
+        decoration: InputDecoration(
+          hintText: isEur ? 'e.g. BECFDE7HKKX' : isGbp ? 'e.g. BUKBGB22' : 'e.g. CHASUS33',
+          hintStyle: TextStyle(color: colors.textSecondary),
+        ),
+        style: TextStyle(color: colors.text, fontSize: 16),
+        textCapitalization: TextCapitalization.characters,
+        onChanged: (value) => setState(() => swiftCode = value),
+      )),
+      const SizedBox(height: 20),
+      // Corridor routing identifier: USD ABA, GBP sort code (or BIC),
+      // EUR BIC — all required meta fields.
+      _buildField(isGbp ? 'Sort Code *' : isEur ? 'Routing Number (BIC) *' : 'Routing Number (ABA) *', TextField(
+        decoration: InputDecoration(
+          hintText: isGbp
+              ? '6-digit sort code, e.g. 308463'
+              : isEur
+                  ? 'e.g. BECFDE7HKKX'
+                  : 'e.g. 021000021',
+          hintStyle: TextStyle(color: colors.textSecondary),
+          counterText: '',
+        ),
+        style: TextStyle(color: colors.text, fontSize: 16),
+        keyboardType: isEur ? TextInputType.text : TextInputType.number,
+        textCapitalization: isEur ? TextCapitalization.characters : TextCapitalization.none,
+        maxLength: isGbp ? 11 : 12,
+        onChanged: (value) => setState(() => routingNumber = value),
+      )),
+      if (isGbp) ...[
         const SizedBox(height: 20),
-        _buildField(isEur ? 'SWIFT / BIC Code *' : 'SWIFT / BIC Code', TextField(
-          decoration: InputDecoration(
-            hintText: isEur ? 'e.g. BECFDE7HKKX' : 'e.g. CHASUS33',
-            hintStyle: TextStyle(color: colors.textSecondary),
-          ),
-          style: TextStyle(color: colors.text, fontSize: 16),
-          textCapitalization: TextCapitalization.characters,
-          onChanged: (value) => setState(() => swiftCode = value),
-        )),
-      ],
-      if (!isEur) ...[
-        const SizedBox(height: 20),
-        _buildField(isGbp ? 'Sort Code *' : 'Routing Number (ABA)', TextField(
-          decoration: InputDecoration(
-            hintText: isGbp ? '6-digit sort code, e.g. 308463' : 'e.g. 021000021',
-            hintStyle: TextStyle(color: colors.textSecondary),
-            counterText: '',
-          ),
-          style: TextStyle(color: colors.text, fontSize: 16),
-          keyboardType: TextInputType.number,
-          maxLength: isGbp ? 8 : 12,
-          onChanged: (value) => setState(() => routingNumber = value),
+        _buildField('Account Type', Row(
+          children: [
+            Expanded(
+              child: _buildCurrencyToggle(
+                colors,
+                label: 'Personal',
+                selected: accountType != 'corporate',
+                onTap: () => setState(() => accountType = 'personal'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _buildCurrencyToggle(
+                colors,
+                label: 'Corporate',
+                selected: accountType == 'corporate',
+                onTap: () => setState(() => accountType = 'corporate'),
+              ),
+            ),
+          ],
         )),
       ],
       const SizedBox(height: 20),
