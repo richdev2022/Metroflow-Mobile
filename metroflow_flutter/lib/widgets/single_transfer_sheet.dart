@@ -83,6 +83,11 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
   String recipientCity = '';
   String recipientState = '';
   String recipientPostalCode = '';
+  // USD meta[0] contract (Flutterwave intl docs): account_type
+  // (checking|depository — "Use checking for Grey virtual accounts") and the
+  // beneficiary's email are REQUIRED fields of the payout payload.
+  String accountType = 'checking';
+  String beneficiaryEmail = '';
 
   // Persistent controllers for the intl address fields (programmatic fills
   // from the autocomplete picker + user typing share the same state).
@@ -91,6 +96,7 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
   final TextEditingController _stateController = TextEditingController();
   final TextEditingController _postalController = TextEditingController();
   final TextEditingController _pinController = TextEditingController();
+  final TextEditingController _beneficiaryEmailController = TextEditingController();
   // Controllers for the NGN fields: "Repeat transaction" prefill MUST write
   // through controllers — a bare setState on the backing strings does NOT
   // update already-mounted TextFields (they keep their own internal text),
@@ -200,6 +206,7 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
     _stateController.dispose();
     _postalController.dispose();
     _pinController.dispose();
+    _beneficiaryEmailController.dispose();
     _accountNumberController.dispose();
     _amountController.dispose();
     _remarkController.dispose();
@@ -344,6 +351,12 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
         _cityController.text = recipientCity;
         _stateController.text = recipientState;
         _postalController.text = recipientPostalCode;
+        if (transferCurrency == 'USD') {
+          final savedType = (b['accountType'] ?? '').toString().trim().toLowerCase();
+          accountType = savedType == 'depository' ? 'depository' : 'checking';
+          beneficiaryEmail = (b['email'] ?? '').toString();
+          _beneficiaryEmailController.text = beneficiaryEmail;
+        }
         // FULL PREFILL (USD): pick the payout rail from the saved corridor
         // details — a stored SWIFT code means the SWIFT rail; a 9-digit ABA
         // routing number means ACH. The user can still switch rails.
@@ -587,7 +600,12 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
         recipientCity.trim().isNotEmpty &&
         recipientPostalCode.trim().isNotEmpty;
     if (transferCurrency == 'USD') {
-      return payoutRail.isNotEmpty && base;
+      final email = beneficiaryEmail.trim();
+      return payoutRail.isNotEmpty &&
+          base &&
+          email.isNotEmpty &&
+          email.contains('@') &&
+          email.contains('.');
     }
     if (transferCurrency == 'GBP') {
       return base && RegExp(r'^\d{6}$').hasMatch(routingNumber.replaceAll(RegExp(r'[\s-]'), ''));
@@ -617,6 +635,8 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
       recipientCity = '';
       recipientState = '';
       recipientPostalCode = '';
+      accountType = 'checking';
+      beneficiaryEmail = '';
       addressSuggestions = [];
       showAddressSuggestions = false;
       transferQuote = null;
@@ -627,6 +647,7 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
     _stateController.clear();
     _postalController.clear();
     _pinController.clear();
+    _beneficiaryEmailController.clear();
   }
 
   /// Switch the payout corridor: resets the corridor-specific fields, applies
@@ -642,6 +663,9 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
       routingNumber = '';
       payoutRail = currency == 'NGN' ? '' : (currency == 'USD' ? payoutRail : 'SWIFT');
       recipientCountry = currency == 'GBP' ? 'GB' : currency == 'EUR' ? 'DE' : 'US';
+      accountType = 'checking';
+      beneficiaryEmail = '';
+      _beneficiaryEmailController.clear();
       addressSuggestions = [];
       showAddressSuggestions = false;
       transferQuote = null;
@@ -916,6 +940,15 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
           payload['recipientPostalCode'] = recipientPostalCode.trim();
         }
         payload['recipientCountry'] = recipientCountry.trim().toUpperCase();
+        if (transferCurrency == 'USD') {
+          // USD meta[0] contract: account_type + beneficiary email ride the
+          // payout payload. GBP uses personal|corporate (not collected here)
+          // and the EUR/GBP samples carry no email — USD-only keeps the
+          // payload doc-exact.
+          payload['accountType'] =
+              accountType.trim().isEmpty ? 'checking' : accountType.trim().toLowerCase();
+          payload['beneficiaryEmail'] = beneficiaryEmail.trim();
+        }
         if (transferQuote != null && transferQuote!['total_debit'] != null) {
           payload['debitAmount'] = transferQuote!['total_debit'];
           payload['debitCurrency'] = 'NGN';
@@ -1332,6 +1365,41 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
               ),
             ),
           ],
+        )),
+        const SizedBox(height: 20),
+      ],
+      if (isUsd) ...[
+        _buildField('Account Type', Row(
+          children: [
+            Expanded(
+              child: _buildCurrencyToggle(
+                colors,
+                label: 'Checking',
+                selected: accountType != 'depository',
+                onTap: () => setState(() => accountType = 'checking'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _buildCurrencyToggle(
+                colors,
+                label: 'Depository',
+                selected: accountType == 'depository',
+                onTap: () => setState(() => accountType = 'depository'),
+              ),
+            ),
+          ],
+        )),
+        const SizedBox(height: 20),
+        _buildField('Beneficiary Email *', TextField(
+          controller: _beneficiaryEmailController,
+          decoration: InputDecoration(
+            hintText: 'e.g. markcuban@example.com',
+            hintStyle: TextStyle(color: colors.textSecondary),
+          ),
+          style: TextStyle(color: colors.text, fontSize: 16),
+          keyboardType: TextInputType.emailAddress,
+          onChanged: (value) => setState(() => beneficiaryEmail = value),
         )),
         const SizedBox(height: 20),
       ],
