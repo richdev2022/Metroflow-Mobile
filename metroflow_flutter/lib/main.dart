@@ -44,6 +44,7 @@ import 'screens/personal_profile_completion_screen.dart';
 import 'screens/kyc_initiate_screen.dart';
 import 'screens/kyc_otp_screen.dart';
 import 'screens/business_kyc_screen.dart';
+import 'screens/business_kyc_upgrade_screen.dart';
 
 import 'screens/fund_wallet_screen.dart';
 import 'screens/bulk_transfer_screen.dart';
@@ -455,6 +456,12 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         GoRoute(
           path: '/kyc-otp',
           builder: (context, state) => const KycOtpScreen(),
+        ),
+        // Business KYC upgrade (Non-Registered → Registered "Verified"):
+        // pushed from the dashboard's transaction-limit banner.
+        GoRoute(
+          path: '/business-kyc-upgrade',
+          builder: (context, state) => const BusinessKycUpgradeScreen(),
         ),
         GoRoute(
           path: '/main',
