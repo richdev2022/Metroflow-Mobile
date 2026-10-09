@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -18,6 +19,41 @@ import '../widgets/modern_ui.dart';
 import '../widgets/metric_ai_logo.dart';
 import '../widgets/avatar_with_initials.dart';
 import 'chat_detail_screen.dart';
+
+/// Pretty preview for a conversation's last message when the latest row is a
+/// CALL LOG system message (a JSON blob in `content`). Raw JSON must never
+/// leak into the chat list — format it as "📞 Voice call · 1m 5s" etc., the
+/// same shape the backend preview formatter produces.
+String? _formatLastMessagePreview(String? raw) {
+  final trimmed = (raw ?? '').trim();
+  if (!trimmed.startsWith('{') || !trimmed.contains('callType')) return trimmed.isEmpty ? null : trimmed;
+  try {
+    final meta = jsonDecode(trimmed);
+    if (meta is! Map || meta['callType'] is! String) return trimmed;
+    final isVideo = meta['callType'] == 'video';
+    final icon = isVideo ? '📹' : '📞';
+    final label = isVideo ? 'Video call' : 'Voice call';
+    final status = String(meta['status'] ?? '').toLowerCase();
+    final duration = int.tryParse('${meta['durationSeconds'] ?? 0}') ?? 0;
+    String detail;
+    if (status == 'missed') {
+      detail = ' · Missed';
+    } else if (status == 'declined') {
+      detail = ' · Declined';
+    } else if (status == 'cancelled' || status == 'canceled') {
+      detail = ' · Cancelled';
+    } else if (duration > 0) {
+      final m = duration ~/ 60;
+      final s = duration % 60;
+      detail = ' · ${m}m ${s}s';
+    } else {
+      detail = '';
+    }
+    return '$icon $label$detail';
+  } catch (_) {
+    return trimmed;
+  }
+}
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key});
@@ -778,7 +814,7 @@ class _ConversationTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasPreview = (conversation.lastMessage ?? '').isNotEmpty;
-    final preview = conversation.lastMessage ?? 'No messages yet';
+    final preview = _formatLastMessagePreview(conversation.lastMessage) ?? 'No messages yet';
     final isGroup = conversation.type == 'group';
 
     return ModernCard(
