@@ -954,6 +954,25 @@ class ApiService {
     return <String, dynamic>{};
   }
 
+  /// GET /wallet/limits (auth) → the unwrapped `data` map:
+  /// `{ category, isRegistered, currency,
+  /// limits: {singleTransactionLimit, dailyLimit, monthlyLimit},
+  /// usage: {...}, inflow: {usedToday, usedThisMonth, remainingToday,
+  /// remainingThisMonth}, registeredLimits: {...}, inflowLimits: {...},
+  /// outflowLimits: {...} }` — the funding screen shows these before the
+  /// user commits an amount. Returns {} on unexpected shapes — callers
+  /// parse defensively (nulls are possible). Toasts suppressed — loaded
+  /// best-effort and must stay silent on failures.
+  Future<Map<String, dynamic>> getWalletLimits() async {
+    final response = await _dio.get('/wallet/limits',
+        options: Options(extra: {'suppressToast': true}));
+    final data = response.data;
+    if (data is Map && data['data'] is Map) {
+      return Map<String, dynamic>.from(data['data'] as Map);
+    }
+    return <String, dynamic>{};
+  }
+
   // Wallet API
   Future<Response> getWallet() async {
     return await _dio.get('/wallet');
@@ -1086,7 +1105,13 @@ class ApiService {
   /// POST /wallet/fund/card. The backend resolves the active payment provider
   /// itself — the client MUST NOT send a `provider` field (it 400s for
   /// unsupported names and fights the admin-configured active provider).
-  Future<Response> fundWallet(double amount, String walletId, {String? redirectUrl}) async {
+  ///
+  /// [suppressToast] lets the caller own the error UI — the funding screen
+  /// passes true so a 403 *LIMIT_EXCEEDED rejection renders as a dedicated
+  /// "Transaction limit reached" sheet instead of the interceptor's generic
+  /// toast (all error cases must then be handled in the caller's catch).
+  Future<Response> fundWallet(double amount, String walletId,
+      {String? redirectUrl, bool suppressToast = false}) async {
     final data = <String, dynamic>{
       'amount': amount,
       'wallet_id': walletId,
@@ -1094,7 +1119,8 @@ class ApiService {
     if (redirectUrl != null) {
       data['redirect_url'] = redirectUrl;
     }
-    return await _dio.post('/wallet/fund/card', data: data);
+    return await _dio.post('/wallet/fund/card', data: data,
+        options: Options(extra: {'suppressToast': suppressToast}));
   }
 
   /// Fetch available payment providers and the globally active one.
