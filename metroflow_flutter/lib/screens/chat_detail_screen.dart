@@ -20,6 +20,7 @@ import '../models/call.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_feedback.dart';
 import '../utils/app_timezone.dart';
+import '../utils/app_toast.dart';
 import '../utils/chat_media_utils.dart';
 import '../widgets/chat_attachment_views.dart';
 import '../widgets/emoji_sticker_gif_panel.dart';
@@ -43,11 +44,23 @@ class ChatDetailScreen extends ConsumerStatefulWidget {
   /// conversations list arrives and opens THIS conversation directly.
   static String? pendingOpenConversationId;
 
+  /// Set by the group invite deep link (metricorex://chat/join/<code>) or a
+  /// chat_invite push tap right before navigating to '/main/chat' —
+  /// ChatScreen consumes it once, POSTs /chat/join/<code> and opens the
+  /// returned conversation directly.
+  static String? pendingChatJoinCode;
+
+  /// Trailing '@token' before the caret that opens the mention overlay
+  /// (group conversations only).
+  static final RegExp _mentionPattern = RegExp(r'(?:^|\s)@([A-Za-z0-9_]*)$');
+
   @override
   ConsumerState<ChatDetailScreen> createState() => _ChatDetailScreenState();
 }
 
-class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
+class _ChatDetailScreenState
+    extends ConsumerState<ChatDetailScreen>
+    with WidgetsBindingObserver {
   final ApiService _api = ApiService();
   final SocketService _socket = SocketService();
   final StorageService _storage = StorageService();
@@ -100,10 +113,25 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
   late final void Function(dynamic) _typingHandler;
   late final void Function(dynamic) _stopTypingHandler;
   late final void Function(dynamic) _conversationReadHandler;
+  // Coalesces resync work (resume + socket reconnect can fire together).
+  bool _resyncInFlight = false;
+  // Multi-select forward/delete mode (WhatsApp-style). Long-press a bubble →
+  // 'Select', then tap bubbles to toggle; the app bar switches to the
+  // selection toolbar (Forward / Delete / Select all).
+  bool _selectionMode = false;
+  final Set<String> _selectedMessageIds = <String>{};
+  // @mention overlay state (group conversations only). [_mentionToken] is the
+  // text after the trailing '@' when the overlay is open, null when closed.
+  List<ChatUserProfile> _mentionMembers = const <ChatUserProfile>[];
+  bool _mentionLoaded = false;
+  String? _mentionToken;
+  int _mentionHighlight = 0;
+  final FocusNode _composerFocus = FocusNode();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     ChatDetailScreen.activeConversationId = widget.conversation.id;
     // Seed the read receipt from the conversation object (its enriched
     // participants already expose lastReadAt) — refreshed by the loaders.
@@ -116,6 +144,17 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     _loadMessages();
     _checkGifsConfigured();
     _socket.joinConversation(widget.conversation.id);
+    // Reconnect hook (registered AFTER the join): fired once the socket
+    // (re)connects and the service re-joined every remembered room — the
+    // handler below backfills anything missed while offline. Lifecycle/
+    // reconnect-driven only: NO timers, NO polling.
+    _socket.addOnReconnected(_handleSocketReconnected);
+    if (widget.conversation.type == 'group') {
+      _loadMentionMembers();
+    }
+    // Blur closes the mention overlay (with a small grace period so tapping a
+    // candidate row — which blurs the field first — still inserts).
+    _composerFocus.addListener(_handleComposerFocusChange);
     // Mark as read on open so the unread badge clears everywhere (web included)
     _markConversationRead();
 
@@ -275,6 +314,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       profile: profile,
       members: members,
       conversationName: conversation.displayTitle(currentId),
+      // GROUP EXTRAS: tappable member rows → DM, add-members picker and the
+      // shareable invite link (only mounted when this is a group chat).
+      conversationId: conversation.type == 'group' ? conversation.id : null,
+      isGroup: conversation.type == 'group',
     );
   }
 
@@ -510,9 +553,376 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Lifecycle / reconnect resync (NO timers, NO polling — event-driven only)
+  // -------------------------------------------------------------------------
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    // Android routinely kills background sockets: on resume, make sure the
+    // connection is alive, re-join the room and backfill missed messages.
+    _resyncAfterReconnect();
+  }
+
+  /// Fired by SocketService after a (re)connect + conversation re-join. The
+  /// server drops `conversation:<id>` rooms on every reconnect, so the open
+  /// thread must re-join (the service already did, via its registry) and
+  /// silently refetch anything delivered while we were offline.
+  void _handleSocketReconnected() {
+    _resyncAfterReconnect();
+  }
+
+  /// Best-effort realtime resync for THIS conversation: reconnect when the
+  /// socket died, re-emit the room join, then silently refetch the message
+  /// list. Never toasts, never shows the error state, keeps optimistic /
+  /// pending rows intact. Coalesced so resume + reconnect firing together
+  /// still runs one refetch.
+  Future<void> _resyncAfterReconnect() async {
+    if (!mounted || _resyncInFlight || _isLoading) return;
+    _resyncInFlight = true;
+    try {
+      if (!_socket.isConnected) {
+        // waitForConnection nudges the socket manager (same helper the call
+        // screens use after a cold push-tap start) and waits for the
+        // reconnect to land — a plain `connect()` here would need the auth
+        // identity, which this screen does not own.
+        try {
+          await _socket.waitForConnection();
+        } catch (_) {}
+      }
+      if (!mounted) return;
+      try {
+        // Registers the room again if the fresh socket forgot it (a no-op
+        // when the registry already holds it) and emits while connected.
+        _socket.joinConversation(widget.conversation.id);
+      } catch (_) {}
+      await _resyncMessages();
+    } catch (e) {
+      Logger.error('Chat resync failed: $e');
+    } finally {
+      _resyncInFlight = false;
+    }
+  }
+
+  /// Silent variant of [_loadMessages]: same loader + read-receipt capture,
+  /// but failures are swallowed (whatever list the user already sees stays
+  /// untouched) and optimistic pending rows survive — the server cannot know
+  /// about an in-flight upload.
+  Future<void> _resyncMessages() async {
+    try {
+      final response = await _api.getConversationMessages(widget.conversation.id);
+      if (response.data['success'] != true || !mounted) return;
+      final responseData = response.data['data'];
+      final data = responseData is Map && responseData['messages'] is List
+          ? responseData['messages'] as List
+          : responseData is List
+              ? responseData
+              : <dynamic>[];
+      final readEntries = responseData is Map && responseData['participants'] is List
+          ? (responseData['participants'] as List)
+              .whereType<Map>()
+              .map((raw) {
+                final map = Map<String, dynamic>.from(raw);
+                final uid = (map['userId'] ?? map['user_id'] ?? '').toString();
+                final at = _parseReadInstant(map['lastReadAt'] ??
+                    map['last_read_at'] ??
+                    map['readAt'] ??
+                    map['read_at']);
+                return MapEntry(uid, at);
+              })
+              .where((entry) => entry.key.isNotEmpty)
+              .toList()
+          : _participantReadEntries;
+      final fetched = data
+          .whereType<Map>()
+          .map((json) => Message.fromJson(Map<String, dynamic>.from(json)))
+          .toList();
+      // Keep optimistic rows the fresh list cannot contain yet.
+      final pending = _messages
+          .where((m) =>
+              m.isPendingUpload &&
+              !fetched.any((f) => f.id == m.id))
+          .toList();
+      // Only auto-scroll when the user was already reading the tail.
+      final shouldStick = !_scrollController.hasClients ||
+          _scrollController.position.maxScrollExtent <= 0 ||
+          _scrollController.offset >=
+              _scrollController.position.maxScrollExtent - 120;
+      setState(() {
+        _messages = [...fetched, ...pending];
+        _participantReadEntries = readEntries;
+        _refreshPeerLastRead();
+      });
+      if (shouldStick) {
+        Future.delayed(const Duration(milliseconds: 100), _scrollToBottom);
+      }
+    } catch (e) {
+      Logger.error('Silent message resync failed: $e');
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // @mention (group conversations only)
+  // -------------------------------------------------------------------------
+
+  /// One-time participant fetch powering the mention overlay. Falls back to
+  /// the conversation payload's enriched participants when the roster
+  /// endpoint is unavailable (older backend).
+  Future<void> _loadMentionMembers() async {
+    try {
+      final response = await _api.getConversationParticipants(widget.conversation.id);
+      final data = response.data is Map ? response.data['data'] : null;
+      final rows = data is Map && data['participants'] is List
+          ? data['participants'] as List
+          : const <dynamic>[];
+      final members = rows
+          .whereType<Map>()
+          .map((raw) {
+            final map = Map<String, dynamic>.from(raw);
+            final userId = (map['userId'] ?? map['user_id'] ?? '').toString();
+            final name = (map['name'] ?? '').toString().trim();
+            final email = (map['email'] ?? '').toString().trim();
+            return ChatUserProfile(
+              userId: userId,
+              name: name.isNotEmpty ? name : (email.isNotEmpty ? email : 'Member'),
+              email: email,
+              avatarUrl: map['avatarUrl']?.toString(),
+              role: map['role']?.toString(),
+            );
+          })
+          .where((m) => m.userId.isNotEmpty)
+          .toList();
+      if (!mounted || members.isEmpty) return;
+      setState(() {
+        _mentionMembers = members;
+        _mentionLoaded = true;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _mentionMembers = widget.conversation.participants
+              .where((p) => p.userId.isNotEmpty)
+              .map((p) => ChatUserProfile(
+                    userId: p.userId,
+                    name: p.name.trim().isNotEmpty
+                        ? p.name.trim()
+                        : (p.email.isNotEmpty ? p.email : 'Member'),
+                    email: p.email,
+                    avatarUrl: p.avatarUrl,
+                  ))
+              .toList();
+          _mentionLoaded = true;
+        });
+      }
+    }
+  }
+
+  /// Re-evaluates the trailing '@token' before the caret. Opens/closes the
+  /// mention overlay and (re)computes the filtered candidate list.
+  void _updateMentionState() {
+    if (widget.conversation.type != 'group' || !_mentionLoaded) return;
+    final text = _messageController.text;
+    var caret = _messageController.selection.baseOffset;
+    if (caret < 0 || caret > text.length) caret = text.length;
+    final before = text.substring(0, caret);
+    final match = _mentionPattern.firstMatch(before);
+    if (match == null) {
+      if (_mentionToken != null && mounted) {
+        setState(() {
+          _mentionToken = null;
+          _mentionHighlight = 0;
+        });
+      }
+      return;
+    }
+    final token = match.group(1) ?? '';
+    if (_mentionToken != token && mounted) {
+      setState(() {
+        _mentionToken = token;
+        _mentionHighlight = 0;
+      });
+    }
+  }
+
+  List<ChatUserProfile> get _mentionCandidates {
+    final token = (_mentionToken ?? '').toLowerCase();
+    final me = _currentUserId;
+    return _mentionMembers
+        .where((m) => me == null || m.userId != me)
+        .where((m) => token.isEmpty || m.displayName.toLowerCase().contains(token))
+        .take(6)
+        .toList();
+  }
+
+  /// Inserts '@Name ' replacing the partial token, closes the overlay and
+  /// restores focus + caret position after the inserted mention.
+  void _insertMention(ChatUserProfile member) {
+    final text = _messageController.text;
+    var caret = _messageController.selection.baseOffset;
+    if (caret < 0 || caret > text.length) caret = text.length;
+    final before = text.substring(0, caret);
+    final match = _mentionPattern.firstMatch(before);
+    if (match == null) {
+      if (mounted) setState(() => _mentionToken = null);
+      return;
+    }
+    // Group 0 starts with the leading whitespace (or string start); the '@'
+    // itself sits right after it.
+    final atStart = match.start == 0 ? 0 : match.start + 1;
+    final insertion = '@${member.displayName} ';
+    final newText = text.replaceRange(atStart, caret, insertion);
+    final newCaret = atStart + insertion.length;
+    _messageController.value = TextEditingValue(
+      text: newText,
+      selection: TextSelection.collapsed(offset: newCaret),
+    );
+    if (mounted) {
+      setState(() {
+        _mentionToken = null;
+        _mentionHighlight = 0;
+      });
+    }
+    if (!_composerFocus.hasFocus) {
+      _composerFocus.requestFocus();
+    }
+  }
+
+  void _closeMentionOverlay() {
+    if (_mentionToken == null) return;
+    if (mounted) {
+      setState(() {
+        _mentionToken = null;
+        _mentionHighlight = 0;
+      });
+    }
+  }
+
+  /// Blur closes the overlay — delayed a beat so tapping a candidate row
+  /// (which blurs the field before the InkWell tap lands) still inserts.
+  void _handleComposerFocusChange() {
+    if (_composerFocus.hasFocus) return;
+    Future.delayed(const Duration(milliseconds: 120), () {
+      if (mounted && !_composerFocus.hasFocus) {
+        _closeMentionOverlay();
+      }
+    });
+  }
+
+  /// Enter/Tab insert the highlighted mention, ArrowUp/Down move the
+  /// highlight, Escape closes — only while the overlay is open, everything
+  /// else (including the newline Enter) passes through untouched.
+  KeyEventResult _handleComposerKeyEvent(FocusNode node, KeyEvent event) {
+    final candidates = _mentionCandidates;
+    final overlayOpen = _mentionToken != null && candidates.isNotEmpty;
+    if (!overlayOpen) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.escape) {
+      _closeMentionOverlay();
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.enter ||
+        event.logicalKey == LogicalKeyboardKey.numpadEnter ||
+        event.logicalKey == LogicalKeyboardKey.tab) {
+      final index = _mentionHighlight.clamp(0, candidates.length - 1).toInt();
+      _insertMention(candidates[index]);
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+      if (mounted) {
+        setState(() => _mentionHighlight =
+            (_mentionHighlight + 1).clamp(0, candidates.length - 1).toInt());
+      }
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+      if (mounted) {
+        setState(() => _mentionHighlight =
+            (_mentionHighlight - 1).clamp(0, candidates.length - 1).toInt());
+      }
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  /// Candidate list floating directly above the composer (WhatsApp-style),
+  /// rendered inside the existing body column — no overlay machinery.
+  Widget _buildMentionOverlay(ThemeColors colors) {
+    final candidates = _mentionCandidates;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      constraints: const BoxConstraints(maxHeight: 236),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: colors.border),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.10),
+            blurRadius: 16,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: ListView.builder(
+        shrinkWrap: true,
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        itemCount: candidates.length,
+        itemBuilder: (context, index) {
+          final member = candidates[index];
+          final highlighted = index == _mentionHighlight;
+          return InkWell(
+            onTap: () => _insertMention(member),
+            child: Container(
+              color: highlighted ? colors.primaryBg : Colors.transparent,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Row(
+                children: [
+                  AvatarWithInitials(
+                    name: member.displayName,
+                    imageUrl: member.avatarUrl,
+                    radius: 14,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      member.displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: colors.text,
+                      ),
+                    ),
+                  ),
+                  if (member.roleLabel != null) ...[
+                    const SizedBox(width: 6),
+                    Text(
+                      member.roleLabel!,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   void _onTextChanged(String text) {
     // Refresh the send-button gradient as the composer empties/fills
     if (mounted) setState(() {});
+    // @mention detection: trailing '@token' before the caret (groups only).
+    _updateMentionState();
     _typingDebounce?.cancel();
     if (text.trim().isEmpty) {
       _typingStopTimer?.cancel();
@@ -604,9 +1014,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // Message actions (long-press): reply / copy / edit / delete
-  // -------------------------------------------------------------------------
+  // -----------------------------------------------------------------------
+  // Message actions (long-press): reply / copy / edit / delete — plus
+  // multi-select (Forward / Delete N / Select all) and Share for attachments.
+  // -----------------------------------------------------------------------
 
   void _clearComposerContext() {
     if (!mounted) return;
@@ -615,6 +1026,157 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
       _editingMessage = null;
       _messageController.clear();
     });
+  }
+
+  void _enterSelectionMode(String messageId) {
+    setState(() {
+      _selectionMode = true;
+      _selectedMessageIds
+        ..clear()
+        ..add(messageId);
+    });
+  }
+
+  void _exitSelectionMode() {
+    if (!_selectionMode && _selectedMessageIds.isEmpty) return;
+    setState(() {
+      _selectionMode = false;
+      _selectedMessageIds.clear();
+    });
+  }
+
+  void _toggleSelected(String messageId) {
+    setState(() {
+      if (_selectedMessageIds.contains(messageId)) {
+        _selectedMessageIds.remove(messageId);
+        // Deselecting the last bubble drops out of selection mode (WhatsApp
+        // behaviour — the toolbar has nothing left to act on).
+        if (_selectedMessageIds.isEmpty) _selectionMode = false;
+      } else {
+        _selectedMessageIds.add(messageId);
+      }
+    });
+  }
+
+  /// Tap behaviour on a bubble: selection mode toggles, otherwise no-op (the
+  /// long-press sheet is the entry point).
+  void _handleBubbleTap(Message message) {
+    if (_selectionMode) _toggleSelected(message.id);
+  }
+
+  void _selectAllSelectable() {
+    setState(() {
+      for (final message in _messages) {
+        if (_isSelectable(message)) _selectedMessageIds.add(message.id);
+      }
+    });
+  }
+
+  /// The rows eligible for long-press actions — also the selection universe
+  /// (call-logs have their own tap-through, tombstones/pending rows aren't
+  /// real content).
+  bool _isSelectable(Message message) {
+    return !message.isPendingUpload &&
+        !message.isTombstone &&
+        (message.messageType ?? '').trim().toLowerCase() != 'call-log';
+  }
+
+  /// Delete every selected message. Own messages tombstone for everyone,
+  /// others delete for me only (mirrors the single-message rules). One
+  /// failure never aborts the batch.
+  Future<void> _deleteSelected() async {
+    if (_selectedMessageIds.isEmpty) return;
+    final count = _selectedMessageIds.length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: AppTheme.colors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text('Delete $count message${count == 1 ? '' : 's'}?'),
+        content: const Text(
+            'Your own messages are removed for everyone; received ones only for you.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Delete',
+                style: TextStyle(color: Colors.redAccent)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final targets = _messages
+        .where((m) => _selectedMessageIds.contains(m.id))
+        .toList();
+    _exitSelectionMode();
+    for (final message in targets) {
+      final isMine = _currentUserId != null && message.senderId == _currentUserId;
+      try {
+        await _api.deleteChatMessage(
+          widget.conversation.id,
+          message.id,
+          scope: isMine ? 'everyone' : 'me',
+        );
+        if (!mounted) return;
+        setState(() {
+          if (isMine) {
+            _upsertMessage(message.copyWith(
+              content: '',
+              deletedForEveryone: true,
+              isPendingDelete: true,
+            ));
+          } else {
+            _messages.removeWhere((m) => m.id == message.id);
+          }
+        });
+      } catch (e) {
+        Logger.error('deleteSelected(${message.id}) failed: $e');
+      }
+    }
+  }
+
+  /// Body forwarded to the target conversations: the ORIGINAL message fields
+  /// (content, attachment url/type/name/size, messageType) + forwarded: true
+  /// (api.sendMessage adds the flag).
+  Map<String, dynamic> _forwardPayloadFor(Message message) {
+    final kind = (message.messageType ?? '').trim().toLowerCase();
+    final url = ApiService.resolveMediaUrl(message.attachmentUrl);
+    return <String, dynamic>{
+      if (message.content.trim().isNotEmpty) 'content': message.content,
+      if (url != null) 'attachmentUrl': url,
+      if ((message.attachmentType ?? '').isNotEmpty)
+        'attachmentType': message.attachmentType,
+      if ((message.attachmentName ?? '').isNotEmpty)
+        'attachmentName': message.attachmentName,
+      if ((message.attachmentSize ?? 0) > 0) 'attachmentSize': message.attachmentSize,
+      if (kind.isNotEmpty && kind != 'text') 'messageType': kind,
+    };
+  }
+
+  /// Opens the target picker (search + conversations list, multi-select) and
+  /// re-sends every selected message into each chosen chat.
+  void _showForwardSheet() {
+    final messages = _messages
+        .where((m) => _selectedMessageIds.contains(m.id))
+        .toList();
+    if (messages.isEmpty) return;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppTheme.colors.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) => _ForwardSheet(
+        messages: messages,
+        currentUserId: _currentUserId,
+        payloadFor: _forwardPayloadFor,
+      ),
+    ).then((_) => _exitSelectionMode());
   }
 
   /// WhatsApp-style long-press sheet. Edit is limited to the sender's own
@@ -663,6 +1225,45 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
               onTap: () {
                 Navigator.pop(sheetContext);
                 Clipboard.setData(ClipboardData(text: message.content));
+              },
+            ),
+            // Share an attachment out of the app (system share sheet). The
+            // helper downloads via the same authenticated path the document
+            // tile uses, then hands the local file to SharePlus.
+            if ((message.attachmentUrl ?? '').trim().isNotEmpty)
+              _MessageActionTile(
+                icon: Icons.share_rounded,
+                color: colors.primary,
+                title: 'Share',
+                colors: colors,
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  final url = message.attachmentUrl!.trim();
+                  unawaited(shareChatAttachment(
+                    url,
+                    attachmentDisplayName(message.attachmentName, url),
+                  ));
+                },
+              ),
+            _MessageActionTile(
+              icon: Icons.shortcut_rounded,
+              color: colors.primary,
+              title: 'Forward',
+              colors: colors,
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _enterSelectionMode(message.id);
+                _showForwardSheet();
+              },
+            ),
+            _MessageActionTile(
+              icon: Icons.checklist_rounded,
+              color: colors.primary,
+              title: 'Select',
+              colors: colors,
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _enterSelectionMode(message.id);
               },
             ),
             if (canEdit)
@@ -1234,6 +1835,13 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _socket.removeOnReconnected(_handleSocketReconnected);
+    // Leave the room locally: stops the service re-joining this conversation
+    // after future reconnects (fire-and-forget emit kept for the backend).
+    _socket.leaveConversation(widget.conversation.id);
+    _composerFocus.removeListener(_handleComposerFocusChange);
+    _composerFocus.dispose();
     if (ChatDetailScreen.activeConversationId == widget.conversation.id) {
       ChatDetailScreen.activeConversationId = null;
     }
@@ -1286,80 +1894,145 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
     return DateFormat.MMMEd().format(date);
   }
 
+  /// Normal chat app bar (avatar + title + call actions). Hidden while the
+  /// message-selection toolbar is active.
+  PreferredSizeWidget _buildChatAppBar(ThemeColors colors) {
+    final isDirect = widget.conversation.type != 'group';
+    final memberCount = widget.conversation.participants.length;
+    return AppBar(
+      backgroundColor: colors.surface,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0.5,
+      shadowColor: colors.border,
+      iconTheme: IconThemeData(color: colors.text),
+      titleSpacing: 0,
+      title: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _openChatProfile(),
+        child: Row(
+          children: [
+            AvatarWithInitials(
+              name: widget.conversation.displayTitle(_currentUserId),
+              imageUrl: widget.conversation.displayAvatar(_currentUserId),
+              radius: 17,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.conversation.displayTitle(_currentUserId),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: colors.text,
+                    ),
+                  ),
+                  Text(
+                    isDirect
+                        ? (_lastSeenLabel() ?? 'Direct message')
+                        : '$memberCount members',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: colors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        _RoundIconAction(
+          icon: Icons.call_outlined,
+          color: colors.success,
+          tooltip: 'Audio call',
+          onTap: () => _startCall('audio'),
+        ),
+        _RoundIconAction(
+          icon: Icons.videocam_outlined,
+          color: colors.primary,
+          tooltip: 'Video call',
+          onTap: () => _startCall('video'),
+        ),
+        const SizedBox(width: 6),
+      ],
+    );
+  }
+
+  /// WhatsApp-style selection toolbar: close, "<n> selected", select-all,
+  /// forward and delete.
+  PreferredSizeWidget _buildSelectionAppBar(ThemeColors colors) {
+    final count = _selectedMessageIds.length;
+    final allSelected = count > 0 &&
+        count == _messages.where(_isSelectable).length;
+    return AppBar(
+      backgroundColor: colors.surface,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0.5,
+      shadowColor: colors.border,
+      iconTheme: IconThemeData(color: colors.text),
+      leading: IconButton(
+        tooltip: 'Cancel selection',
+        icon: Icon(Icons.close_rounded, color: colors.text),
+        onPressed: _exitSelectionMode,
+      ),
+      title: Text(
+        '$count selected',
+        style: TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w700,
+          color: colors.text,
+        ),
+      ),
+      actions: [
+        IconButton(
+          tooltip: allSelected ? 'Deselect all' : 'Select all',
+          icon: Icon(
+            allSelected ? Icons.deselect_rounded : Icons.select_all_rounded,
+            color: colors.primary,
+          ),
+          onPressed:
+              allSelected ? _exitSelectionMode : _selectAllSelectable,
+        ),
+        IconButton(
+          tooltip: 'Forward',
+          icon: Icon(Icons.shortcut_rounded,
+              color: count > 0 ? colors.primary : colors.textSecondary),
+          onPressed: count > 0 ? _showForwardSheet : null,
+        ),
+        IconButton(
+          tooltip: 'Delete',
+          icon: Icon(Icons.delete_outline_rounded,
+              color: count > 0 ? colors.error : colors.textSecondary),
+          onPressed: count > 0
+              ? () {
+                  unawaited(_deleteSelected());
+                }
+              : null,
+        ),
+        const SizedBox(width: 6),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     bool isCurrentUser(String senderId) => senderId == _currentUserId;
     final colors = AppTheme.colors;
     final isDirect = widget.conversation.type != 'group';
-    final memberCount = widget.conversation.participants.length;
 
     return Scaffold(
       backgroundColor: colors.background,
-      appBar: AppBar(
-        backgroundColor: colors.surface,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0.5,
-        shadowColor: colors.border,
-        iconTheme: IconThemeData(color: colors.text),
-        titleSpacing: 0,
-        title: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () => _openChatProfile(),
-          child: Row(
-            children: [
-              AvatarWithInitials(
-                name: widget.conversation.displayTitle(_currentUserId),
-                imageUrl: widget.conversation.displayAvatar(_currentUserId),
-                radius: 17,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      widget.conversation.displayTitle(_currentUserId),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: colors.text,
-                      ),
-                    ),
-                    Text(
-                      isDirect
-                          ? (_lastSeenLabel() ?? 'Direct message')
-                          : '$memberCount members',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        color: colors.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          _RoundIconAction(
-            icon: Icons.call_outlined,
-            color: colors.success,
-            tooltip: 'Audio call',
-            onTap: () => _startCall('audio'),
-          ),
-          _RoundIconAction(
-            icon: Icons.videocam_outlined,
-            color: colors.primary,
-            tooltip: 'Video call',
-            onTap: () => _startCall('video'),
-          ),
-          const SizedBox(width: 6),
-        ],
-      ),
+      appBar: _selectionMode
+          ? _buildSelectionAppBar(colors)
+          : _buildChatAppBar(colors),
       body: Column(
         children: [
           Expanded(
@@ -1445,6 +2118,40 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                                   : (p.email.isNotEmpty ? p.email : 'Member'),
                           };
 
+                          final isSelected =
+                              _selectedMessageIds.contains(message.id);
+
+                          Widget bubble = _MessageBubble(
+                            message: message,
+                            isMe: isMe,
+                            showSenderName:
+                                !isDirect && showHeader,
+                            colors: colors,
+                            participantNames: nameMap,
+                            peerReadAt: _peerLastReadAt,
+                          );
+                          if (_selectionMode) {
+                            // WhatsApp-style leading check for selected rows.
+                            bubble = Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Padding(
+                                  padding: const EdgeInsets.only(right: 6),
+                                  child: Icon(
+                                    isSelected
+                                        ? Icons.check_circle_rounded
+                                        : Icons.radio_button_unchecked_rounded,
+                                    size: 20,
+                                    color: isSelected
+                                        ? colors.primary
+                                        : colors.textSecondary,
+                                  ),
+                                ),
+                                Expanded(child: bubble),
+                              ],
+                            );
+                          }
+
                           return Column(
                             children: [
                               if (dateLabel != null)
@@ -1470,18 +2177,11 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                                   ),
                                 ),
                               GestureDetector(
+                                onTap: () => _handleBubbleTap(message),
                                 onLongPress: canShowActions
                                     ? () => _showMessageActions(message)
                                     : null,
-                                child: _MessageBubble(
-                                  message: message,
-                                  isMe: isMe,
-                                  showSenderName:
-                                      !isDirect && showHeader,
-                                  colors: colors,
-                                  participantNames: nameMap,
-                                  peerReadAt: _peerLastReadAt,
-                                ),
+                                child: bubble,
                               ),
                             ],
                           );
@@ -1519,6 +2219,10 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
                 ),
               ),
             ),
+          // @mention candidates (group conversations only) — sits directly
+          // above the composer inside the existing column.
+          if (_mentionToken != null && _mentionCandidates.isNotEmpty)
+            _buildMentionOverlay(colors),
           SafeArea(
             top: false,
             child: Container(
@@ -1600,27 +2304,32 @@ class _ChatDetailScreenState extends ConsumerState<ChatDetailScreen> {
           const SizedBox(width: 8),
         ],
         Expanded(
-          child: TextField(
-            controller: _messageController,
-            textCapitalization: TextCapitalization.sentences,
-            minLines: 1,
-            maxLines: 5,
-            onChanged: _onTextChanged,
-            style: TextStyle(color: colors.text, fontSize: 14.5),
-            decoration: InputDecoration(
-              hintText: isEditing ? 'Update message…' : 'Type a message...',
-              hintStyle: TextStyle(color: colors.textSecondary),
-              filled: true,
-              fillColor: colors.surfaceVariant,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(22),
-                borderSide: BorderSide.none,
+          child: Focus(
+            onKeyEvent: _handleComposerKeyEvent,
+            child: TextField(
+              controller: _messageController,
+              focusNode: _composerFocus,
+              textCapitalization: TextCapitalization.sentences,
+              minLines: 1,
+              maxLines: 5,
+              onChanged: _onTextChanged,
+              style: TextStyle(color: colors.text, fontSize: 14.5),
+              decoration: InputDecoration(
+                hintText: isEditing ? 'Update message…' : 'Type a message...',
+                hintStyle: TextStyle(color: colors.textSecondary),
+                filled: true,
+                fillColor: colors.surfaceVariant,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(22),
+                  borderSide: BorderSide.none,
+                ),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
               ),
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+              // Enter/newline on the keyboard inserts a line break (paragraph);
+              // sending happens via the send button only. While the mention
+              // overlay is open Enter/Tab insert the highlighted member.
             ),
-            // Enter/newline on the keyboard inserts a line break (paragraph);
-            // sending happens via the send button only.
           ),
         ),
         const SizedBox(width: 8),
@@ -2593,8 +3302,8 @@ class _RoundIconAction extends StatelessWidget {
   }
 }
 
-/// One row of the long-press message actions sheet (Reply / Copy / Edit /
-/// Delete for me / Delete for everyone).
+/// One row of the long-press message actions sheet (Reply / Copy / Share /
+/// Forward / Select / Edit / Delete for me / Delete for everyone).
 class _MessageActionTile extends StatelessWidget {
   final IconData icon;
   final Color color;
@@ -2631,6 +3340,376 @@ class _MessageActionTile extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Forward target picker: search + the user's conversations (multi-select),
+/// then re-sends every selected message into each chosen chat via
+/// POST /chat/conversations/:id/messages with the ORIGINAL body fields +
+/// forwarded: true. Sequential with per-message try/catch — one failure never
+/// aborts the batch — and a progress indicator while sending.
+class _ForwardSheet extends StatefulWidget {
+  final List<Message> messages;
+  final String? currentUserId;
+  final Map<String, dynamic> Function(Message message) payloadFor;
+
+  const _ForwardSheet({
+    required this.messages,
+    required this.currentUserId,
+    required this.payloadFor,
+  });
+
+  @override
+  State<_ForwardSheet> createState() => _ForwardSheetState();
+}
+
+class _ForwardSheetState extends State<_ForwardSheet> {
+  final ApiService _api = ApiService();
+  final TextEditingController _searchController = TextEditingController();
+  List<Conversation> _conversations = [];
+  bool _loading = true;
+  String? _loadError;
+  String _query = '';
+  final Set<String> _selectedIds = <String>{};
+  bool _forwarding = false;
+  int _done = 0;
+  int _total = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadConversations();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadConversations() async {
+    setState(() {
+      _loading = true;
+      _loadError = null;
+    });
+    try {
+      final response = await _api.getConversations();
+      if (response.data['success'] == true && mounted) {
+        final responseData = response.data['data'];
+        final data = responseData is Map && responseData['conversations'] is List
+            ? responseData['conversations'] as List
+            : responseData is List
+                ? responseData
+                : <dynamic>[];
+        setState(() {
+          _conversations = data
+              .whereType<Map>()
+              .map((json) =>
+                  Conversation.fromJson(Map<String, dynamic>.from(json)))
+              .toList();
+          _loading = false;
+        });
+      } else if (mounted) {
+        setState(() => _loading = false);
+      }
+    } catch (e) {
+      Logger.error('Forward sheet: loading conversations failed: $e');
+      if (mounted) {
+        setState(() {
+          _loadError = ApiService.extractErrorMessage(e);
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  List<Conversation> get _filtered {
+    final query = _query.trim().toLowerCase();
+    if (query.isEmpty) return _conversations;
+    return _conversations
+        .where((c) => c.displayTitle(widget.currentUserId).toLowerCase().contains(query))
+        .toList();
+  }
+
+  Future<void> _forward() async {
+    if (_selectedIds.isEmpty || _forwarding) return;
+    final targets = _conversations
+        .where((c) => _selectedIds.contains(c.id))
+        .toList();
+    setState(() {
+      _forwarding = true;
+      _total = targets.length * widget.messages.length;
+      _done = 0;
+    });
+    // chatId -> succeeded message count
+    final okPerChat = <String, int>{};
+    var failures = 0;
+    for (final conversation in targets) {
+      var okCount = 0;
+      for (final message in widget.messages) {
+        try {
+          final response = await _api.sendMessage(
+            conversation.id,
+            widget.payloadFor(message),
+            forwarded: true,
+          );
+          if (response.data['success'] == true) {
+            okCount += 1;
+          } else {
+            failures += 1;
+          }
+        } catch (e) {
+          Logger.error('Forward to ${conversation.id} failed: $e');
+          failures += 1;
+        }
+        if (mounted) setState(() => _done += 1);
+      }
+      if (okCount > 0) okPerChat[conversation.id] = okCount;
+    }
+    if (!mounted) return;
+    final chats = okPerChat.length;
+    Navigator.of(context).pop();
+    if (failures == 0) {
+      AppToast.show(
+        'Forwarded to $chats ${chats == 1 ? 'chat' : 'chats'}',
+        type: AppToastType.success,
+      );
+    } else if (chats > 0) {
+      AppToast.show(
+        'Forwarded to $chats ${chats == 1 ? 'chat' : 'chats'} — $failures failed',
+        type: AppToastType.warning,
+        isLong: true,
+      );
+    } else {
+      AppToast.show('Couldn\'t forward — please try again', type: AppToastType.error);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppTheme.colors;
+    final filtered = _filtered;
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom,
+        ),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.78,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 10),
+              Container(
+                margin: const EdgeInsets.only(top: 0),
+                width: 44,
+                height: 4.5,
+                decoration: BoxDecoration(
+                  color: colors.borderVariant,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                child: Row(
+                  children: [
+                    Text(
+                      'Forward to',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                        color: colors.text,
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      '${widget.messages.length} message${widget.messages.length == 1 ? '' : 's'}',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: colors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+                child: TextField(
+                  controller: _searchController,
+                  onChanged: (value) => setState(() => _query = value),
+                  style: TextStyle(color: colors.text, fontSize: 14),
+                  decoration: InputDecoration(
+                    hintText: 'Search chats',
+                    hintStyle: TextStyle(color: colors.textSecondary),
+                    prefixIcon: Icon(Icons.search_rounded,
+                        size: 20, color: colors.textSecondary),
+                    filled: true,
+                    fillColor: colors.surfaceVariant,
+                    isDense: true,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+              ),
+              Flexible(
+                child: _loading
+                    ? Padding(
+                        padding: const EdgeInsets.all(32),
+                        child: Center(
+                          child: CircularProgressIndicator(color: colors.primary),
+                        ),
+                      )
+                    : _loadError != null
+                        ? Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  _loadError!,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                      fontSize: 13, color: colors.error),
+                                ),
+                                const SizedBox(height: 10),
+                                OutlinedButton.icon(
+                                  onPressed: _loadConversations,
+                                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                                  label: const Text('Retry'),
+                                ),
+                              ],
+                            ),
+                          )
+                        : filtered.isEmpty
+                            ? Padding(
+                                padding: const EdgeInsets.all(24),
+                                child: Text(
+                                  'No chats found',
+                                  style: TextStyle(
+                                      fontSize: 13.5,
+                                      color: colors.textSecondary),
+                                ),
+                              )
+                            : ListView.builder(
+                                shrinkWrap: true,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 4),
+                                itemCount: filtered.length,
+                                itemBuilder: (context, index) {
+                                  final conversation = filtered[index];
+                                  final selected =
+                                      _selectedIds.contains(conversation.id);
+                                  return InkWell(
+                                    onTap: _forwarding
+                                        ? null
+                                        : () => setState(() {
+                                              if (selected) {
+                                                _selectedIds
+                                                    .remove(conversation.id);
+                                              } else {
+                                                _selectedIds
+                                                    .add(conversation.id);
+                                              }
+                                            }),
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 16, vertical: 8),
+                                      child: Row(
+                                        children: [
+                                          AvatarWithInitials(
+                                            name: conversation
+                                                .displayTitle(widget.currentUserId),
+                                            imageUrl: conversation
+                                                .displayAvatar(widget.currentUserId),
+                                            radius: 19,
+                                          ),
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: Text(
+                                              conversation.displayTitle(
+                                                  widget.currentUserId),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                fontSize: 14.5,
+                                                fontWeight: FontWeight.w600,
+                                                color: colors.text,
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Icon(
+                                            selected
+                                                ? Icons.check_circle_rounded
+                                                : Icons.circle_outlined,
+                                            size: 22,
+                                            color: selected
+                                                ? colors.primary
+                                                : colors.textSecondary,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: colors.primary,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      disabledBackgroundColor:
+                          colors.textSecondary.withValues(alpha: 0.3),
+                    ),
+                    onPressed: (_selectedIds.isEmpty || _forwarding)
+                        ? null
+                        : _forward,
+                    child: _forwarding
+                        ? Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white),
+                              ),
+                              const SizedBox(width: 10),
+                              Text(
+                                'Forwarding… $_done/$_total',
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700),
+                              ),
+                            ],
+                          )
+                        : Text(
+                            'Forward to ${_selectedIds.length} '
+                            '${_selectedIds.length == 1 ? 'chat' : 'chats'}',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w700, fontSize: 15),
+                          ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

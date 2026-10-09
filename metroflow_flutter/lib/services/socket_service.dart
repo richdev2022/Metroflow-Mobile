@@ -13,6 +13,44 @@ class SocketService {
   socket_io.Socket? _socket;
   bool get isConnected => _socket?.connected ?? false;
 
+  /// Conversations this client has asked the server to join during this
+  /// session. The server keeps rooms ONLY per socket connection, so after
+  /// any reconnect the socket silently drops out of every
+  /// `conversation:<id>` room and `message:created` stops arriving until
+  /// the user left and re-entered the chat. We remember every join and
+  /// re-emit `join-conversation` for all of them on connect/reconnect.
+  final Set<String> _joinedConversations = <String>{};
+
+  /// Observers fired after the socket (re)connects and the user-online
+  /// handshake + conversation re-joins have been re-emitted. Used by open
+  /// chat screens to rejoin + silently refetch (never fires while the
+  /// connection is stable — it is NOT a polling mechanism).
+  final List<void Function()> onReconnectedCallbacks = <void Function()>[];
+  void addOnReconnected(void Function() cb) {
+    if (!onReconnectedCallbacks.contains(cb)) onReconnectedCallbacks.add(cb);
+  }
+
+  void removeOnReconnected(void Function() cb) {
+    onReconnectedCallbacks.remove(cb);
+  }
+
+  void _notifyReconnected() {
+    for (final cb in List<void Function()>.from(onReconnectedCallbacks)) {
+      try {
+        cb();
+      } catch (_) {}
+    }
+  }
+
+  /// Re-emit `join-conversation` for every remembered conversation.
+  void _rejoinConversations() {
+    for (final id in _joinedConversations) {
+      try {
+        _socket?.emit('join-conversation', id);
+      } catch (_) {}
+    }
+  }
+
   /// Waits until the signaling socket is (re)connected, or gives up after
   /// [timeout] and returns false.
   ///
@@ -202,6 +240,11 @@ class SocketService {
       // user:{id}/business:{id} on authenticated connect — so personal events
       // (call:accepted etc.) reach this socket either way.
       _socket?.emit('user-online', {'userId': userId, 'businessId': businessId});
+      // The server joined this socket to user/business rooms on connect, but
+      // conversation rooms must be re-requested after EVERY (re)connect —
+      // otherwise live messages vanish until the chat is reopened.
+      _rejoinConversations();
+      _notifyReconnected();
 
       // Keep alive every 30 seconds
       Future.doWhile(() async {
@@ -251,6 +294,8 @@ class SocketService {
     _socket?.on('reconnect', (_) {
       Logger.log('Reconnected to socket');
       _socket?.emit('user-online', {'userId': userId, 'businessId': businessId});
+      _rejoinConversations();
+      _notifyReconnected();
     });
 
     _socket?.on('reconnect_attempt', (attempt) {
@@ -595,8 +640,31 @@ class SocketService {
     _socket?.emit('caption:segment', data);
   }
 
+  /// Join a conversation room. Remembered for the lifetime of the app so
+  /// every reconnect can re-join automatically (see _joinedConversations).
   void joinConversation(String conversationId) {
-    _socket?.emit('join-conversation', conversationId);
+    final id = conversationId.trim();
+    if (id.isEmpty) return;
+    _joinedConversations.add(id);
+    if (isConnected) {
+      _socket?.emit('join-conversation', id);
+    } else {
+      // Remember only — the connect/reconnect handler re-emits all joins
+      // as soon as the socket lands.
+      Logger.log('joinConversation deferred (socket offline): $id');
+    }
+  }
+
+  /// Local-only leave (no backend leave handler exists): stop re-joining
+  /// this conversation after future reconnects. Fire-and-forget emit kept
+  /// for backend forward-compatibility.
+  void leaveConversation(String conversationId) {
+    final id = conversationId.trim();
+    if (id.isEmpty) return;
+    _joinedConversations.remove(id);
+    try {
+      _socket?.emit('leave-conversation', id);
+    } catch (_) {}
   }
 
   /// Notify the conversation room that this user is typing (backend relays to peers)

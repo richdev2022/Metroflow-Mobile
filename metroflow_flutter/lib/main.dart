@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
@@ -6,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:app_links/app_links.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'models/transfer.dart';
 import 'theme/app_theme.dart';
 import 'providers/theme_provider.dart';
@@ -161,6 +163,23 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         }
         if (transferRef != null && transferRef.isNotEmpty) {
           GoRouter.of(ctx).go('/main/transfers');
+          return;
+        }
+        // metricorex://chat/join/<code> — group invite link (host 'chat',
+        // pathSegments ['join', code]; pathSegments[0] == 'chat' tolerated
+        // for https-style paths). The chat list consumes the code once it
+        // loads: POST /chat/join/<code> then opens the returned group.
+        String? inviteCode;
+        if (uri.host == 'chat' && segments.length >= 2 && segments[0] == 'join') {
+          inviteCode = segments[1];
+        } else if (segments.length >= 3 &&
+            segments[0] == 'chat' &&
+            segments[1] == 'join') {
+          inviteCode = segments[2];
+        }
+        if (inviteCode != null && inviteCode.isNotEmpty) {
+          ChatDetailScreen.pendingChatJoinCode = inviteCode;
+          GoRouter.of(ctx).go('/main/chat');
         }
       }
 
@@ -323,6 +342,28 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       unawaited(LauncherBadge.update(chats + notifications));
     } catch (e) {
       Logger.error('Launcher badge sync failed: $e');
+    }
+  }
+
+  /// Re-presents an incoming call ACCEPTED from its notification action
+  /// before (re-)authentication finished. Reads + deletes the
+  /// [kPendingIncomingCallPrefKey] preference, then feeds the payload into
+  /// the SAME hook the live socket/push path uses
+  /// (callProvider.presentIncomingCall) so the full-screen ringing overlay
+  /// appears with Accept/Decline. Best-effort — never throws.
+  Future<void> _presentPendingIncomingCall() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(kPendingIncomingCallPrefKey);
+      if (raw == null || raw.isEmpty) return;
+      await prefs.remove(kPendingIncomingCallPrefKey);
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      ref
+          .read(callProvider.notifier)
+          .presentIncomingCall(Map<String, dynamic>.from(decoded));
+    } catch (e) {
+      Logger.error('pending_incoming_call restore failed: $e');
     }
   }
 
@@ -820,6 +861,11 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       final isIn = next.isAuthenticated;
       if (!wasIn && isIn) {
         unawaited(PushNotificationService.instance.registerCurrentDevice());
+        // ACCEPT-FROM-NOTIFICATION (cold start): a user who accepted an
+        // incoming call from the notification action while signed out parks
+        // the payload in SharedPreferences — re-present the ring now that
+        // authentication succeeded. Missing/expired payloads are no-ops.
+        unawaited(_presentPendingIncomingCall());
       } else if (wasIn && !isIn) {
         // Clear the launcher badge along with the session (harmless on
         // security logouts too).

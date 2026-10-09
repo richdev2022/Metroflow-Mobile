@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:video_player/video_player.dart';
 
 import '../models/message.dart';
@@ -40,6 +41,122 @@ Future<String> downloadAttachment(
   return savePath;
 }
 
+/// Shares a chat attachment OUT of the app via the system share sheet.
+///
+/// Local file paths are used as-is; anything else is downloaded with the SAME
+/// authenticated mechanism the document/image tiles use
+/// ([ApiService.downloadFile] — the auth header rides the interceptor) into a
+/// temp file, then handed to SharePlus as an XFile. Any failure falls back to
+/// sharing the URL itself. NEVER throws — best-effort by design.
+Future<void> shareChatAttachment(String url, String fileName) async {
+  try {
+    if (url.isEmpty) return;
+    String? path;
+    // Already-local file (voice-note recordings, cached media) — share it
+    // directly instead of re-downloading.
+    if (!url.startsWith('http://') &&
+        !url.startsWith('https://') &&
+        !url.startsWith('data:')) {
+      final file = File(url);
+      if (await file.exists()) path = url;
+    }
+    if (path == null) {
+      path = await _downloadForShare(url, fileName);
+    }
+    if (path != null && path.isNotEmpty) {
+      await SharePlus.instance.share(
+        ShareParams(files: [XFile(path)], text: fileName),
+      );
+      return;
+    }
+  } catch (_) {
+    // Fall through to the URL share below.
+  }
+  try {
+    final parsed = Uri.tryParse(url);
+    if (parsed != null) {
+      await SharePlus.instance.share(ShareParams(uri: parsed));
+    }
+  } catch (_) {
+    // Never throw — sharing is best-effort.
+  }
+}
+
+/// Downloads [url] into the temp chat-share dir with the authenticated
+/// download path. Returns null on any failure (the caller falls back to
+/// sharing the URL itself).
+Future<String?> _downloadForShare(String url, String fileName) async {
+  try {
+    final dir = await getTemporaryDirectory();
+    final downloads = Directory('${dir.path}/chat-share');
+    if (!await downloads.exists()) {
+      await downloads.create(recursive: true);
+    }
+    final safeName = fileName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    final savePath =
+        '${downloads.path}/${DateTime.now().millisecondsSinceEpoch}_$safeName';
+    await ApiService().downloadFile(url, savePath);
+    return savePath;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Small translucent share button overlaid on media views (busy state built
+/// in). Calls [shareChatAttachment] — fire-and-forget, never throws.
+class ChatShareButton extends StatefulWidget {
+  final String url;
+  final String fileName;
+  final bool onDark;
+
+  const ChatShareButton({
+    super.key,
+    required this.url,
+    required this.fileName,
+    this.onDark = true,
+  });
+
+  @override
+  State<ChatShareButton> createState() => _ChatShareButtonState();
+}
+
+class _ChatShareButtonState extends State<ChatShareButton> {
+  bool _busy = false;
+
+  Future<void> _share() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    await shareChatAttachment(widget.url, widget.fileName);
+    if (mounted) setState(() => _busy = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final iconColor = widget.onDark ? Colors.white : Colors.white;
+    return Material(
+      color: Colors.black.withValues(alpha: 0.35),
+      shape: const CircleBorder(),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: _busy ? null : _share,
+        child: Padding(
+          padding: const EdgeInsets.all(6),
+          child: _busy
+              ? SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: iconColor,
+                  ),
+                )
+              : Icon(Icons.share_rounded, size: 16, color: iconColor),
+        ),
+      ),
+    );
+  }
+}
+
 // =============================================================================
 // Image (and GIF) attachments
 // =============================================================================
@@ -67,26 +184,40 @@ class ChatImageView extends StatelessWidget {
       borderRadius: BorderRadius.circular(12),
       child: GestureDetector(
         onTap: () => _openViewer(context),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: maxWidth, maxHeight: maxHeight),
-          child: CachedNetworkImage(
-            imageUrl: url,
-            fit: BoxFit.cover,
-            placeholder: (_, __) => Container(
-              width: 180,
-              height: 180,
-              color: colors.surfaceVariant,
-              child: Center(
-                child: CircularProgressIndicator(strokeWidth: 2, color: colors.primary),
+        child: Stack(
+          children: [
+            ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: maxWidth, maxHeight: maxHeight),
+              child: CachedNetworkImage(
+                imageUrl: url,
+                fit: BoxFit.cover,
+                placeholder: (_, __) => Container(
+                  width: 180,
+                  height: 180,
+                  color: colors.surfaceVariant,
+                  child: Center(
+                    child: CircularProgressIndicator(strokeWidth: 2, color: colors.primary),
+                  ),
+                ),
+                errorWidget: (_, __, ___) => Container(
+                  width: 180,
+                  height: 120,
+                  color: colors.surfaceVariant,
+                  child: Icon(Icons.broken_image_rounded, color: colors.textSecondary),
+                ),
               ),
             ),
-            errorWidget: (_, __, ___) => Container(
-              width: 180,
-              height: 120,
-              color: colors.surfaceVariant,
-              child: Icon(Icons.broken_image_rounded, color: colors.textSecondary),
+            // Share out of the app (system share sheet) — top-right,
+            // translucent circle, same authenticated download path.
+            Positioned(
+              top: 6,
+              right: 6,
+              child: ChatShareButton(
+                url: url,
+                fileName: attachmentDisplayName(null, url),
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );

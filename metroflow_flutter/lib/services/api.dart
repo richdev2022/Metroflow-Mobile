@@ -1832,6 +1832,57 @@ class ApiService {
     return await _dio.post('/chat/conversations', data: data);
   }
 
+  /// GET /chat/conversations/:id/participants — participant roster with roles,
+  /// presence and last-seen. Used by the group profile sheet (member rows,
+  /// add-members picker source) and the @mention member list.
+  Future<Response> getConversationParticipants(String conversationId) async {
+    return await _dio.get(
+      '/chat/conversations/$conversationId/participants',
+      options: Options(extra: {'suppressToast': true}),
+    );
+  }
+
+  /// POST /chat/conversations/:id/participants { userIds } — add members to a
+  /// GROUP conversation. Backend answers { added: [userId...], conversation }.
+  Future<Response> addChatParticipants(
+    String conversationId,
+    List<String> userIds,
+  ) async {
+    return await _dio.post(
+      '/chat/conversations/$conversationId/participants',
+      data: {'userIds': userIds},
+    );
+  }
+
+  /// GET /chat/conversations/:id/invite — { inviteCode, inviteUrl } for the
+  /// group's join link (code is created lazily on first request).
+  Future<Response> getChatInvite(String conversationId) async {
+    return await _dio.get(
+      '/chat/conversations/$conversationId/invite',
+      options: Options(extra: {'suppressToast': true}),
+    );
+  }
+
+  /// POST /chat/conversations/:id/invite/rotate — regenerate the join code;
+  /// old links stop working. Same response shape as [getChatInvite].
+  Future<Response> rotateChatInvite(String conversationId) async {
+    return await _dio.post(
+      '/chat/conversations/$conversationId/invite/rotate',
+      options: Options(extra: {'suppressToast': true}),
+    );
+  }
+
+  /// POST /chat/join/:code — self-join a group via its invite link. Returns
+  /// the fully-hydrated conversation for the joiner (existing members get it
+  /// too — the endpoint is idempotent).
+  Future<Response> joinChatByInvite(String code) async {
+    return await _dio.post(
+      '/chat/join/$code',
+      data: <String, dynamic>{},
+      options: Options(extra: {'suppressToast': true}),
+    );
+  }
+
   // ---- Chat guest contacts ("add anyone by email") ------------------------
   // Registered workspace members resolve to a normal DM; unknown emails get
   // an invite email + an Invited badge row in the chat list.
@@ -1868,8 +1919,21 @@ class ApiService {
     });
   }
 
-  Future<Response> sendMessage(String conversationId, Map<String, dynamic> data) async {
-    return await _dio.post('/chat/conversations/$conversationId/messages', data: data);
+  /// [forwarded] marks the message as forwarded-to-this-chat (chat.ts stores
+  /// it and the UI renders a "Forwarded" caption). Backward compatible —
+  /// omitted means a normal message.
+  Future<Response> sendMessage(
+    String conversationId,
+    Map<String, dynamic> data, {
+    bool forwarded = false,
+  }) async {
+    return await _dio.post(
+      '/chat/conversations/$conversationId/messages',
+      data: <String, dynamic>{
+        ...data,
+        if (forwarded) 'forwarded': true,
+      },
+    );
   }
 
   /// Upload chat media (voice notes) via POST /chat/media as multipart
@@ -2227,6 +2291,19 @@ class ApiService {
 
   Future<Response> leaveCall(String id) async {
     return await _dio.post('/calls/$id/leave');
+  }
+
+  /// POST /calls/:id/reject — REST decline for an incoming call. Used from
+  /// the notification action button (background isolate) where the app-side
+  /// socket may be dead, so the socket-only `call:reject` emit cannot be
+  /// relied on. Backend marks the callee rejected, notifies the caller and
+  /// emits `call:rejected`.
+  Future<Response> rejectCall(String callId) async {
+    return await _dio.post(
+      '/calls/$callId/reject',
+      data: <String, dynamic>{},
+      options: Options(extra: {'suppressToast': true}),
+    );
   }
 
   /// Mint/refresh short-lived media credentials for a room
