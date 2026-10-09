@@ -12,6 +12,7 @@ import '../widgets/chat_status.dart';
 import '../models/user.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_timezone.dart';
+import '../utils/app_toast.dart';
 import '../utils/logger.dart';
 import '../providers/auth_provider.dart';
 import '../providers/badge_provider.dart';
@@ -195,7 +196,24 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _consumePendingDeepLink());
   }
 
+  /// Deep-link consumption, in priority order:
+  /// 1. [ChatDetailScreen.pendingChatJoinCode] — group invite
+  ///    (metricorex://chat/join/<code> or a chat_invite push tap): POST
+  ///    /chat/join/<code> then open the returned (fully-hydrated) group.
+  /// 2. [ChatDetailScreen.pendingOpenConversationId] — chat push tap: open
+  ///    the exact conversation once the list arrives.
   void _consumePendingDeepLink() {
+    final joinCode = ChatDetailScreen.pendingChatJoinCode;
+    if (joinCode != null && joinCode.isNotEmpty) {
+      if (_isLoading) {
+        // List still loading — retry shortly (same pattern as below).
+        Future.delayed(const Duration(milliseconds: 400), _consumePendingDeepLink);
+        return;
+      }
+      ChatDetailScreen.pendingChatJoinCode = null;
+      _joinByInviteCode(joinCode);
+      return;
+    }
     final pendingId = ChatDetailScreen.pendingOpenConversationId;
     if (pendingId == null || pendingId.isEmpty) return;
     if (_isLoading) {
@@ -213,6 +231,47 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       _registerSocketHandlers();
       _loadConversations();
     });
+  }
+
+  /// POST /chat/join/<code> (silent) → navigate into the returned group.
+  /// Failures surface the server message (invalid/expired link,
+  /// wrong-workspace, …) as an error toast — the list view stays.
+  Future<void> _joinByInviteCode(String code) async {
+    try {
+      final response = await _api.joinChatByInvite(code);
+      if (response.data['success'] != true) {
+        throw FormatException(
+            (response.data['error'] ?? 'Couldn\'t join this group').toString());
+      }
+      final responseData = response.data['data'];
+      if (responseData is! Map) {
+        throw const FormatException('Invalid join response');
+      }
+      final conversation =
+          Conversation.fromJson(Map<String, dynamic>.from(responseData));
+      if (!mounted) return;
+      // Refresh the list in the background so the joined group appears
+      // behind the pushed detail screen.
+      unawaited(_loadConversations());
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+            builder: (_) => ChatDetailScreen(conversation: conversation)),
+      ).then((_) {
+        _registerSocketHandlers();
+        _loadConversations();
+      });
+    } catch (e) {
+      Logger.error('joinChatByInvite failed: $e');
+      if (mounted) {
+        AppToast.show(
+          e is FormatException && e.message.isNotEmpty
+              ? e.message
+              : ApiService.extractErrorMessage(e),
+          type: AppToastType.error,
+        );
+      }
+    }
   }
 
   @override
