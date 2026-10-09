@@ -58,6 +58,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   // Settings). Falls back to the personal avatar.
   String? _businessLogoUrl;
 
+  // Business-KYC status (GET /business-kyc/status, unwrapped `data` map):
+  // drives the transaction-limit banner (pending verification / Non-Registered
+  // limits / hidden once verified). Best-effort — null means "unknown".
+  Map<String, dynamic>? _businessKycStatus;
+
   // Anchors for the guided app tour (lib/widgets/app_tour.dart) — the tour
   // spotlights these regions on first launch.
   final GlobalKey _tourHeroKey = GlobalKey(debugLabel: 'tour-hero');
@@ -72,6 +77,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     AppTourAnchors.register('dashboard-tasks', _tourTasksKey);
     _fetchData();
     _fetchSuiteStats();
+    _fetchBusinessKycStatus();
     // Warm the shared user profile (name/avatar) from the local cache and,
     // best-effort, from the server — used by the greeting + avatar chip.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -192,6 +198,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           }
         });
       }
+    } catch (_) {}
+  }
+
+  /// Best-effort business-KYC (registration category + transaction limits)
+  /// fetch for the _TransactionLimitBanner. Errors are swallowed — the
+  /// banner is informational and must never break the dashboard.
+  Future<void> _fetchBusinessKycStatus() async {
+    try {
+      final status = await ApiService().getBusinessKycStatus();
+      if (mounted) setState(() => _businessKycStatus = status);
     } catch (_) {}
   }
 
@@ -347,6 +363,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         onRefresh: () async {
           await _fetchData(false);
           await _fetchSuiteStats();
+          await _fetchBusinessKycStatus();
         },
         color: colors.primary,
         child: SingleChildScrollView(
@@ -368,6 +385,24 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 ),
               ),
               const SizedBox(height: 22),
+
+              // ---------- Business KYC transaction-limit banner ----------
+              if (_TransactionLimitBanner.shouldShow(_businessKycStatus)) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+                  child: _TransactionLimitBanner(
+                    status: _businessKycStatus!,
+                    colors: colors,
+                    // Re-fetch the status when the upgrade screen pops so a
+                    // fresh "pending review" banner replaces the limit one.
+                    onUpgrade: () async {
+                      await context.push('/business-kyc-upgrade');
+                      if (mounted) _fetchBusinessKycStatus();
+                    },
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
 
               // ---------- Quick actions ----------
               _buildQuickActions(colors),
@@ -1389,6 +1424,197 @@ class _OverdueBanner extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Home-page banner for business-KYC limits (amber variant of _OverdueBanner's
+/// container style). Three states, driven by the GET /business-kyc/status
+/// `data` map:
+///   1. Verified business (business.isRegistered == true) → renders NOTHING.
+///   2. latestSubmission.status == 'pending' → info banner (under review).
+///   3. registrationCategory == 'non_registered' → current single-transaction
+///      limit + upgrade CTA → /business-kyc-upgrade.
+/// Nulls are parsed defensively everywhere — a malformed payload just hides
+/// the banner.
+class _TransactionLimitBanner extends StatelessWidget {
+  final Map<String, dynamic> status;
+  final ThemeColors colors;
+  final VoidCallback onUpgrade;
+
+  const _TransactionLimitBanner({
+    required this.status,
+    required this.colors,
+    required this.onUpgrade,
+  });
+
+  /// Whether the banner has something to say for this status payload.
+  static bool shouldShow(Map<String, dynamic>? status) {
+    if (status == null || status.isEmpty) return false;
+    final business = status['business'];
+    if (business is Map && business['isRegistered'] == true) return false;
+    final submission = status['latestSubmission'];
+    if (submission is Map && submission['status'] == 'pending') return true;
+    if (business is Map &&
+        business['registrationCategory']?.toString() == 'non_registered') {
+      return true;
+    }
+    return false;
+  }
+
+  static String _currencySymbol(String? currency) {
+    switch ((currency ?? 'NGN').toUpperCase()) {
+      case 'NGN':
+        return '₦';
+      case 'USD':
+        return r'$';
+      case 'EUR':
+        return '€';
+      case 'GBP':
+        return '£';
+      default:
+        return '$currency ';
+    }
+  }
+
+  /// 50000 -> "50,000" (#,## thousands separators, decimals dropped).
+  static String _formatAmount(dynamic value) {
+    final n = double.tryParse(value?.toString() ?? '') ?? 0;
+    return n
+        .round()
+        .toString()
+        .replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+(?!\d))'), (m) => '${m[1]},');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final submission = status['latestSubmission'];
+
+    // PENDING REVIEW — informational, no CTA (the upgrade screen shows the
+    // same pending card if opened from elsewhere).
+    if (submission is Map && submission['status'] == 'pending') {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: colors.warning.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: colors.warning.withValues(alpha: 0.25)),
+        ),
+        child: Row(
+          children: [
+            TintedCircleIcon(
+              icon: Icons.hourglass_top_rounded,
+              tint: colors.warning,
+              size: 40,
+              iconSize: 20,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                "Business verification under review — we'll notify you once approved",
+                style: TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                  color: colors.text,
+                  height: 1.35,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // NON-REGISTERED LIMITS — current limit + upgrade CTA.
+    final limits = status['limits'] is Map
+        ? Map<String, dynamic>.from(status['limits'] as Map)
+        : null;
+    final innerLimits = limits != null && limits['limits'] is Map
+        ? Map<String, dynamic>.from(limits['limits'] as Map)
+        : null;
+    final registeredLimits =
+        limits != null && limits['registeredLimits'] is Map
+            ? Map<String, dynamic>.from(limits['registeredLimits'] as Map)
+            : null;
+    final symbol = _currencySymbol(limits?['currency']?.toString());
+    final singleLimit = _formatAmount(innerLimits?['singleTransactionLimit']);
+    final registeredSingle =
+        _formatAmount(registeredLimits?['singleTransactionLimit']);
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.warning.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: colors.warning.withValues(alpha: 0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              TintedCircleIcon(
+                icon: Icons.speed_rounded,
+                tint: colors.warning,
+                size: 40,
+                iconSize: 20,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Transaction limit: $symbol$singleLimit per transaction',
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                    color: colors.text,
+                    height: 1.35,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            "You're on Non-Registered Business limits. Upgrade to Registered (Verified) to unlock up to $symbol$registeredSingle.",
+            style: TextStyle(
+              fontSize: 12.5,
+              height: 1.4,
+              color: colors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerRight,
+            child: GestureDetector(
+              onTap: onUpgrade,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: colors.primary,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Upgrade',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(Icons.arrow_forward_rounded,
+                        size: 14, color: Colors.white),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

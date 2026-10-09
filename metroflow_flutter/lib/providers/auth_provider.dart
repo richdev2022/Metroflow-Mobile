@@ -295,6 +295,68 @@ class AuthNotifier extends Notifier<AuthState> {
     }
   }
 
+  /// Multi-workspace switching: swaps the entire session into another
+  /// workspace this same (verified) email belongs to. Mirrors [login]'s
+  /// persistence (token/userId/businessId/userName + socket rebind + idle
+  /// timer) and, because the switch lands on a DIFFERENT user row (different
+  /// userId), applies the same per-account biometric wipe as an account
+  /// switch — biometrics never carry across identities.
+  Future<void> switchWorkspace({
+    required String businessId,
+    required String businessName,
+  }) async {
+    try {
+      final response = await _apiService.switchWorkspace(businessId);
+      final data = response.data;
+
+      final token = data['token'];
+      final userId = data['userId'];
+      final newBusinessId = data['businessId'] ?? businessId;
+      final userName = (data['name'] ?? '').toString();
+
+      if (token == null || (token is String && token.isEmpty)) {
+        throw Exception('Workspace switch failed: no session token returned');
+      }
+
+      // Per-account biometric wipe (same policy as account switch).
+      final newUserId = userId?.toString();
+      final previousUserId = await _resolveEnrolledUserId();
+      if (newUserId != null &&
+          newUserId.isNotEmpty &&
+          previousUserId != null &&
+          previousUserId.isNotEmpty &&
+          previousUserId != newUserId) {
+        await _wipeBiometricsForAccountSwitch(previousUserId);
+      }
+
+      await Future.wait([
+        _storageService.setToken(token),
+        _storageService.setUserId(userId),
+        _storageService.setBusinessId(newBusinessId),
+        if (userName.isNotEmpty) _storageService.setUserName(userName),
+      ]);
+
+      if (userId != null && newBusinessId != null) {
+        _socketService.connect(userId.toString(), newBusinessId.toString(), token: token.toString());
+      }
+
+      state = state.copyWith(
+        token: token.toString(),
+        userId: userId?.toString(),
+        businessId: newBusinessId?.toString(),
+        userName: userName.isNotEmpty ? userName : businessName,
+        isAuthenticated: true,
+        biometricsEnabled: false,
+      );
+      resetIdleTimer();
+    } on DioException catch (e) {
+      final backendMessage = e.response?.data?['message'] ?? e.response?.data?['error'] ?? e.message ?? 'Workspace switch failed';
+      throw Exception(backendMessage);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
   /// Signs in with Google, exchanges the Google ID token for an app session
   /// via POST /auth/google, then persists the session exactly like password
   /// login does (token/userId/businessId/userName + biometrics credentials,

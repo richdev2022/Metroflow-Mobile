@@ -24,18 +24,25 @@ class TaskStatus {
   });
 
   factory TaskStatus.fromJson(Map<String, dynamic> json) {
+    // NULL-HARDENED: the backend's task_statuses table has a nullable color
+    // (and legacy rows can miss is_default/sort_order). One null here used
+    // to throw "type 'Null' is not a subtype..." — fetchData swallowed it
+    // and the ENTIRE board rendered as empty.
     return TaskStatus(
-      id: json['id'],
-      businessId: json['business_id'],
-      name: json['name'],
-      color: json['color'],
-      isDefault: json['is_default'],
-      sortOrder: json['sort_order'],
-      createdAt: DateTime.parse(json['created_at']),
-      updatedAt: DateTime.parse(json['updated_at']),
-      tasks: json['tasks'] != null
+      id: (json['id'] as String?) ?? '',
+      businessId: (json['business_id'] as String?) ?? '',
+      name: (json['name'] as String?) ?? '',
+      color: (json['color'] as String?) ?? '#6B7280',
+      isDefault: json['is_default'] == true,
+      sortOrder: (json['sort_order'] as num?)?.toInt() ?? 0,
+      createdAt: DateTime.tryParse(json['created_at']?.toString() ?? '') ??
+          DateTime.now(),
+      updatedAt: DateTime.tryParse(json['updated_at']?.toString() ?? '') ??
+          DateTime.now(),
+      tasks: json['tasks'] is List
           ? (json['tasks'] as List<dynamic>)
-              .map((e) => Task.fromJson(e as Map<String, dynamic>))
+              .whereType<Map<String, dynamic>>()
+              .map(Task.fromJson)
               .toList()
           : null,
     );

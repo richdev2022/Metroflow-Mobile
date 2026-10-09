@@ -612,9 +612,15 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
     }
     if (transferCurrency == 'USD') {
       final email = beneficiaryEmail.trim();
+      // USD rails: ACH (US local rails — the default) carries NO BIC; only
+      // the SWIFT wire rail requires one. A present-but-malformed code is
+      // still rejected on either rail.
+      final swiftOk = payoutRail.toUpperCase() == 'SWIFT'
+          ? isBic(swiftCode)
+          : (swiftCode.trim().isEmpty || isBic(swiftCode));
       return payoutRail.isNotEmpty &&
           base &&
-          isBic(swiftCode) &&
+          swiftOk &&
           email.isNotEmpty &&
           email.contains('@') &&
           email.contains('.');
@@ -1362,6 +1368,9 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
     final isUsd = transferCurrency == 'USD';
     final isGbp = transferCurrency == 'GBP';
     final isEur = transferCurrency == 'EUR';
+    // USD ACH rail = US local rails — no BIC anywhere in the flow. Anything
+    // that is not explicitly SWIFT (including the empty default) is ACH.
+    final isUsdAchRail = isUsd && payoutRail.toUpperCase() != 'SWIFT';
     return [
       // Rail picker only applies to USD — GBP (sort codes) and EUR (SWIFT/IBAN)
       // always ride the SWIFT rail (auto-set on currency switch).
@@ -1373,7 +1382,12 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
                 colors,
                 label: 'ACH — U.S. bank (local rails)',
                 selected: payoutRail == 'ACH',
-                onTap: () => setState(() => payoutRail = 'ACH'),
+                onTap: () => setState(() {
+                  payoutRail = 'ACH';
+                  // ACH carries no BIC — drop any stale SWIFT value so the
+                  // hidden field can't leak into the payload.
+                  swiftCode = '';
+                }),
               ),
             ),
             const SizedBox(width: 10),
@@ -1433,18 +1447,32 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
         onChanged: (value) => setState(() => bankName = value),
       )),
       const SizedBox(height: 20),
-      // SWIFT/BIC is a REQUIRED meta field on every international corridor
-      // (USD, GBP and EUR alike — Flutterwave intl payout docs).
-      _buildField('SWIFT / BIC Code *', TextField(
-        decoration: InputDecoration(
-          hintText: isEur ? 'e.g. BECFDE7HKKX' : isGbp ? 'e.g. BUKBGB22' : 'e.g. CHASUS33',
-          hintStyle: TextStyle(color: colors.textSecondary),
-        ),
-        style: TextStyle(color: colors.text, fontSize: 16),
-        textCapitalization: TextCapitalization.characters,
-        onChanged: (value) => setState(() => swiftCode = value),
-      )),
-      const SizedBox(height: 20),
+      // SWIFT/BIC: REQUIRED on the SWIFT rail and for GBP/EUR. On the USD
+      // ACH rail (US local rails — the default) no BIC is involved, so the
+      // field disappears entirely.
+      if (!isUsdAchRail) ...[
+        _buildField('SWIFT / BIC Code *', TextField(
+          decoration: InputDecoration(
+            hintText: isEur ? 'e.g. BECFDE7HKKX' : isGbp ? 'e.g. BUKBGB22' : 'e.g. CHASUS33',
+            hintStyle: TextStyle(color: colors.textSecondary),
+          ),
+          style: TextStyle(color: colors.text, fontSize: 16),
+          textCapitalization: TextCapitalization.characters,
+          onChanged: (value) => setState(() => swiftCode = value),
+        )),
+        const SizedBox(height: 20),
+      ] else ...[
+        _buildField('SWIFT / BIC Code (SWIFT rail only)', TextField(
+          decoration: InputDecoration(
+            hintText: 'Only needed for SWIFT wire transfers',
+            hintStyle: TextStyle(color: colors.textSecondary),
+          ),
+          style: TextStyle(color: colors.text, fontSize: 16),
+          textCapitalization: TextCapitalization.characters,
+          onChanged: (value) => setState(() => swiftCode = value),
+        )),
+        const SizedBox(height: 20),
+      ],
       // Corridor routing identifier: USD ABA, GBP sort code (or BIC),
       // EUR BIC — all required meta fields.
       _buildField(isGbp ? 'Sort Code *' : isEur ? 'Routing Number (BIC) *' : 'Routing Number (ABA) *', TextField(

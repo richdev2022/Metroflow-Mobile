@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
@@ -505,6 +506,74 @@ class ApiService {
     return await _dio.get('/auth/me', options: Options(extra: {'suppressToast': true}));
   }
 
+  /// Multi-workspace switching — every VERIFIED, ACTIVE membership that
+  /// shares the caller's email. Returns
+  /// { success, data: { workspaces: [ { userId, businessId, businessName,
+  /// businessLogo, workspaceCode, role, isCurrent } ], canSwitch } }.
+  Future<Response> listWorkspaces() async {
+    return await _dio.get('/auth/workspaces');
+  }
+
+  /// Switch into another workspace this email belongs to. Returns the same
+  /// payload shape as [login] (token/userId/businessId/name/...) so the
+  /// caller can swap the whole session atomically.
+  Future<Response> switchWorkspace(String businessId) async {
+    return await _dio.post('/auth/switch-workspace', data: {'businessId': businessId});
+  }
+
+  // ===================== Chat status (24h stories) =====================
+
+  /// Active statuses for the caller's workspace (+ viewer context).
+  /// Returns the raw `data.statuses` list of maps.
+  Future<List<Map<String, dynamic>>> listStatuses() async {
+    final response = await _dio.get('/statuses');
+    final data = response.data is Map ? response.data['data'] : null;
+    final statuses = data is Map && data['statuses'] is List ? data['statuses'] as List : const [];
+    return statuses.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+  }
+
+  /// Post a status (text card and/or image). [backgroundColor] must be one
+  /// of the palette colours the backend accepts (unknown colours fall back
+  /// server-side). Returns the created row (id/createdAt/expiresAt).
+  Future<Map<String, dynamic>?> createStatus({
+    String? content,
+    String? mediaUrl,
+    String? mediaType,
+    required String backgroundColor,
+  }) async {
+    final response = await _dio.post('/statuses', data: {
+      if (content != null && content.trim().isNotEmpty) 'content': content.trim(),
+      if (mediaUrl != null && mediaUrl.isNotEmpty) 'mediaUrl': mediaUrl,
+      if (mediaType != null && mediaType.isNotEmpty) 'mediaType': mediaType,
+      'backgroundColor': backgroundColor,
+    });
+    final data = response.data is Map ? response.data['data'] : null;
+    return data is Map ? Map<String, dynamic>.from(data) : null;
+  }
+
+  /// Record a view (idempotent server-side). Returns the response whose
+  /// `data.data.viewsCount` is the fresh view total.
+  Future<Response> viewStatus(String statusId) async {
+    return await _dio.post('/statuses/$statusId/view');
+  }
+
+  /// Toggle a like. Returns { liked, likesCount }.
+  Future<Map<String, dynamic>?> likeStatus(String statusId) async {
+    final response = await _dio.post('/statuses/$statusId/like');
+    final data = response.data is Map ? response.data['data'] : null;
+    return data is Map ? Map<String, dynamic>.from(data) : null;
+  }
+
+  /// Repost a status to your own rail (attributed).
+  Future<void> repostStatus(String statusId) async {
+    await _dio.post('/statuses/$statusId/repost');
+  }
+
+  /// Delete your own status.
+  Future<void> deleteStatus(String statusId) async {
+    await _dio.delete('/statuses/$statusId');
+  }
+
   /// Result codes for a server-side session validation (GET /auth/me):
   /// [sessionValid] alive, [sessionExpired] server rejected the token
   /// (caller clears the session and lands on login), [sessionUnknown]
@@ -808,6 +877,81 @@ class ApiService {
     ));
 
     return await _dio.post('/kyc/business', data: formData);
+  }
+
+  // ---- Business KYC upgrade (registration category + transaction limits) ----
+  // Server: POST /auth/register accepts an optional businessType
+  // ('registered' | 'non_registered'); GET /business-kyc/status reports the
+  // current category, pending submission and per-category transaction limits;
+  // POST /business-kyc/submit upgrades non-registered businesses to
+  // registered via a multipart document submission. All shapes are parsed
+  // defensively by callers — the server may null out nested fields.
+
+  /// GET /business-kyc/status (auth) → the unwrapped `data` map:
+  /// `{ business, latestSubmission, submissionHistory, limits, canUpgrade }`.
+  /// Returns {} on unexpected shapes — callers parse defensively (nulls are
+  /// possible). Toasts suppressed — the dashboard polls this best-effort and
+  /// must stay silent on failures.
+  Future<Map<String, dynamic>> getBusinessKycStatus() async {
+    final response = await _dio.get('/business-kyc/status',
+        options: Options(extra: {'suppressToast': true}));
+    final data = response.data;
+    if (data is Map && data['data'] is Map) {
+      return Map<String, dynamic>.from(data['data'] as Map);
+    }
+    return <String, dynamic>{};
+  }
+
+  /// GET /business-kyc/config (no auth) → the unwrapped `data` map:
+  /// `{ registrationTypes: [{ id, label, authority, docPack, description,
+  /// documents: [{ id, label, description, required }] }], limits: {...} }`.
+  Future<Map<String, dynamic>> getBusinessKycConfig() async {
+    final response = await _dio.get('/business-kyc/config',
+        options: Options(extra: {'suppressToast': true}));
+    final data = response.data;
+    if (data is Map && data['data'] is Map) {
+      return Map<String, dynamic>.from(data['data'] as Map);
+    }
+    return <String, dynamic>{};
+  }
+
+  /// POST /business-kyc/submit (auth, multipart/form-data) → the unwrapped
+  /// response body `{ success, message, data: { submissionId, status } }`.
+  ///
+  /// NOTE: named …Upgrade because the legacy address-proof
+  /// [submitBusinessKyc] (POST /kyc/business) already occupies the name —
+  /// Dart has no overloading.
+  ///
+  /// [documents] items are `{path, kind}` maps; `docKinds` is sent as a
+  /// JSON-encoded array aligned BY INDEX with the files posted under the
+  /// `documents` field. FormData passes through the crypto interceptor
+  /// untouched. Toasts suppressed so the caller owns error codes
+  /// (SUBMISSION_PENDING 409, DOCUMENTS_MISSING 400 + data.missing,
+  /// FILE_TOO_LARGE, DESCRIPTION_TOO_SHORT, INVALID_REGISTRATION_TYPE).
+  Future<Map<String, dynamic>> submitBusinessKycUpgrade({
+    required String registrationType,
+    required String businessDescription,
+    required List<Map<String, String>> documents,
+  }) async {
+    final formData = FormData.fromMap(<String, dynamic>{
+      'registrationType': registrationType,
+      'businessDescription': businessDescription,
+      'docKinds': jsonEncode(documents.map((d) => d['kind'] ?? '').toList()),
+    });
+    for (final doc in documents) {
+      final path = doc['path'] ?? '';
+      if (path.isEmpty) continue;
+      final fileName = path.split(Platform.pathSeparator).last;
+      formData.files.add(MapEntry(
+        'documents',
+        await MultipartFile.fromFile(path, filename: fileName),
+      ));
+    }
+    final response = await _dio.post('/business-kyc/submit', data: formData,
+        options: Options(extra: {'suppressToast': true}));
+    final data = response.data;
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return <String, dynamic>{};
   }
 
   // Wallet API
