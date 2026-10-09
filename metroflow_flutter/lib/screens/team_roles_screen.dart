@@ -96,6 +96,7 @@ class _TeamRolesScreenState extends State<TeamRolesScreen> {
   /// TRUE when the ROLES call itself failed (a REAL error, distinct from an
   /// empty list) — renders the error state with a Retry button.
   bool _loadFailed = false;
+  String? _loadError; // the real reason — 403 subscription / 401 session / network
 
   @override
   void initState() {
@@ -118,6 +119,7 @@ class _TeamRolesScreenState extends State<TeamRolesScreen> {
     dynamic rolesRes;
     dynamic permRes;
     dynamic meRes;
+    dynamic rolesErr;
     const perCallTimeout = Duration(seconds: 45);
     await Future.wait<void>([
       () async {
@@ -126,6 +128,7 @@ class _TeamRolesScreenState extends State<TeamRolesScreen> {
               .getRoles()
               .timeout(perCallTimeout);
         } catch (e) {
+          rolesErr = e;
           debugPrint('getRoles failed: $e');
         }
       }(),
@@ -152,13 +155,16 @@ class _TeamRolesScreenState extends State<TeamRolesScreen> {
     if (!mounted) return;
 
     try {
-      await _applyLoadedData(rolesRes, permRes, meRes);
+      await _applyLoadedData(rolesRes, permRes, meRes, rolesErr);
     } catch (e) {
       debugPrint('Roles render-data error: $e');
       if (mounted) {
         setState(() {
           _isLoading = false;
           _loadFailed = rolesRes == null;
+          _loadError = rolesRes == null
+              ? _describeRolesError(rolesErr)
+              : null;
         });
       }
     } finally {
@@ -167,16 +173,32 @@ class _TeamRolesScreenState extends State<TeamRolesScreen> {
     }
   }
 
+  /// Human-readable reason for a failed roles load — a generic "could not
+  /// load" hid the two real-world causes (expired subscription 403 and
+  /// signed-out 401) behind an unactionable retry card.
+  String _describeRolesError(dynamic err) {
+    final status = err?.response?.statusCode;
+    if (status == 403) {
+      return 'Your workspace subscription has expired — renew it in Wallet → Subscription to manage roles.';
+    }
+    if (status == 401) {
+      return 'Your session expired — please sign in again.';
+    }
+    return ApiService.extractErrorMessage(err);
+  }
+
   /// Pure data shaping — extracted so any surprise exception lands in the
   /// guard above instead of killing the load cycle.
   Future<void> _applyLoadedData(
-      dynamic rolesRes, dynamic permRes, dynamic meRes) async {
+      dynamic rolesRes, dynamic permRes, dynamic meRes,
+      [dynamic rolesErr]) async {
 
     // REAL error: the roles list itself failed → error state with retry.
     if (rolesRes == null) {
       setState(() {
         _isLoading = false;
         _loadFailed = true;
+        _loadError = _describeRolesError(rolesErr);
       });
       return;
     }
@@ -414,7 +436,8 @@ class _TeamRolesScreenState extends State<TeamRolesScreen> {
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              'Something went wrong while fetching your workspace roles. Check your connection and try again.',
+                              _loadError ??
+                                  'Something went wrong while fetching your workspace roles. Check your connection and try again.',
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                   color: colors.textSecondary, fontSize: 14),
