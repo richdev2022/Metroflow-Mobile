@@ -774,7 +774,9 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
   Map<String, double> get _salaryIntlTotals {
     final totals = <String, double>{};
     for (final emp in _employees) {
-      final c = (emp.salaryCurrency || 'NGN').toUpperCase();
+      // salaryCurrency is non-nullable and already defaults to 'NGN' in
+      // Employee.fromJson — a direct call is correct (|| is for bools).
+      final c = emp.salaryCurrency.toUpperCase();
       if (c == 'NGN') continue;
       totals[c] = (totals[c] ?? 0) + (emp.netSalary as num).toDouble();
     }
@@ -863,7 +865,7 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
       // salary currency (NGN/USD/GBP/EUR), so the summary groups per currency.
       final totals = <String, double>{};
       for (final emp in _employees) {
-        final c = (emp.salaryCurrency || 'NGN').toUpperCase();
+        final c = emp.salaryCurrency.toUpperCase();
         totals[c] = (totals[c] ?? 0) + (emp.netSalary as num).toDouble();
       }
       return totals;
