@@ -96,16 +96,21 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     final data = message.data;
     final type = _normalizePushType(data['type']);
     if (type == 'incoming_call') {
-      // Delivery receipt: cancels the server's 8s escalation that would
-      // otherwise re-send the call as a visible tray notification (OEMs
-      // silently drop data-only FCM messages, so the server cannot tell
-      // delivery from a drop — this ack is how it knows we got it).
-      unawaited(PushNotificationService.acknowledgeCallPush(data));
-      await PushNotificationService.showCallNotification(
+      // Render FIRST, ack AFTER a confirmed render. The ack cancels the
+      // server's 8s escalation that re-sends the call as a visible tray
+      // notification (OEMs silently drop data-only FCM). Acking before the
+      // render was confirmed let a failed/lost render cancel its own safety
+      // net — the exact "no ring, nothing in the notification panel" bug.
+      final rendered = await PushNotificationService.showCallNotification(
         callerName: (data['caller_name'] ?? data['callerName'] ?? data['callerId'] ?? 'Incoming call').toString(),
         callType: (data['call_type'] ?? data['callType'] ?? 'video').toString(),
         payload: Map<String, dynamic>.from(data),
       );
+      if (rendered) {
+        unawaited(PushNotificationService.acknowledgeCallPush(data));
+      } else {
+        debugPrint('incoming-call render FAILED — leaving the server escalation armed');
+      }
       return;
     }
     if (type == 'missed_call') {
@@ -374,7 +379,10 @@ class PushNotificationService {
   // -------------------------------------------------------------------------
 
   /// Full-screen-style, high-priority "incoming call" notification.
-  static Future<void> showCallNotification({
+  /// Returns true when the notification was actually posted — the caller
+  /// must only ack the server's delivery receipt after a CONFIRMED render,
+  /// otherwise a failed render cancels the server's escalation fallback.
+  static Future<bool> showCallNotification({
     required String callerName,
     required String callType,
     required Map<String, dynamic> payload,
@@ -402,8 +410,10 @@ class PushNotificationService {
         ),
         payload: _encodePayload(payload),
       );
+      return true;
     } catch (e) {
       debugPrint('showCallNotification failed: $e');
+      return false;
     }
   }
 
@@ -583,15 +593,12 @@ class PushNotificationService {
   /// but pushes still arrive (e.g. the process was half-dead, or the backend
   /// chose FCM-only delivery). Show a local notification; call pushes also
   /// ring — unless the in-app incoming-call overlay is already ringing.
-  void _handleForegroundMessage(RemoteMessage message) {
+  Future<void> _handleForegroundMessage(RemoteMessage message) async {
     try {
       final data = message.data;
       final type = _normalizePushType(data['type']);
       switch (type) {
         case 'incoming_call':
-          // Delivery receipt (foreground): cancels the server's visible-tray
-          // escalation for this call.
-          unawaited(acknowledgeCallPush(data));
           // iOS hybrid pushes carry an aps.alert: the SYSTEM already posted
           // a banner — never stack a local notification on top of it.
           final systemShowed = message.notification != null;
@@ -614,6 +621,9 @@ class PushNotificationService {
                 ringingCallId != null &&
                 ringingCallId.isNotEmpty &&
                 pushCallId == ringingCallId) {
+              // The socket ring for THIS call is up — the call is surfaced,
+              // so the delivery receipt is valid now (render first, ack after).
+              unawaited(acknowledgeCallPush(data));
               break;
             }
           }
@@ -621,11 +631,12 @@ class PushNotificationService {
             // The in-app incoming-call overlay is already ringing (socket
             // path): surface the tray banner as well so a swipe-down still
             // shows the call.
-            showCallNotification(
+            final rendered = await showCallNotification(
               callerName: (data['caller_name'] ?? data['callerName'] ?? data['callerId'] ?? 'Incoming call').toString(),
               callType: (data['call_type'] ?? data['callType'] ?? 'video').toString(),
               payload: Map<String, dynamic>.from(data),
             );
+            if (rendered) unawaited(acknowledgeCallPush(data));
           } else {
             // Push-only delivery: present the global overlay + ring INSTEAD
             // of a tray notification. The old order (post the notification,
@@ -633,6 +644,8 @@ class PushNotificationService {
             // the "I hear the ring but nothing shows in the tray" bug.
             _presentIncomingCall(Map<String, dynamic>.from(data));
             AppFeedback.startRingtone();
+            // The overlay IS the render — receipt valid.
+            unawaited(acknowledgeCallPush(data));
           }
           break;
         case 'missed_call':

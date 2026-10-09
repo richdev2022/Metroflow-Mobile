@@ -39,6 +39,9 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
   ];
 
   String _currency = 'NGN';
+  /// USD payout rail: 'ACH' (US local rails, default — no BIC) or 'SWIFT'
+  /// (international wire). Doubles as the bankCode sent to the backend.
+  String _formRail = 'ACH';
   List<Map<String, dynamic>> _items = [];
   bool _loading = true;
   List<Map<String, String>> _banks = [];
@@ -288,6 +291,8 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
           : currency == 'EUR'
               ? 'DE'
               : 'US';
+      // USD defaults to ACH (US local rails); GBP/EUR are always SWIFT.
+      _formRail = 'ACH';
     });
     _fetchBeneficiaries();
   }
@@ -296,7 +301,10 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
     return {
       'currency': _currency,
       if (_isIntl)
-        'bankCode': 'SWIFT'
+        // USD: bankCode carries the payout rail (ACH | SWIFT) so the backend
+        // validator knows whether a BIC is required. GBP/EUR are SWIFT-rail
+        // by contract; the backend ignores bankCode for them.
+        'bankCode': _currency == 'USD' ? _formRail : 'SWIFT'
       else if (_formBankCode.isNotEmpty)
         'bankCode': _formBankCode,
       'accountNumber': _accountNumberController.text.trim(),
@@ -555,6 +563,14 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
       _emailController.text = (existing['email'] ?? '').toString();
       _formBankCode = (existing['bankCode'] ?? '').toString();
       _formAccountType = (existing['accountType'] ?? '').toString();
+      // Restore the saved USD payout rail: an explicit SWIFT bank_code or a
+      // stored BIC means the SWIFT wire rail; anything else is ACH.
+      if (_currency == 'USD') {
+        _formRail = (_formBankCode.toUpperCase() == 'SWIFT' ||
+                _swiftController.text.trim().isNotEmpty)
+            ? 'SWIFT'
+            : 'ACH';
+      }
     } else {
       _accountNumberController.clear();
       _accountNameController.clear();
@@ -749,6 +765,42 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
                   if (_isIntl) ...[
                     field('Bank Name *', _bankNameController,
                         hint: 'e.g. Bank of America'),
+                    // USD payout rail: ACH (US local rails — the default, no
+                    // BIC) or SWIFT (international wire). Doubles as bankCode.
+                    if (_currency == 'USD')
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Payout rail',
+                                style: TextStyle(
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: colors.text)),
+                            const SizedBox(height: 6),
+                            Wrap(
+                              spacing: 8,
+                              children: [
+                                ChoiceChip(
+                                  label: const Text('ACH — U.S. bank (local rails)'),
+                                  selected: _formRail != 'SWIFT',
+                                  onSelected: (_) => setSheetState(() {
+                                    _formRail = 'ACH';
+                                    _swiftController.clear();
+                                  }),
+                                ),
+                                ChoiceChip(
+                                  label: const Text('SWIFT — International wire'),
+                                  selected: _formRail == 'SWIFT',
+                                  onSelected: (_) =>
+                                      setSheetState(() => _formRail = 'SWIFT'),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
                     // SWIFT/BIC is a REQUIRED meta field on every intl
                     // corridor (USD, GBP and EUR — Flutterwave intl docs);
                     // the routing identifier is per-corridor.
@@ -758,7 +810,9 @@ class _BeneficiariesScreenState extends ConsumerState<BeneficiariesScreen> {
                           keyboard: TextInputType.number,
                           maxLength: 12,
                           hint: '9 digits, e.g. 021000021'),
-                    if (_currency == 'USD')
+                    // USD ACH carries NO BIC — the field only exists on the
+                    // SWIFT rail (best practice: stop showing swift on ACH).
+                    if (_currency == 'USD' && _formRail == 'SWIFT')
                       field('SWIFT / BIC Code *',
                           _swiftController,
                           maxLength: 11,

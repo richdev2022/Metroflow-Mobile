@@ -655,6 +655,11 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
           'currency': recipient.currency.toUpperCase(),
           'remark': recipient.remark,
           if (recipient.isIntl) ...{
+            // USD payout rail so the backend validator knows whether a BIC is
+            // required (swift present -> SWIFT wire, else ACH local rails).
+            'bankCode': recipient.currency.toUpperCase() == 'USD'
+                ? (recipient.swiftCode.trim().isNotEmpty ? 'SWIFT' : 'ACH')
+                : 'SWIFT',
             'bankName': recipient.bankName.trim(),
             'swiftCode': recipient.swiftCode.trim(),
             'routingNumber': recipient.routingNumber.trim(),
@@ -714,6 +719,10 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
               'currency': r.currency.toUpperCase(),
               'remark': r.remark,
               if (r.isIntl) ...{
+                // USD payout rail (ACH default — no BIC on local rails).
+                'bankCode': r.currency.toUpperCase() == 'USD'
+                    ? (r.swiftCode.trim().isNotEmpty ? 'SWIFT' : 'ACH')
+                    : 'SWIFT',
                 'recipientBankName': r.bankName.trim(),
                 'recipientSwiftCode': r.swiftCode.trim(),
                 'recipientRoutingNumber': r.routingNumber.trim(),
