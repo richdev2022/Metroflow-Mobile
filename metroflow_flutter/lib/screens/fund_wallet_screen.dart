@@ -11,6 +11,7 @@ import '../models/wallet.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_toast.dart';
 import '../utils/payment_launcher.dart';
+import '../widgets/modern_ui.dart';
 
 class FundWalletScreen extends ConsumerStatefulWidget {
   final String walletType;
@@ -33,10 +34,16 @@ class _FundWalletScreenState extends ConsumerState<FundWalletScreen> {
   Wallet? _businessWallet;
   late String _walletType = widget.walletType == 'business' ? 'business' : 'user';
 
+  // GET /wallet/limits `data` map — inflow AND outflow limits shown on the
+  // amount card and in the bank-transfer sheet. Best-effort: a failure just
+  // hides the limits card.
+  Map<String, dynamic>? _limitInfo;
+
   @override
   void initState() {
     super.initState();
     _fetchWalletInfo();
+    _fetchWalletLimits();
   }
 
   @override
@@ -74,6 +81,18 @@ class _FundWalletScreenState extends ConsumerState<FundWalletScreen> {
     }
   }
 
+  /// Best-effort limits loader — silently swallowed on failure (the card
+  /// simply doesn't render; the backend still enforces the real limits).
+  Future<void> _fetchWalletLimits() async {
+    try {
+      final info = await ApiService().getWalletLimits();
+      if (!mounted) return;
+      setState(() => _limitInfo = info);
+    } catch (e) {
+      debugPrint('Failed to fetch wallet limits: $e');
+    }
+  }
+
   void _switchWallet(String type) {
     final wallet = type == 'business' ? _businessWallet : _userWallet;
     if (wallet == null) return;
@@ -106,11 +125,15 @@ class _FundWalletScreenState extends ConsumerState<FundWalletScreen> {
       // The backend resolves the active payment provider itself — no
       // `provider` field is sent. redirect_url points at the web app's
       // payment callback (web parity); mobile verifies via the reference API.
+      // suppressToast: true — this screen owns the error UI (a 403
+      // *LIMIT_EXCEEDED opens a dedicated "Transaction limit reached" sheet
+      // instead of the interceptor's generic toast).
       final api = ApiService();
       final response = await api.fundWallet(
         double.parse(amountText),
         _selectedWallet!.id,
         redirectUrl: '$webAppOrigin/payment/callback',
+        suppressToast: true,
       );
       if (response.statusCode == 200) {
         final data = response.data;
@@ -138,10 +161,102 @@ class _FundWalletScreenState extends ConsumerState<FundWalletScreen> {
         }
       }
     } catch (e) {
-      debugPrint('Fund wallet error: $e');
+      if (_isLimitExceededError(e)) {
+        final data = (e as DioException).response?.data;
+        final serverMessage = data is Map ? data['error']?.toString() : null;
+        if (mounted) {
+          await _showLimitReachedModal(
+            (serverMessage != null && serverMessage.trim().isNotEmpty)
+                ? serverMessage
+                : ApiService.extractErrorMessage(e),
+          );
+        }
+      } else {
+        debugPrint('Fund wallet error: $e');
+        AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  /// Limit-exceeded UX for card funding: the backend rejects over-limit
+  /// requests with 403 + a code ending in LIMIT_EXCEEDED — since the global
+  /// interceptor toast is suppressed for this call, this sheet IS the error
+  /// surface: server message + upgrade CTA + dismiss.
+  Future<void> _showLimitReachedModal(String message) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => Container(
+        decoration: BoxDecoration(
+          color: AppTheme.colors.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+        ),
+        padding: const EdgeInsets.all(24),
+        // Scrollable so a long server message can never overflow the sheet.
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  const TintedCircleIcon(
+                    icon: Icons.speed_rounded,
+                    tint: AppColors.warning,
+                    size: 44,
+                    iconSize: 22,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Transaction limit reached',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.colors.text,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                message,
+                style: TextStyle(
+                  fontSize: 13.5,
+                  height: 1.45,
+                  color: AppTheme.colors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.of(sheetContext).pop();
+                  context.push('/business-kyc-upgrade');
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+                child: const Text('Upgrade your business',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+              ),
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: () => Navigator.of(sheetContext).pop(),
+                child: Text('Got it',
+                    style: TextStyle(color: AppTheme.colors.textSecondary)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    // Best-effort refresh — the user may have just completed the upgrade.
+    if (mounted) _fetchWalletLimits();
   }
 
   void _showWebPaymentPrompt(String url, String? reference) {
@@ -208,7 +323,15 @@ class _FundWalletScreenState extends ConsumerState<FundWalletScreen> {
       backgroundColor: Colors.transparent,
       builder: (ctx) => _BankInfoModal(
         wallet: _selectedWallet,
+        limitInfo: _limitInfo,
+        currencySymbol: (_selectedWallet?.currency ?? 'NGN').toUpperCase() == 'USD'
+            ? '\u0024'
+            : '\u20A6',
         onClose: () => Navigator.pop(ctx),
+        onUpgrade: () {
+          Navigator.pop(ctx);
+          context.push('/business-kyc-upgrade');
+        },
       ),
     );
   }
@@ -249,7 +372,18 @@ class _FundWalletScreenState extends ConsumerState<FundWalletScreen> {
                 isActive: _method == 'bank',
                 onTap: () => setState(() => _method = 'bank'),
               ),
-              const SizedBox(height: 40),
+              const SizedBox(height: 16),
+              // Inflow + outflow limits — always shown when the /wallet/limits
+              // payload is available (hidden gracefully otherwise).
+              _TransactionLimitsCard(
+                info: _limitInfo,
+                symbol: currencySymbol,
+                onUpgrade: () async {
+                  await context.push('/business-kyc-upgrade');
+                  if (mounted) _fetchWalletLimits();
+                },
+              ),
+              const SizedBox(height: 24),
               const Text('Amount to Fund', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
               const SizedBox(height: 12),
               Container(
@@ -539,6 +673,20 @@ bool _isAlreadyVerifiedError(Object error) {
       normalized.contains('success');
 }
 
+/// True when the backend rejected the request as a transaction-limit breach:
+/// HTTP 403 with a `code` ending in LIMIT_EXCEEDED (SINGLE_ / DAILY_ /
+/// MONTHLY_). The code may sit at the envelope root or under `data` — both
+/// are checked (same defensive style as the maintenance gate).
+bool _isLimitExceededError(Object error) {
+  if (error is! DioException) return false;
+  if (error.response?.statusCode != 403) return false;
+  final data = error.response?.data;
+  if (data is! Map) return false;
+  final inner = data['data'] is Map ? data['data'] as Map : null;
+  final code = '${data['code'] ?? inner?['code'] ?? ''}'.toUpperCase();
+  return code.endsWith('LIMIT_EXCEEDED');
+}
+
 String _getBankName(VirtualAccount? account) {
   if (account == null) return '';
   final provider = account.paymentProvider;
@@ -574,9 +722,18 @@ String _getBankName(VirtualAccount? account) {
 
 class _BankInfoModal extends StatelessWidget {
   final Wallet? wallet;
+  final Map<String, dynamic>? limitInfo;
+  final String currencySymbol;
   final VoidCallback onClose;
+  final VoidCallback onUpgrade;
 
-  const _BankInfoModal({required this.wallet, required this.onClose});
+  const _BankInfoModal({
+    required this.wallet,
+    required this.limitInfo,
+    required this.currencySymbol,
+    required this.onClose,
+    required this.onUpgrade,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -596,58 +753,68 @@ class _BankInfoModal extends StatelessWidget {
         borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
       ),
       padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text('Bank Transfer Details', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-              IconButton(onPressed: onClose, icon: const Icon(Icons.close)),
-            ],
-          ),
-          const SizedBox(height: 24),
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              color: AppTheme.colors.surface,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: AppTheme.colors.border),
-            ),
-            child: Column(
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
-                  'Transfer money to the account below',
-                  style: TextStyle(fontSize: 15, color: Colors.grey),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 24),
-                _buildDetailItem('BANK NAME', _getBankName(activeAccount)),
-                const SizedBox(height: 20),
-                _buildDetailItem(
-                  'ACCOUNT NUMBER',
-                  activeAccount?.virtualAccountNumber ?? 'N/A',
-                  isBig: true,
-                ),
-                const SizedBox(height: 20),
-                _buildDetailItem('ACCOUNT NAME', activeAccount?.accountName ?? 'Metricorex Wallet'),
+                const Text('Bank Transfer Details', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                IconButton(onPressed: onClose, icon: const Icon(Icons.close)),
               ],
             ),
-          ),
-          const SizedBox(height: 24),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: onClose,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              ),
-              child: const Text("I've made the transfer", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 16),
+            // Limits stay visible in the transfer flow too — funding a
+            // virtual account is subject to the same caps.
+            _TransactionLimitsCard(
+              info: limitInfo,
+              symbol: currencySymbol,
+              onUpgrade: onUpgrade,
             ),
-          ),
-        ],
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: AppTheme.colors.surface,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: AppTheme.colors.border),
+              ),
+              child: Column(
+                children: [
+                  const Text(
+                    'Transfer money to the account below',
+                    style: TextStyle(fontSize: 15, color: Colors.grey),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 24),
+                  _buildDetailItem('BANK NAME', _getBankName(activeAccount)),
+                  const SizedBox(height: 20),
+                  _buildDetailItem(
+                    'ACCOUNT NUMBER',
+                    activeAccount?.virtualAccountNumber ?? 'N/A',
+                    isBig: true,
+                  ),
+                  const SizedBox(height: 20),
+                  _buildDetailItem('ACCOUNT NAME', activeAccount?.accountName ?? 'Metricorex Wallet'),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: onClose,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+                child: const Text("I've made the transfer", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -677,6 +844,199 @@ class _BankInfoModal extends StatelessWidget {
               )
             : Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
       ],
+    );
+  }
+}
+
+/// "Transaction limits" info card for the funding flow — shows the account's
+/// inflow limits (per-transaction / daily / monthly, from GET /wallet/limits)
+/// plus the matching outflow line. Renders NOTHING when the payload is
+/// missing or malformed — every field is parsed defensively (nulls happen,
+/// older backends don't have the endpoint). Non-registered accounts get an
+/// "Upgrade" pill pointing at /business-kyc-upgrade.
+class _TransactionLimitsCard extends StatelessWidget {
+  final Map<String, dynamic>? info;
+  final String symbol;
+  final VoidCallback? onUpgrade;
+
+  const _TransactionLimitsCard({
+    required this.info,
+    required this.symbol,
+    this.onUpgrade,
+  });
+
+  /// 50000 -> "50,000" (#,## thousands separators, decimals dropped) — same
+  /// formatting as the dashboard's limit banner.
+  static String _formatAmount(dynamic value) {
+    final n = double.tryParse(value?.toString() ?? '') ?? 0;
+    return n
+        .round()
+        .toString()
+        .replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+(?!\d))'), (m) => '${m[1]},');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppTheme.colors;
+    final payload = info;
+    if (payload == null || payload.isEmpty) return const SizedBox.shrink();
+    final limits = payload['limits'] is Map
+        ? Map<String, dynamic>.from(payload['limits'] as Map)
+        : null;
+    if (limits == null) return const SizedBox.shrink();
+    final inflow = payload['inflow'] is Map
+        ? Map<String, dynamic>.from(payload['inflow'] as Map)
+        : null;
+    final registeredLimits = payload['registeredLimits'] is Map
+        ? Map<String, dynamic>.from(payload['registeredLimits'] as Map)
+        : null;
+    final isRegistered = payload['isRegistered'] == true;
+    final single = _formatAmount(limits['singleTransactionLimit']);
+    final daily = _formatAmount(limits['dailyLimit']);
+    final monthly = _formatAmount(limits['monthlyLimit']);
+    final remainingToday =
+        inflow == null ? null : _formatAmount(inflow['remainingToday']);
+    final registeredSingle = registeredLimits == null
+        ? null
+        : _formatAmount(registeredLimits['singleTransactionLimit']);
+    final canUpgrade = !isRegistered && onUpgrade != null;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.18)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const TintedCircleIcon(
+                icon: Icons.speed_rounded,
+                tint: AppColors.primary,
+                size: 36,
+                iconSize: 18,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Transaction limits',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: colors.text,
+                  ),
+                ),
+              ),
+              if (canUpgrade)
+                GestureDetector(
+                  onTap: onUpgrade,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: const Text(
+                      'Upgrade',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _limitRow('Funding limit per transaction', '$symbol$single'),
+          _limitRow(
+            'Daily funding limit',
+            '$symbol$daily',
+            note: remainingToday == null
+                ? null
+                : '($symbol$remainingToday remaining today)',
+          ),
+          _limitRow('Monthly funding limit', '$symbol$monthly'),
+          _limitRow('Transfer limit per transaction', '$symbol$single'),
+          Text(
+            'Transfers have the same limits (inflow = outflow).',
+            style: TextStyle(
+              fontSize: 11.5,
+              height: 1.35,
+              color: colors.textSecondary,
+            ),
+          ),
+          if (canUpgrade && registeredSingle != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Upgrade to a Registered Business to unlock up to $symbol$registeredSingle per transaction.',
+              style: TextStyle(
+                fontSize: 11.5,
+                height: 1.35,
+                color: colors.textSecondary,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _limitRow(String label, String value, {String? note}) {
+    final colors = AppTheme.colors;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                flex: 4,
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    color: colors.textSecondary,
+                  ),
+                ),
+              ),
+              Expanded(
+                flex: 6,
+                child: Text(
+                  value,
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: colors.text,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (note != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: Text(
+                  note,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: colors.textSecondary,
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
