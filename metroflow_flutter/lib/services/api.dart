@@ -2034,6 +2034,39 @@ class ApiService {
     return await _dio.get('/ai/usage', options: Options(extra: {'suppressToast': true}));
   }
 
+  // -------------------------------------------------------------------------
+  // MetricAi chat intelligence (web Chat.tsx parity) — smart replies,
+  // per-message translation and conversation summary. All three are
+  // plan-gated server-side and answer 503 `ai_not_configured` when GLM is
+  // off; the UI probes /ai/status and hides the entry points instead.
+  // -------------------------------------------------------------------------
+
+  /// Smart replies for a conversation — POST /chat/ai/smart-replies
+  /// `{ conversationId }` -> `{ suggestions: string[] }` (up to 3, may be
+  /// empty when there is nothing to reply to).
+  Future<Response> getChatSmartReplies(String conversationId) async {
+    return await _dio.post('/chat/ai/smart-replies', data: {
+      'conversationId': conversationId,
+    }, options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// Translate a message body — POST /chat/ai/translate
+  /// `{ text, targetLanguage }` -> `{ translation, language }`.
+  Future<Response> aiTranslateText(String text, {String targetLanguage = 'en'}) async {
+    return await _dio.post('/chat/ai/translate', data: {
+      'text': text,
+      'targetLanguage': targetLanguage,
+    }, options: Options(extra: {'suppressToast': true}));
+  }
+
+  /// Summarize a whole conversation —
+  /// POST /chat/conversations/:id/ai/summarize -> `{ summary }`.
+  /// 409 `Nothing to summarize yet` when the chat has no messages.
+  Future<Response> summarizeConversation(String conversationId) async {
+    return await _dio.post('/chat/conversations/$conversationId/ai/summarize',
+        options: Options(extra: {'suppressToast': true}));
+  }
+
   /// Upload a MetricAi attachment (image/video/pdf/text, 100MB) via
   /// POST /ai/attachments as multipart form-data (field `file`). Returns
   /// `{ url, filename, mimeType, attachmentType }` — pass url back as
