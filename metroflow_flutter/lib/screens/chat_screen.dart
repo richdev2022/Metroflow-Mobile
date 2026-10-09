@@ -1300,7 +1300,7 @@ class _CreateConversationDialogState extends State<_CreateConversationDialog> {
                                           horizontal: 8)),
                                 ),
                               ]);
-                              }),
+                              })
                             : Row(children: [
                                 Expanded(
                                   child: Text(
@@ -1329,7 +1329,7 @@ class _CreateConversationDialogState extends State<_CreateConversationDialog> {
                                         padding: const EdgeInsets.symmetric(
                                             horizontal: 8)),
                                   ),
-                              ]),
+                              ])
               ),
             ),
             ],
