@@ -30,6 +30,11 @@ import '../widgets/avatar_with_initials.dart';
 import '../widgets/styled_text.dart';
 import '../widgets/user_profile_sheet.dart';
 
+/// MetricAi accent (violet) shared by the in-chat intelligence UI — mirrors
+/// the web Chat.tsx AI styling (violet-600 chips, sparkle icons).
+const Color kMetricAiViolet = Color(0xFF7C3AED);
+const Color kMetricAiVioletSoft = Color(0xFF8B5CF6);
+
 class ChatDetailScreen extends ConsumerStatefulWidget {
   final Conversation conversation;
   const ChatDetailScreen({super.key, required this.conversation});
@@ -49,10 +54,6 @@ class ChatDetailScreen extends ConsumerStatefulWidget {
   /// ChatScreen consumes it once, POSTs /chat/join/<code> and opens the
   /// returned conversation directly.
   static String? pendingChatJoinCode;
-
-  /// Trailing '@token' before the caret that opens the mention overlay
-  /// (group conversations only).
-  static final RegExp _mentionPattern = RegExp(r'(?:^|\s)@([A-Za-z0-9_]*)$');
 
   @override
   ConsumerState<ChatDetailScreen> createState() => _ChatDetailScreenState();
@@ -126,7 +127,24 @@ class _ChatDetailScreenState
   bool _mentionLoaded = false;
   String? _mentionToken;
   int _mentionHighlight = 0;
+  // Trailing "@token" right before the caret (group conversations). Group 1
+  // is the partial name; group 0 includes the leading whitespace (or string
+  // start) so emails like name@company.com never trigger the overlay. Kept
+  // identical to the web composer regex in Chat.tsx (detectMentionToken).
+  final RegExp _mentionPattern = RegExp(r'(?:^|\s)@([^\s@]{0,30})$');
   final FocusNode _composerFocus = FocusNode();
+  // MetricAi chat intelligence (web Chat.tsx parity). [_aiAvailable] gates
+  // every entry point — probed once from GET /ai/status; when the caller's
+  // plan lacks MetricAi all three features stay hidden (soft gating, the UI
+  // simply never shows them).
+  bool _aiAvailable = false;
+  List<String> _smartReplies = const <String>[];
+  bool _smartRepliesLoading = false;
+  /// The incoming message the current chips were built for — guards against
+  /// duplicate /chat/ai/smart-replies calls on every socket echo.
+  String? _smartRepliesForMessageId;
+  final Map<String, String> _translations = <String, String>{};
+  String? _translatingId;
 
   @override
   void initState() {
@@ -143,6 +161,9 @@ class _ChatDetailScreenState
     _loadCurrentUser();
     _loadMessages();
     _checkGifsConfigured();
+    // MetricAi chat intelligence — probe availability, then (when enabled)
+    // fetch smart replies for the latest incoming message (web parity).
+    _probeMetricAiStatus();
     _socket.joinConversation(widget.conversation.id);
     // Reconnect hook (registered AFTER the join): fired once the socket
     // (re)connects and the service re-joined every remembered room — the
@@ -276,6 +297,10 @@ class _ChatDetailScreenState
     } else {
       _messages[index] = message;
     }
+    // A brand-new incoming message changes the smart-reply context (web
+    // parity: chips recompute for the newest incoming). Cheap-guarded inside
+    // _refreshSmartReplies by [_smartRepliesForMessageId].
+    unawaited(_refreshSmartReplies());
   }
 
   /// Opens the profile sheet for the chat partner (direct) or the member
@@ -537,6 +562,9 @@ class _ChatDetailScreenState
           _refreshPeerLastRead();
         });
         Future.delayed(const Duration(milliseconds: 100), _scrollToBottom);
+        // First fill of the list — compute the smart replies for whatever is
+        // already the newest incoming message.
+        unawaited(_refreshSmartReplies());
       }
     } catch (e) {
       Logger.error('Error loading messages: $e');
@@ -551,6 +579,369 @@ class _ChatDetailScreenState
         setState(() => _isLoading = false);
       }
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // MetricAi chat intelligence (web Chat.tsx parity) — availability probe,
+  // smart replies above the composer, per-message translation and a
+  // conversation summary sheet. Everything is soft-gated: when /ai/status
+  // reports unavailable (plan without MetricAi, GLM unconfigured) the entry
+  // points simply never render.
+  // -------------------------------------------------------------------------
+
+  Future<void> _probeMetricAiStatus() async {
+    try {
+      final response = await _api.getAiStatus();
+      final data = response.data is Map ? response.data['data'] : null;
+      if (!mounted) return;
+      setState(() => _aiAvailable = data is Map && data['available'] == true);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _aiAvailable = false);
+    }
+    if (_aiAvailable) await _refreshSmartReplies();
+  }
+
+  /// The newest visible message id when it was NOT sent by the current user
+  /// (mirrors web's lastIncomingMessageId). Own messages, pending uploads,
+  /// tombstones and call-log rows never count as incoming.
+  String? get _lastIncomingMessageId {
+    for (final message in _messages.reversed) {
+      if (message.isPendingUpload || message.isTombstone) continue;
+      final kind = (message.messageType ?? '').trim().toLowerCase();
+      if (kind == 'call-log') continue;
+      if (_currentUserId != null && message.senderId == _currentUserId) {
+        return null;
+      }
+      return message.id;
+    }
+    return null;
+  }
+
+  /// (Re)fetches MetricAi smart replies for the latest incoming message.
+  /// No-ops when MetricAi is unavailable or nothing new arrived.
+  Future<void> _refreshSmartReplies() async {
+    if (!_aiAvailable) return;
+    final lastId = _lastIncomingMessageId;
+    if (lastId == null) {
+      if (mounted &&
+          (_smartReplies.isNotEmpty ||
+              _smartRepliesLoading ||
+              _smartRepliesForMessageId != null)) {
+        setState(() {
+          _smartReplies = const <String>[];
+          _smartRepliesLoading = false;
+          _smartRepliesForMessageId = null;
+        });
+      }
+      return;
+    }
+    if (_smartRepliesForMessageId == lastId) {
+      // Already fetched (or fetching) for this exact incoming message —
+      // socket echoes must not re-trigger the AI call, even when the
+      // previous result came back empty.
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _smartRepliesLoading = true;
+      _smartRepliesForMessageId = lastId;
+    });
+    try {
+      final response = await _api.getChatSmartReplies(widget.conversation.id);
+      final data = response.data is Map ? response.data['data'] : null;
+      final raw = data is Map && data['suggestions'] is List
+          ? data['suggestions'] as List
+          : const <dynamic>[];
+      final list = raw
+          .map((entry) => entry.toString().trim())
+          .where((entry) => entry.isNotEmpty)
+          .take(3)
+          .toList();
+      if (!mounted) return;
+      setState(() {
+        _smartReplies = list;
+        _smartRepliesLoading = false;
+      });
+    } catch (_) {
+      // Soft feature — silently drop the chips on any failure.
+      if (!mounted) return;
+      setState(() => _smartRepliesLoading = false);
+    }
+  }
+
+  /// Sends a tapped suggestion chip as a normal message.
+  Future<void> _sendSmartReply(String suggestion) async {
+    final text = suggestion.trim();
+    if (text.isEmpty) return;
+    if (!mounted) return;
+    setState(() {
+      _smartReplies = const <String>[];
+      _smartRepliesForMessageId = null;
+    });
+    await _sendMessage(overrides: {'content': text});
+  }
+
+  /// MetricAi translation for one message (target = device language, web
+  /// uses navigator.language). Result renders under the bubble body.
+  Future<void> _translateMessage(Message message) async {
+    final text = message.content.trim();
+    if (text.isEmpty) {
+      AppToast.show('Only text messages can be translated',
+          type: AppToastType.info);
+      return;
+    }
+    if (_translatingId != null) return;
+    final target = Platform.localeName
+        .split('_')
+        .first
+        .split('.')
+        .first
+        .toLowerCase();
+    setState(() => _translatingId = message.id);
+    try {
+      final response = await _api.aiTranslateText(text, targetLanguage: target);
+      final data = response.data is Map ? response.data['data'] : null;
+      final translation =
+          data is Map && data['translation'] != null
+              ? data['translation'].toString().trim()
+              : '';
+      if (!mounted) return;
+      if (translation.isEmpty) {
+        AppToast.show('MetricAi could not translate this message',
+            type: AppToastType.error);
+      } else {
+        setState(() => _translations[message.id] = translation);
+      }
+    } catch (e) {
+      Logger.error('MetricAi translate failed: $e');
+      if (mounted) {
+        AppToast.show(ApiService.extractErrorMessage(e),
+            type: AppToastType.error);
+      }
+    } finally {
+      if (mounted) setState(() => _translatingId = null);
+    }
+  }
+
+  /// Conversation summary sheet (web parity: "Summarize with MetricAi" in
+  /// the header). The request runs inside a FutureBuilder so the sheet shows
+  /// a reading state, then the summary; 409 "Nothing to summarize yet"
+  /// surfaces as plain guidance instead of an error.
+  void _showSummarizeSheet() {
+    final colors = AppTheme.colors;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: colors.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.auto_awesome,
+                      size: 16, color: kMetricAiViolet),
+                  const SizedBox(width: 6),
+                  Text(
+                    'MetricAi summary',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                      color: colors.text,
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    tooltip: 'Close',
+                    visualDensity: VisualDensity.compact,
+                    icon: Icon(Icons.close_rounded,
+                        size: 18, color: colors.textSecondary),
+                    onPressed: () => Navigator.of(sheetContext).pop(),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 2),
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(sheetContext).size.height * 0.55,
+                ),
+                child: FutureBuilder<dynamic>(
+                  future: _api.summarizeConversation(widget.conversation.id),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState != ConnectionState.done) {
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 26),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: kMetricAiViolet,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              'MetricAi is reading the chat…',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: colors.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+                    if (snapshot.hasError) {
+                      // 409 "Nothing to summarize yet" and other soft cases
+                      // read as guidance, hard failures surface their reason.
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        child: Text(
+                          ApiService.extractErrorMessage(snapshot.error!),
+                          style: TextStyle(
+                            fontSize: 13.5,
+                            color: colors.textSecondary,
+                          ),
+                        ),
+                      );
+                    }
+                    final res = snapshot.data;
+                    final body =
+                        res?.data is Map ? (res!.data as Map)['data'] : null;
+                    final summary = body is Map && body['summary'] != null
+                        ? body['summary'].toString().trim()
+                        : '';
+                    if (summary.isEmpty) {
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        child: Text(
+                          'No summary available.',
+                          style: TextStyle(
+                            fontSize: 13.5,
+                            color: colors.textSecondary,
+                          ),
+                        ),
+                      );
+                    }
+                    return SingleChildScrollView(
+                      child: SelectableText(
+                        summary,
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          height: 1.5,
+                          color: colors.text,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Smart-reply chips row (web Chat.tsx parity): "MetricAi is thinking…"
+  /// while loading, then up to 3 violet pills. Tapping one sends it as a
+  /// normal message. Returns shrink whenever any gate hides it.
+  Widget _buildSmartRepliesRow(ThemeColors colors) {
+    final show = _aiAvailable &&
+        !_selectionMode &&
+        _editingMessage == null &&
+        !_isRecordingVoice &&
+        (_smartRepliesLoading || _smartReplies.isNotEmpty);
+    if (!show) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 2, 14, 4),
+      child: SizedBox(
+        height: 34,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: EdgeInsets.zero,
+          itemCount:
+              _smartRepliesLoading ? 1 : _smartReplies.length + 1,
+          separatorBuilder: (_, __) => const SizedBox(width: 8),
+          itemBuilder: (context, index) {
+            if (_smartRepliesLoading) {
+              return Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                decoration: BoxDecoration(
+                  color: kMetricAiVioletSoft.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                      color: kMetricAiVioletSoft.withValues(alpha: 0.35)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 10,
+                      height: 10,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.6,
+                        color: kMetricAiVioletSoft,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'MetricAi is thinking…',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                        color: kMetricAiViolet,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
+            if (index == 0) {
+              return Icon(Icons.auto_awesome,
+                  size: 14, color: kMetricAiVioletSoft);
+            }
+            final suggestion = _smartReplies[index - 1];
+            return GestureDetector(
+              onTap: () => unawaited(_sendSmartReply(suggestion)),
+              child: Container(
+                constraints: const BoxConstraints(maxWidth: 240),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                decoration: BoxDecoration(
+                  color: kMetricAiVioletSoft.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                      color: kMetricAiVioletSoft.withValues(alpha: 0.4)),
+                ),
+                child: Text(
+                  suggestion,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: kMetricAiViolet,
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -1227,6 +1618,22 @@ class _ChatDetailScreenState
                 Clipboard.setData(ClipboardData(text: message.content));
               },
             ),
+            // MetricAi translate (web Chat.tsx parity): any message carrying
+            // text — captions included — translated to the device language;
+            // the result renders under the bubble body.
+            if (message.content.trim().isNotEmpty && _aiAvailable)
+              _MessageActionTile(
+                icon: Icons.translate_rounded,
+                color: kMetricAiViolet,
+                title: _translatingId == message.id
+                    ? 'Translating…'
+                    : 'Translate',
+                colors: colors,
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  unawaited(_translateMessage(message));
+                },
+              ),
             // Share an attachment out of the app (system share sheet). The
             // helper downloads via the same authenticated path the document
             // tile uses, then hands the local file to SharePlus.
@@ -1961,6 +2368,14 @@ class _ChatDetailScreenState
           tooltip: 'Video call',
           onTap: () => _startCall('video'),
         ),
+        // MetricAi conversation summary (web parity: header dropdown item).
+        if (_aiAvailable)
+          _RoundIconAction(
+            icon: Icons.auto_awesome_outlined,
+            color: kMetricAiViolet,
+            tooltip: 'Summarize with MetricAi',
+            onTap: _showSummarizeSheet,
+          ),
         const SizedBox(width: 6),
       ],
     );
@@ -2129,6 +2544,7 @@ class _ChatDetailScreenState
                             colors: colors,
                             participantNames: nameMap,
                             peerReadAt: _peerLastReadAt,
+                            translatedText: _translations[message.id],
                           );
                           if (_selectionMode) {
                             // WhatsApp-style leading check for selected rows.
@@ -2223,6 +2639,9 @@ class _ChatDetailScreenState
           // above the composer inside the existing column.
           if (_mentionToken != null && _mentionCandidates.isNotEmpty)
             _buildMentionOverlay(colors),
+          // MetricAi smart replies (web Chat.tsx parity) — chips row above
+          // the composer; the builder returns shrink when hidden.
+          if (!_selectionMode) _buildSmartRepliesRow(colors),
           SafeArea(
             top: false,
             child: Container(
@@ -2453,6 +2872,10 @@ class _MessageBubble extends StatelessWidget {
   /// unknown — own bubbles then show a single sent tick.
   final DateTime? peerReadAt;
 
+  /// MetricAi translation of the message body (device language). Null when
+  /// not requested yet — web Chat.tsx parity ("translatedText").
+  final String? translatedText;
+
   const _MessageBubble({
     required this.message,
     required this.isMe,
@@ -2460,6 +2883,7 @@ class _MessageBubble extends StatelessWidget {
     required this.colors,
     this.participantNames = const {},
     this.peerReadAt,
+    this.translatedText,
   });
 
   /// Teams-style read state for OWN messages: the message was created at or
@@ -2770,6 +3194,55 @@ class _MessageBubble extends StatelessWidget {
                   ),
                 ),
               ],
+            ],
+            // MetricAi translation (web Chat.tsx parity) — small violet-
+            // labelled card under the body, matching the bubble's palette.
+            if (translatedText != null && translatedText!.trim().isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.fromLTRB(9, 6, 9, 7),
+                decoration: BoxDecoration(
+                  color: isMe
+                      ? Colors.white.withValues(alpha: 0.12)
+                      : colors.surfaceVariant,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                      color: kMetricAiVioletSoft.withValues(alpha: 0.35)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.auto_awesome,
+                            size: 10, color: kMetricAiVioletSoft),
+                        const SizedBox(width: 4),
+                        Text(
+                          'MetricAi',
+                          style: TextStyle(
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.4,
+                            color: isMe
+                                ? const Color(0xFFDDD6FE)
+                                : kMetricAiViolet,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      translatedText!.trim(),
+                      style: TextStyle(
+                        fontSize: 13,
+                        height: 1.35,
+                        color: isMe ? Colors.white : colors.text,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ],
             const SizedBox(height: 3),
             Row(
