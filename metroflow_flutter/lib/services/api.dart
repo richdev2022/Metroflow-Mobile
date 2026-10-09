@@ -505,6 +505,74 @@ class ApiService {
     return await _dio.get('/auth/me', options: Options(extra: {'suppressToast': true}));
   }
 
+  /// Multi-workspace switching — every VERIFIED, ACTIVE membership that
+  /// shares the caller's email. Returns
+  /// { success, data: { workspaces: [ { userId, businessId, businessName,
+  /// businessLogo, workspaceCode, role, isCurrent } ], canSwitch } }.
+  Future<Response> listWorkspaces() async {
+    return await _dio.get('/auth/workspaces');
+  }
+
+  /// Switch into another workspace this email belongs to. Returns the same
+  /// payload shape as [login] (token/userId/businessId/name/...) so the
+  /// caller can swap the whole session atomically.
+  Future<Response> switchWorkspace(String businessId) async {
+    return await _dio.post('/auth/switch-workspace', data: {'businessId': businessId});
+  }
+
+  // ===================== Chat status (24h stories) =====================
+
+  /// Active statuses for the caller's workspace (+ viewer context).
+  /// Returns the raw `data.statuses` list of maps.
+  Future<List<Map<String, dynamic>>> listStatuses() async {
+    final response = await _dio.get('/statuses');
+    final data = response.data is Map ? response.data['data'] : null;
+    final statuses = data is Map && data['statuses'] is List ? data['statuses'] as List : const [];
+    return statuses.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+  }
+
+  /// Post a status (text card and/or image). [backgroundColor] must be one
+  /// of the palette colours the backend accepts (unknown colours fall back
+  /// server-side). Returns the created row (id/createdAt/expiresAt).
+  Future<Map<String, dynamic>?> createStatus({
+    String? content,
+    String? mediaUrl,
+    String? mediaType,
+    required String backgroundColor,
+  }) async {
+    final response = await _dio.post('/statuses', data: {
+      if (content != null && content.trim().isNotEmpty) 'content': content.trim(),
+      if (mediaUrl != null && mediaUrl.isNotEmpty) 'mediaUrl': mediaUrl,
+      if (mediaType != null && mediaType.isNotEmpty) 'mediaType': mediaType,
+      'backgroundColor': backgroundColor,
+    });
+    final data = response.data is Map ? response.data['data'] : null;
+    return data is Map ? Map<String, dynamic>.from(data) : null;
+  }
+
+  /// Record a view (idempotent server-side). Returns the response whose
+  /// `data.data.viewsCount` is the fresh view total.
+  Future<Response> viewStatus(String statusId) async {
+    return await _dio.post('/statuses/$statusId/view');
+  }
+
+  /// Toggle a like. Returns { liked, likesCount }.
+  Future<Map<String, dynamic>?> likeStatus(String statusId) async {
+    final response = await _dio.post('/statuses/$statusId/like');
+    final data = response.data is Map ? response.data['data'] : null;
+    return data is Map ? Map<String, dynamic>.from(data) : null;
+  }
+
+  /// Repost a status to your own rail (attributed).
+  Future<void> repostStatus(String statusId) async {
+    await _dio.post('/statuses/$statusId/repost');
+  }
+
+  /// Delete your own status.
+  Future<void> deleteStatus(String statusId) async {
+    await _dio.delete('/statuses/$statusId');
+  }
+
   /// Result codes for a server-side session validation (GET /auth/me):
   /// [sessionValid] alive, [sessionExpired] server rejected the token
   /// (caller clears the session and lands on login), [sessionUnknown]
