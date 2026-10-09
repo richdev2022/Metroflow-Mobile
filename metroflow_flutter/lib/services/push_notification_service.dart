@@ -75,6 +75,17 @@ String _normalizePushType(dynamic raw) {
 const int _kCallNotificationId = 1001;
 const int _kChatNotificationIdBase = 2000;
 
+/// SharedPreferences key that parks an ACCEPTED-from-notification incoming
+/// call across an authentication boundary: the notification action persists
+/// the payload, and main.dart re-presents the call via callProvider once the
+/// user signs back in (cold start → login → ring again).
+const String kPendingIncomingCallPrefKey = 'pending_incoming_call';
+
+/// Notification action ids for the WhatsApp-style Accept/Decline buttons on
+/// the incoming-call notification (must match showCallNotification).
+const String kCallActionAccept = 'accept_call';
+const String kCallActionDecline = 'decline_call';
+
 /// Raw resource (android/app/src/main/res/raw/call_ringtone.wav) used by the
 /// "calls" channel. Raw resource names exclude the extension.
 const String _kCallRingtoneResource = 'call_ringtone';
@@ -165,6 +176,48 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   } catch (e) {
     // A crash in the background isolate must never bubble to the OS.
     debugPrint('firebaseMessagingBackgroundHandler error: $e');
+  }
+}
+
+/// Background/terminated notification ACTION BUTTON handler (Accept /
+/// Decline on the incoming-call notification). MUST be top-level with the
+/// entry-point pragma or flutter_local_notifications throws at runtime; it
+/// runs in its OWN isolate, so it relies only on statics + fresh plugin
+/// instances.
+///
+/// - Decline → REST POST /calls/:id/reject via ApiService (the socket-only
+///   `call:reject` emit is useless from a dead process) + cancel the ring
+///   notification. Fire-and-forget, never throws.
+/// - Accept → park the decoded payload under SharedPreferences
+///   [kPendingIncomingCallPrefKey] and cancel the notification. Once the
+///   app finishes its (cold-start) authentication, main.dart reads the key
+///   and re-presents the ring via callProvider.presentIncomingCall.
+/// - Anything else (plain taps) → no-op here; the main isolate handles taps.
+@pragma('vm:entry-point')
+Future<void> backgroundNotificationActionHandler(NotificationResponse response) async {
+  try {
+    final actionId = response.actionId ?? '';
+    if (actionId != kCallActionAccept && actionId != kCallActionDecline) {
+      return; // plain tap — handled by the main isolate / cold-start path
+    }
+    final data = PushNotificationService._decodePayload(response.payload);
+    final callId = (data['callId'] ?? data['callID'] ?? data['call_id'] ?? data['id'] ?? '')
+        .toString();
+    if (actionId == kCallActionDecline) {
+      if (callId.isNotEmpty) {
+        await PushNotificationService._safeRejectCall(callId);
+      }
+      await PushNotificationService.cancelCallNotification();
+      return;
+    }
+    // accept_call
+    if (callId.isNotEmpty) {
+      await PushNotificationService.persistPendingIncomingCall(data);
+    }
+    await PushNotificationService.cancelCallNotification();
+  } catch (e) {
+    // A crash in the background isolate must never bubble to the OS.
+    debugPrint('backgroundNotificationActionHandler error: $e');
   }
 }
 
@@ -334,8 +387,17 @@ class PushNotificationService {
     await _localNotifications.initialize(
       initSettings,
       onDidReceiveNotificationResponse: (response) {
+        // Notification ACTION BUTTONS (Accept/Decline on the incoming-call
+        // notification) branch BEFORE the generic tap deep-linking.
+        final actionId = response.actionId ?? '';
+        if (actionId == kCallActionAccept || actionId == kCallActionDecline) {
+          _handleCallNotificationAction(actionId, response.payload);
+          return;
+        }
         _handleNotificationTap(response.payload);
       },
+      onDidReceiveBackgroundNotificationResponse:
+          backgroundNotificationActionHandler,
     );
 
     if (defaultTargetPlatform == TargetPlatform.android) {
@@ -348,6 +410,15 @@ class PushNotificationService {
         try {
           await androidPlugin.requestNotificationsPermission();
         } catch (_) {}
+        // ANDROID 14+ FULL-SCREEN-INTENT PERMISSION: the OS REVOKES the
+        // USE_FULL_SCREEN_INTENT grant for sideloaded/sideload-updated apps
+        // — the exact "incoming call shows a notification in the panel but
+        // never rings full-screen / never lights the lock screen" bug.
+        // Re-request explicitly (best-effort: the method exists on
+        // AndroidFlutterLocalNotificationsPlugin in v18; failures ignored).
+        try {
+          await androidPlugin.requestFullScreenIntentPermission();
+        } catch (_) {}
       }
     }
     await _ensureAndroidChannels();
@@ -358,6 +429,7 @@ class PushNotificationService {
     required String channelName,
     required String channelDescription,
     required bool fullScreenIntent,
+    List<AndroidNotificationAction>? actions,
   }) {
     return AndroidNotificationDetails(
       channelId,
@@ -371,6 +443,10 @@ class PushNotificationService {
       playSound: true,
       enableVibration: true,
       autoCancel: true,
+      // WhatsApp-style inline Accept/Decline buttons (Android only). Both
+      // show the app UI and cancel the notification on press; the response
+      // is routed to the background- or main-isolate action handler.
+      actions: actions,
     );
   }
 
@@ -393,6 +469,21 @@ class PushNotificationService {
         channelName: 'Incoming calls',
         channelDescription: 'Rings for incoming Metroflow calls even when the app is closed.',
         fullScreenIntent: true,
+        // Accept/Decline right on the notification (lock screen included).
+        actions: const [
+          AndroidNotificationAction(
+            kCallActionAccept,
+            'Accept',
+            showsUserInterface: true,
+            cancelNotification: true,
+          ),
+          AndroidNotificationAction(
+            kCallActionDecline,
+            'Decline',
+            showsUserInterface: true,
+            cancelNotification: true,
+          ),
+        ],
       );
       await _instance._localNotifications.show(
         _kCallNotificationId,
@@ -499,6 +590,10 @@ class PushNotificationService {
       );
       await _instance._localNotifications.initialize(
         const InitializationSettings(android: androidInit, iOS: darwinInit),
+        // Action buttons pressed while the app is dead land here — the
+        // main-isolate handler is NOT registered in this isolate.
+        onDidReceiveBackgroundNotificationResponse:
+            backgroundNotificationActionHandler,
       );
       await _ensureAndroidChannels();
     } catch (e) {
@@ -521,6 +616,67 @@ class PushNotificationService {
       await ApiService().acknowledgeCallPush(callId);
     } catch (_) {
       // Never fail a notification render because of an ack.
+    }
+  }
+
+  /// Extracts the call id from a decoded call push payload (every key
+  /// spelling the backend has ever used).
+  static String _callIdFromPayloadMap(Map<String, dynamic> data) {
+    return (data['callId'] ?? data['callID'] ?? data['call_id'] ?? data['id'] ?? '')
+        .toString();
+  }
+
+  /// Fire-and-forget REST reject — works from BOTH isolates even when the
+  /// app-side socket is dead (that is the whole point of the Decline
+  /// notification action). Never throws.
+  static Future<void> _safeRejectCall(String callId) async {
+    try {
+      await ApiService().rejectCall(callId);
+    } catch (_) {}
+  }
+
+  /// Persists an incoming-call payload under [kPendingIncomingCallPrefKey]
+  /// so main.dart can re-present the ring after the auth flow completes
+  /// (accept-from-notification on a cold start). Safe in any isolate.
+  static Future<void> persistPendingIncomingCall(Map<String, dynamic> payload) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(kPendingIncomingCallPrefKey, jsonEncode(payload));
+    } catch (_) {
+      // Never fail a notification action because of storage.
+    }
+  }
+
+  /// Main-isolate handler for the notification ACTION BUTTONS (Accept /
+  /// Decline) while the app process is alive. Mirrors the background
+  /// isolate handler below.
+  void _handleCallNotificationAction(String actionId, String? payload) {
+    try {
+      final data = _decodePayload(payload);
+      final callId = _callIdFromPayloadMap(data);
+      if (actionId == kCallActionDecline) {
+        // REST reject (socket may be mid-reconnect) + clear the ring.
+        if (callId.isNotEmpty) {
+          unawaited(_safeRejectCall(callId));
+        }
+        unawaited(cancelCallNotification());
+        // Stop any in-app ringing overlay for this call too.
+        callCancelledHook?.call(callId);
+        return;
+      }
+      if (actionId == kCallActionAccept) {
+        // Park the payload FIRST (if the user must re-authenticate, the
+        // main.dart post-login hook re-presents the call), then show the
+        // WhatsApp-style Accept/Decline overlay immediately.
+        if (callId.isNotEmpty) {
+          unawaited(persistPendingIncomingCall(data));
+        }
+        unawaited(cancelCallNotification());
+        _presentIncomingCall(data);
+      }
+      // Anything else: no-op (plain taps fall through to _handleNotificationTap).
+    } catch (e) {
+      debugPrint('_handleCallNotificationAction failed: $e');
     }
   }
 
@@ -806,7 +962,37 @@ class PushNotificationService {
         case 'chat_new':
           _navigate('/main/chat');
           break;
+        case 'kyc':
+        case 'business_kyc':
+        case 'kyc_approved':
+        case 'kyc_rejected':
+          // Business-KYC upgrade wizard (dashboard banner deep link).
+          _navigate('/business-kyc-upgrade');
+          break;
+        case 'chat_invite':
+        case 'group_invite':
+        case 'chat_join':
+          // Group invite link tap → join-by-code once the chat list lands.
+          try {
+            final code =
+                (data['code'] ?? data['inviteCode'] ?? '').toString();
+            if (code.isNotEmpty) {
+              ChatDetailScreen.pendingChatJoinCode = code;
+            }
+          } catch (_) {}
+          _navigate('/main/chat');
+          break;
         default:
+          // GENERIC ESCAPE HATCH: a payload-declared route/actionUrl/screen
+          // is honoured for unknown push types, so future backend pushes
+          // deep-link without waiting for a client release.
+          final route =
+              (data['route'] ?? data['actionUrl'] ?? data['screen'] ?? '')
+                  .toString();
+          if (route.startsWith('/')) {
+            _navigate(route);
+            return;
+          }
           _navigate('/main/notifications');
       }
     } catch (e) {
