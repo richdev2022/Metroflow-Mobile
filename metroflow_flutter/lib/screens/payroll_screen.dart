@@ -824,7 +824,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
           'account_name': _addAccountNameController.text.trim(),
         // International corridors (per the Flutterwave payout contract):
         // bank name + routing/sort + SWIFT + the European/US address block.
-        if (_addIsIntl) ...[
+        if (_addIsIntl) ...{
           'bank_name': _addBankNameController.text.trim(),
           'routing_number': _addRoutingController.text.trim(),
           'swift_code': _addSwiftController.text.trim().toUpperCase(),
@@ -836,7 +836,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
           'bank_country': _addBeneficiaryCountry,
           if (_addCurrency == 'GBP') 'account_type': 'personal',
           if (_addCurrency == 'USD') 'account_type': 'checking',
-        ],
+        },
       };
       final res = await ApiService().importPayrollEmployees([row]);
       final ok = res.data is Map && res.data['success'] == true;
