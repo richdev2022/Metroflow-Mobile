@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
@@ -876,6 +877,81 @@ class ApiService {
     ));
 
     return await _dio.post('/kyc/business', data: formData);
+  }
+
+  // ---- Business KYC upgrade (registration category + transaction limits) ----
+  // Server: POST /auth/register accepts an optional businessType
+  // ('registered' | 'non_registered'); GET /business-kyc/status reports the
+  // current category, pending submission and per-category transaction limits;
+  // POST /business-kyc/submit upgrades non-registered businesses to
+  // registered via a multipart document submission. All shapes are parsed
+  // defensively by callers — the server may null out nested fields.
+
+  /// GET /business-kyc/status (auth) → the unwrapped `data` map:
+  /// `{ business, latestSubmission, submissionHistory, limits, canUpgrade }`.
+  /// Returns {} on unexpected shapes — callers parse defensively (nulls are
+  /// possible). Toasts suppressed — the dashboard polls this best-effort and
+  /// must stay silent on failures.
+  Future<Map<String, dynamic>> getBusinessKycStatus() async {
+    final response = await _dio.get('/business-kyc/status',
+        options: Options(extra: {'suppressToast': true}));
+    final data = response.data;
+    if (data is Map && data['data'] is Map) {
+      return Map<String, dynamic>.from(data['data'] as Map);
+    }
+    return <String, dynamic>{};
+  }
+
+  /// GET /business-kyc/config (no auth) → the unwrapped `data` map:
+  /// `{ registrationTypes: [{ id, label, authority, docPack, description,
+  /// documents: [{ id, label, description, required }] }], limits: {...} }`.
+  Future<Map<String, dynamic>> getBusinessKycConfig() async {
+    final response = await _dio.get('/business-kyc/config',
+        options: Options(extra: {'suppressToast': true}));
+    final data = response.data;
+    if (data is Map && data['data'] is Map) {
+      return Map<String, dynamic>.from(data['data'] as Map);
+    }
+    return <String, dynamic>{};
+  }
+
+  /// POST /business-kyc/submit (auth, multipart/form-data) → the unwrapped
+  /// response body `{ success, message, data: { submissionId, status } }`.
+  ///
+  /// NOTE: named …Upgrade because the legacy address-proof
+  /// [submitBusinessKyc] (POST /kyc/business) already occupies the name —
+  /// Dart has no overloading.
+  ///
+  /// [documents] items are `{path, kind}` maps; `docKinds` is sent as a
+  /// JSON-encoded array aligned BY INDEX with the files posted under the
+  /// `documents` field. FormData passes through the crypto interceptor
+  /// untouched. Toasts suppressed so the caller owns error codes
+  /// (SUBMISSION_PENDING 409, DOCUMENTS_MISSING 400 + data.missing,
+  /// FILE_TOO_LARGE, DESCRIPTION_TOO_SHORT, INVALID_REGISTRATION_TYPE).
+  Future<Map<String, dynamic>> submitBusinessKycUpgrade({
+    required String registrationType,
+    required String businessDescription,
+    required List<Map<String, String>> documents,
+  }) async {
+    final formData = FormData.fromMap(<String, dynamic>{
+      'registrationType': registrationType,
+      'businessDescription': businessDescription,
+      'docKinds': jsonEncode(documents.map((d) => d['kind'] ?? '').toList()),
+    });
+    for (final doc in documents) {
+      final path = doc['path'] ?? '';
+      if (path.isEmpty) continue;
+      final fileName = path.split(Platform.pathSeparator).last;
+      formData.files.add(MapEntry(
+        'documents',
+        await MultipartFile.fromFile(path, filename: fileName),
+      ));
+    }
+    final response = await _dio.post('/business-kyc/submit', data: formData,
+        options: Options(extra: {'suppressToast': true}));
+    final data = response.data;
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return <String, dynamic>{};
   }
 
   // Wallet API
