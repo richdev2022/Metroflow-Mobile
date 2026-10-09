@@ -379,6 +379,12 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
 
   String? selectedIndustry;
   String industrySearchQuery = '';
+  // Business registration category sent as the optional `businessType` field
+  // on POST /auth/register ('registered' | 'non_registered'). Every account
+  // STARTS on Non-Registered limits regardless — the choice here only seeds
+  // the backend default; upgrading later happens from the dashboard's
+  // Business KYC upgrade flow.
+  String selectedBusinessType = 'non_registered';
   bool isLoading = false;
   bool showIndustryModal = false;
 
@@ -420,6 +426,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
         'businessName': businessNameController.text,
         'businessEmail': businessEmailController.text,
         'businessIndustry': selectedIndustry,
+        'businessType': selectedBusinessType,
         'adminName': adminNameController.text,
         'adminEmail': adminEmailController.text,
         'password': passwordController.text,
@@ -528,6 +535,38 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 subtitle: 'Join Metricorex and run your business in one place.',
               ),
               const SizedBox(height: 30),
+              _SectionLabel(label: 'Business Type', colors: colors),
+              const SizedBox(height: 12),
+              _BusinessTypeCard(
+                title: 'Registered Business',
+                subtitle:
+                    'Registered with CAC or equivalent — higher limits after verification',
+                icon: Icons.apartment_rounded,
+                selected: selectedBusinessType == 'registered',
+                colors: colors,
+                onTap: () =>
+                    setState(() => selectedBusinessType = 'registered'),
+              ),
+              const SizedBox(height: 10),
+              _BusinessTypeCard(
+                title: 'Non-Registered Business',
+                subtitle: 'Standard limits — upgrade anytime',
+                icon: Icons.store_outlined,
+                selected: selectedBusinessType == 'non_registered',
+                colors: colors,
+                onTap: () =>
+                    setState(() => selectedBusinessType = 'non_registered'),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'All accounts start with Non-Registered limits. You can upgrade from the dashboard at any time.',
+                style: TextStyle(
+                  fontSize: 12,
+                  height: 1.4,
+                  color: colors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 22),
               _SectionLabel(label: 'Business Information', colors: colors),
               const SizedBox(height: 12),
               AuthTextField(
@@ -806,6 +845,101 @@ class _IndustryField extends StatelessWidget {
                   color: colors.textSecondary, size: 22),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// One selectable business-type card on the sign-up form (registered vs
+/// non-registered). Selected = primary border + light primary fill.
+class _BusinessTypeCard extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final bool selected;
+  final ThemeColors colors;
+  final VoidCallback onTap;
+
+  const _BusinessTypeCard({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.selected,
+    required this.colors,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: selected ? colors.primaryBg : colors.surface,
+          border: Border.all(
+            color: selected ? colors.primary : colors.border,
+            width: selected ? 1.6 : 1.4,
+          ),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: selected
+                    ? Colors.white.withValues(alpha: 0.85)
+                    : colors.surfaceVariant,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                icon,
+                size: 20,
+                color: selected ? colors.primary : colors.textSecondary,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w700,
+                      color: colors.text,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.35,
+                      color: colors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Icon(
+                selected
+                    ? Icons.check_circle_rounded
+                    : Icons.radio_button_off_rounded,
+                size: 22,
+                color: selected ? colors.primary : colors.borderVariant,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

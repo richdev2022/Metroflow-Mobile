@@ -29,6 +29,7 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
   List<TaskStatus> taskStatuses = [];
   bool isLoading = true;
   bool isRefreshing = false;
+  String? _error; // surfaced — a failed load must never masquerade as an empty board
   String? draggingTaskId;
 
   @override
@@ -39,7 +40,10 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
 
   Future<void> fetchData() async {
     try {
-      setState(() => isRefreshing = true);
+      setState(() {
+        isRefreshing = true;
+        _error = null;
+      });
       final api = ApiService();
       
       // Fetch board data (statuses with tasks already grouped)
@@ -53,10 +57,16 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
               ?.map((e) => TaskStatus.fromJson(e as Map<String, dynamic>))
               .toList() ?? [];
           setState(() => taskStatuses = newStatuses);
+        } else {
+          setState(() => _error =
+              boardData is Map ? (boardData['error']?.toString() ?? 'Could not load the board') : 'Could not load the board');
         }
       }
     } catch (e) {
-      debugPrint('Failed to fetch data: $e');
+      debugPrint('Failed to fetch board: $e');
+      if (mounted) {
+        setState(() => _error = ApiService.extractErrorMessage(e));
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -371,7 +381,45 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
 
             // ------------------------------------------------ columns
             Expanded(
-              child: taskStatuses.isEmpty
+              child: _error != null
+                  // A failed load must be VISIBLE — it used to swallow into
+                  // the empty state, which looked like "board not working".
+                  ? RefreshIndicator(
+                      onRefresh: fetchData,
+                      color: colors.primary,
+                      backgroundColor: colors.surface,
+                      child: ListView(
+                        children: [
+                          const SizedBox(height: 64),
+                          Icon(Icons.cloud_off_rounded, size: 44, color: colors.textSecondary),
+                          const SizedBox(height: 12),
+                          Text(
+                            'Couldn\'t load the board',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: colors.text),
+                          ),
+                          const SizedBox(height: 6),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 32),
+                            child: Text(
+                              _error!,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(fontSize: 12.5, height: 1.4, color: colors.textSecondary),
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          Center(
+                            child: OutlinedButton.icon(
+                              onPressed: fetchData,
+                              icon: const Icon(Icons.refresh_rounded, size: 18),
+                              label: const Text('Retry'),
+                              style: OutlinedButton.styleFrom(foregroundColor: colors.primary),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : taskStatuses.isEmpty
                   ? _EmptyBoard(colors: colors, onAddColumn: showCreateStatusDialog)
                   : RefreshIndicator(
                       onRefresh: fetchData,

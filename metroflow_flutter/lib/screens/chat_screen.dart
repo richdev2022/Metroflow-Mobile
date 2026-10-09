@@ -7,6 +7,7 @@ import '../services/api.dart';
 import '../services/app_badge_service.dart';
 import '../services/socket_service.dart';
 import '../models/conversation.dart';
+import '../widgets/chat_status.dart';
 import '../models/user.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_timezone.dart';
@@ -33,6 +34,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   // Invited (guest) contacts — people brought in by email who have not
   // registered yet. Rendered in the list with an "Invited" badge.
   List<Map<String, dynamic>> _guestContacts = [];
+  /// Bumped whenever a status is created/deleted so the ChatStatusRail refetches.
+  int _statusRefreshKey = 0;
   List<User> _teamMembers = [];
   bool _isLoading = true;
   String? _loadError;
@@ -261,6 +264,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
   }
 
+  /// Bump the status rail's refresh key (pull-to-refresh + after composing).
+  Future<void> _refreshStatuses() async {
+    if (!mounted) return;
+    setState(() => _statusRefreshKey++);
+  }
+
   Future<void> _loadConversations() async {
     setState(() => _loadError = null);
     try {
@@ -449,9 +458,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               ),
             ),
             const SizedBox(height: 8),
+            // WHATSAPP-STYLE STATUS RAIL — 24h stories above the chat list.
+            // Hidden entirely when the workspace has no active statuses AND
+            // loading failed (best-effort surface, chat always works).
+            ChatStatusRail(refreshKey: _statusRefreshKey),
             Expanded(
               child: RefreshIndicator(
-                onRefresh: _loadConversations,
+                onRefresh: () async {
+                  await Future.wait([_loadConversations(), _refreshStatuses()]);
+                },
                 color: colors.primary,
                 child: _isLoading
                     ? ListView(

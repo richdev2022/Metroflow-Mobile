@@ -44,6 +44,7 @@ import 'screens/personal_profile_completion_screen.dart';
 import 'screens/kyc_initiate_screen.dart';
 import 'screens/kyc_otp_screen.dart';
 import 'screens/business_kyc_screen.dart';
+import 'screens/business_kyc_upgrade_screen.dart';
 
 import 'screens/fund_wallet_screen.dart';
 import 'screens/bulk_transfer_screen.dart';
@@ -456,6 +457,12 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
           path: '/kyc-otp',
           builder: (context, state) => const KycOtpScreen(),
         ),
+        // Business KYC upgrade (Non-Registered → Registered "Verified"):
+        // pushed from the dashboard's transaction-limit banner.
+        GoRoute(
+          path: '/business-kyc-upgrade',
+          builder: (context, state) => const BusinessKycUpgradeScreen(),
+        ),
         GoRoute(
           path: '/main',
           builder: (context, state) {
@@ -781,6 +788,10 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final themeState = ref.watch(themeProvider);
+    // WORKSPACE REBIND: the MaterialApp key includes the active businessId,
+    // so switching workspace (authProvider.businessId changes) remounts every
+    // screen with fresh data — same mechanism the theme toggle uses. The
+    // GoRouter instance is untouched, so the current route is restored.
     
     // Listen for auth state changes to navigate to login when needed
     ref.listen<AuthState>(authProvider, (previous, next) {
@@ -849,7 +860,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
           // the mode remounts every widget with the fresh palette the moment
           // dark/light is toggled — no manual refresh. The GoRouter instance
           // is untouched, so the current route is restored on the remount.
-          key: ValueKey<ThemeMode>(themeState.mode),
+          key: ValueKey<String>('${themeState.mode}|${ref.watch(authProvider).businessId ?? ''}'),
           routerConfig: _router,
           // The global incoming-call overlay MUST live BELOW MaterialApp:
           // as a sibling in a raw Stack it had no Theme/Directionality/

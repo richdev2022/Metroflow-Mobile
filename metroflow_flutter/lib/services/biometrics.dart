@@ -209,35 +209,45 @@ class BiometricService {
   }
 
   /// Maps a local_auth platform exception to a user-facing BiometricResult.
+  ///
+  /// Matched on the TYPED enum (LocalAuthExceptionCode) — the previous
+  /// toString().contains('NotEnrolled') style never matched: the enum's
+  /// toString is "LocalAuthExceptionCode.noBiometricsEnrolled" (lowercase
+  /// camelCase), so every failure fell through to the generic message and
+  /// users could not tell "canceled" from "not enrolled / locked out".
   static BiometricResult _mapLocalAuthError(LocalAuthException e) {
-    final codeString = e.code.toString();
-
-    // Handle specific errors
-    if (codeString.contains('NotAvailable')) {
-      return const BiometricResult(
-        success: false,
-        error: 'Biometric authentication is not available on this device',
-      );
-    } else if (codeString.contains('NotEnrolled')) {
-      return const BiometricResult(
-        success: false,
-        error: 'Please set up biometrics in your device settings first',
-      );
-    } else if (codeString.contains('LockedOut')) {
-      return const BiometricResult(
-        success: false,
-        error: 'Biometric authentication is temporarily locked. Please try again later.',
-      );
-    } else if (codeString.contains('PermanentlyLockedOut')) {
-      return const BiometricResult(
-        success: false,
-        error: 'Biometric authentication is permanently locked. Please use your device password.',
-      );
-    } else if (codeString.contains('UserCanceled')) {
-      return const BiometricResult(
-        success: false,
-        error: 'Authentication was canceled',
-      );
+    switch (e.code) {
+      case LocalAuthExceptionCode.noBiometricHardware:
+      case LocalAuthExceptionCode.biometricHardwareTemporarilyUnavailable:
+      case LocalAuthExceptionCode.deviceError:
+        return const BiometricResult(
+          success: false,
+          error: 'Biometric authentication is not available on this device',
+        );
+      case LocalAuthExceptionCode.noBiometricsEnrolled:
+      case LocalAuthExceptionCode.noCredentialsSet:
+        return const BiometricResult(
+          success: false,
+          error: 'Please set up biometrics in your device settings first',
+        );
+      case LocalAuthExceptionCode.temporaryLockout:
+      case LocalAuthExceptionCode.biometricLockout:
+        return const BiometricResult(
+          success: false,
+          error: 'Biometric authentication is temporarily locked. Please try again later.',
+        );
+      case LocalAuthExceptionCode.userCanceled:
+        return const BiometricResult(
+          success: false,
+          error: 'Authentication was canceled',
+        );
+      case LocalAuthExceptionCode.uiUnavailable:
+        return const BiometricResult(
+          success: false,
+          error: 'The biometric prompt could not open — please try again',
+        );
+      default:
+        break;
     }
 
     // Fallback to description or generic message
@@ -316,13 +326,23 @@ class BiometricService {
           );
         } on LocalAuthException catch (e) {
           sw.stop();
-          final codeString = e.code.toString();
-          final cancelledBySystem = codeString.contains('UserCanceled') ||
-              codeString.contains('Canceled') ||
-              codeString.contains('Cancelled');
-          if (cancelledBySystem && sw.elapsedMilliseconds < 250 && attempt < 2) {
+          // Retry any INSTANT system-side failure. The system-killed prompt
+          // surfaces as userCanceled/systemCanceled/timeout/uiUnavailable and
+          // can arrive AFTER the sheet begins animating in (300-600ms on
+          // mid/low-end Android) — the old 250ms window missed most of them,
+          // which is why users had to tap fingerprint 2-3 times. A real
+          // user cancel takes >1s (the dialog must first be visible).
+          const retryable = {
+            LocalAuthExceptionCode.userCanceled,
+            LocalAuthExceptionCode.systemCanceled,
+            LocalAuthExceptionCode.timeout,
+            LocalAuthExceptionCode.uiUnavailable,
+            LocalAuthExceptionCode.authInProgress,
+          };
+          final instantFailure = sw.elapsedMilliseconds < 900;
+          if (retryable.contains(e.code) && instantFailure && attempt < 3) {
             debugPrint(
-              'Biometric prompt cancelled before showing '
+              'Biometric prompt killed before showing '
               '(${e.code}, ${sw.elapsedMilliseconds}ms, attempt $attempt) — auto-retrying',
             );
             continue;
@@ -341,8 +361,8 @@ class BiometricService {
 
         // Unsuccessful without an exception. Only retry when the failure
         // arrives "instantly" — the signature of a system-killed prompt.
-        // A dialog the user saw and dismissed takes longer than 250ms.
-        if (sw.elapsedMilliseconds < 250 && attempt < 2) {
+        // A dialog the user saw and dismissed takes longer than 900ms.
+        if (sw.elapsedMilliseconds < 900 && attempt < 3) {
           debugPrint('Biometric prompt cancelled before showing '
               '(instant false, ${sw.elapsedMilliseconds}ms, attempt $attempt) — auto-retrying');
           continue;

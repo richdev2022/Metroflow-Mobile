@@ -9,6 +9,7 @@ import '../providers/notifications_provider.dart';
 import '../providers/badge_provider.dart';
 import '../providers/user_profile_provider.dart';
 import '../services/app_update_service.dart';
+import '../services/api.dart';
 import '../utils/kyc_gate.dart';
 import '../widgets/app_tour.dart';
 import '../widgets/avatar_with_initials.dart';
@@ -644,6 +645,13 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                     ),
                     const SizedBox(height: 8),
                     _DrawerTile(
+                      icon: Icons.swap_horizontal_circle_outlined,
+                      title: 'Switch workspace',
+                      colors: colors,
+                      closeOnTap: false,
+                      onTap: () async => _showWorkspaceSwitcherSheet(),
+                    ),
+                    _DrawerTile(
                       icon: Icons.logout_outlined,
                       title: 'Logout',
                       colors: colors,
@@ -1116,6 +1124,19 @@ class _MainScreenState extends ConsumerState<MainScreen> {
       },
     );
   }
+
+  /// WORKSPACE SWITCHER — opens the sheet listing every other workspace the
+  /// signed-in (verified) email belongs to. A successful switch updates
+  /// authProvider.businessId; the MaterialApp key in main.dart includes it,
+  /// so the whole UI remounts with the new workspace's data automatically.
+  void _showWorkspaceSwitcherSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => const _WorkspaceSwitchSheet(),
+    );
+  }
 }
 
 class _DrawerSectionLabel extends StatelessWidget {
@@ -1134,6 +1155,198 @@ class _DrawerSectionLabel extends StatelessWidget {
           fontWeight: FontWeight.w800,
           letterSpacing: 1.1,
           color: colors.textSecondary.withValues(alpha: 0.75),
+        ),
+      ),
+    );
+  }
+}
+
+/// Bottom sheet for multi-workspace switching. Loads GET /auth/workspaces,
+/// lists the OTHER memberships (the current one is checked and disabled),
+/// and swaps the session via authProvider.switchWorkspace on tap.
+class _WorkspaceSwitchSheet extends ConsumerStatefulWidget {
+  const _WorkspaceSwitchSheet();
+
+  @override
+  ConsumerState<_WorkspaceSwitchSheet> createState() =>
+      _WorkspaceSwitchSheetState();
+}
+
+class _WorkspaceSwitchSheetState extends ConsumerState<_WorkspaceSwitchSheet> {
+  List<Map<String, dynamic>>? _workspaces;
+  String? _error;
+  String? _switchingId;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final response = await ApiService().listWorkspaces();
+      final data = response.data;
+      final raw = (data['data']?['workspaces'] ?? data['workspaces']) as List?;
+      if (!mounted) return;
+      setState(() {
+        _workspaces = raw
+            ?.map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = 'Could not load your workspaces');
+    }
+  }
+
+  Future<void> _switch(Map<String, dynamic> w) async {
+    final businessId = (w['businessId'] ?? '').toString();
+    final businessName = (w['businessName'] ?? 'workspace').toString();
+    if (businessId.isEmpty || _switchingId != null) return;
+    setState(() => _switchingId = businessId);
+    try {
+      await ref
+          .read(authProvider.notifier)
+          .switchWorkspace(businessId: businessId, businessName: businessName);
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Switched to $businessName')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _switchingId = null);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text(
+                e.toString().replaceFirst('Exception: ', '').isEmpty
+                    ? 'Workspace switch failed'
+                    : e.toString().replaceFirst('Exception: ', ''))),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppTheme.colors;
+    return SafeArea(
+      child: Container(
+        margin: const EdgeInsets.all(12),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
+        decoration: BoxDecoration(
+          color: colors.surface,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.swap_horizontal_circle_outlined,
+                    size: 20, color: colors.text),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Your workspaces',
+                    style: TextStyle(
+                      color: colors.text,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Close',
+                  icon: Icon(Icons.close_rounded,
+                      size: 18, color: colors.textSecondary),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 18),
+                child: Center(
+                  child: Text(_error!,
+                      style: TextStyle(
+                          color: colors.textSecondary, fontSize: 13)),
+                ),
+              )
+            else if (_workspaces == null)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: _workspaces!.length,
+                  itemBuilder: (context, i) {
+                    final w = _workspaces![i];
+                    final isCurrent = w['isCurrent'] == true;
+                    final businessId = (w['businessId'] ?? '').toString();
+                    final busy = _switchingId == businessId;
+                    return ListTile(
+                      enabled: !isCurrent && _switchingId == null,
+                      leading: Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                          color: colors.surfaceVariant,
+                          shape: BoxShape.circle,
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          ((w['businessName'] ?? 'W').toString().isNotEmpty
+                                  ? (w['businessName'] as String)[0]
+                                  : 'W')
+                              .toUpperCase(),
+                          style: TextStyle(
+                            color: colors.text,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      title: Text(
+                        (w['businessName'] ?? 'Workspace').toString(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: colors.text,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      subtitle: Text(
+                        isCurrent
+                            ? 'Current workspace'
+                            : '${(w['role'] ?? 'member').toString() == 'admin' ? 'Admin' : (w['role'] ?? 'member').toString() == 'owner' ? 'Owner' : 'Member'} · ${w['workspaceCode'] ?? ''}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            color: colors.textSecondary, fontSize: 12),
+                      ),
+                      trailing: busy
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2),
+                            )
+                          : isCurrent
+                              ? Icon(Icons.check_circle,
+                                  color: Colors.green, size: 20)
+                              : Icon(Icons.chevron_right,
+                                  color: colors.textSecondary, size: 20),
+                      onTap: () => _switch(w),
+                    );
+                  },
+                ),
+              ),
+          ],
         ),
       ),
     );
