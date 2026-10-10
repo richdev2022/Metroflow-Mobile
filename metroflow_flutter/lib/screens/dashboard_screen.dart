@@ -9,6 +9,7 @@ import '../providers/user_profile_provider.dart';
 import '../utils/app_timezone.dart';
 import '../utils/kyc_gate.dart';
 import '../widgets/app_tour.dart';
+import '../widgets/transaction_limits_card.dart';
 import '../widgets/avatar_with_initials.dart';
 import '../widgets/modern_ui.dart';
 
@@ -403,6 +404,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 ),
                 const SizedBox(height: 12),
               ],
+
+              // ---------- Web-parity inflow/outflow limits card ----------
+              // ALWAYS visible (registered or not) so the tier's funding and
+              // transfer limits + daily head-room are one glance away — the
+              // old banner only spoke to non-registered accounts.
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 0, 16, 0),
+                child: TransactionLimitsCard(),
+              ),
+              const SizedBox(height: 12),
 
               // ---------- Quick actions ----------
               _buildQuickActions(colors),

@@ -32,10 +32,24 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
   String? _error; // surfaced — a failed load must never masquerade as an empty board
   String? draggingTaskId;
 
+  // Web-mobile board parity (app.metricorex.com Board on a phone):
+  //  - [Status Overview] toggle -> per-column summary cards
+  //  - column FILTER CHIPS -> tapping a chip snap-pages to that column
+  //  - one FULL-WIDTH column at a time (PageView, like the web snap view)
+  bool _showOverview = false;
+  int _activeColumn = 0;
+  final PageController _pageController = PageController();
+
   @override
   void initState() {
     super.initState();
     fetchData();
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
   }
 
   Future<void> fetchData() async {
@@ -290,24 +304,15 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
 
     return Scaffold(
       backgroundColor: colors.background,
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => context.push('/main/create-task'),
-        backgroundColor: colors.primary,
-        foregroundColor: Colors.white,
-        elevation: 3,
-        icon: const Icon(Icons.add_task_rounded, size: 20),
-        label: const Text('New Task', style: TextStyle(fontWeight: FontWeight.w700)),
-      ),
       body: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ------------------------------------------------ header
+            // ------------------------------------------------ header (web copy)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
               child: Row(
                 children: [
-                  // Back button — was MISSING entirely (board used go() nav).
                   _HeaderIconButton(
                     icon: Icons.arrow_back_ios_new_rounded,
                     colors: colors,
@@ -329,8 +334,10 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          '$_totalTasks task${_totalTasks == 1 ? '' : 's'} • long-press to drag',
+                          'Drag and drop tasks to update their status',
                           style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ),
@@ -340,46 +347,41 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
                     colors: colors,
                     onTap: () => fetchData(),
                   ),
+                ],
+              ),
+            ),
+
+            // --------------------------------- action row (web mobile parity)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+              child: Row(
+                children: [
+                  _BoardActionButton(
+                    label: _showOverview ? 'Show Board' : 'Overview',
+                    icon: Icons.donut_small_rounded,
+                    colors: colors,
+                    onTap: () => setState(() => _showOverview = !_showOverview),
+                  ),
                   const SizedBox(width: 8),
-                  _HeaderIconButton(
-                    icon: Icons.view_column_outlined,
+                  _BoardActionButton(
+                    label: 'Column',
+                    icon: Icons.add_rounded,
                     colors: colors,
                     onTap: showCreateStatusDialog,
+                  ),
+                  const SizedBox(width: 8),
+                  _BoardActionButton(
+                    label: 'Add Task',
+                    icon: Icons.add_rounded,
+                    colors: colors,
+                    filled: true,
+                    onTap: () => context.push('/main/create-task'),
                   ),
                 ],
               ),
             ),
 
-            // ------------------------------------------------ stats strip
-            if (_totalTasks > 0)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                child: Row(
-                  children: [
-                    _StatChip(
-                      label: '$_totalTasks total',
-                      icon: Icons.assignment_rounded,
-                      background: colors.primary.withValues(alpha: 0.10),
-                      foreground: colors.primary,
-                    ),
-                    const SizedBox(width: 8),
-                    if (_overdueCount > 0)
-                      _StatChip(
-                        label: '$_overdueCount overdue',
-                        icon: Icons.warning_amber_rounded,
-                        background: colors.error.withValues(alpha: 0.10),
-                        foreground: colors.error,
-                      ),
-                    const Spacer(),
-                    Text(
-                      '${taskStatuses.length} column${taskStatuses.length == 1 ? '' : 's'}',
-                      style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
-                    ),
-                  ],
-                ),
-              ),
-
-            // ------------------------------------------------ columns
+            // ------------------------------------------------ body
             Expanded(
               child: _error != null
                   // A failed load must be VISIBLE — it used to swallow into
@@ -421,185 +423,112 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
                     )
                   : taskStatuses.isEmpty
                   ? _EmptyBoard(colors: colors, onAddColumn: showCreateStatusDialog)
+                  : _showOverview
+                  ? _StatusOverview(
+                      colors: colors,
+                      statuses: taskStatuses,
+                      getStatusColor: getStatusColor,
+                      onPick: (index) {
+                        setState(() {
+                          _showOverview = false;
+                          _activeColumn = index.clamp(0, taskStatuses.length - 1);
+                        });
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (mounted) {
+                            _pageController.jumpToPage(_activeColumn);
+                          }
+                        });
+                      },
+                    )
                   : RefreshIndicator(
                       onRefresh: fetchData,
                       color: colors.primary,
                       backgroundColor: colors.surface,
-                      child: ListView(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
-                        scrollDirection: Axis.horizontal,
+                      child: Column(
                         children: [
-                          ...taskStatuses.map((status) {
-                            final statusTasks = status.tasks ?? [];
-                            final screenWidth = MediaQuery.of(context).size.width;
-                            final columnWidth = screenWidth * 0.85 < 290 ? 290.0 : screenWidth * 0.85;
-                            final accent = getStatusColor(status.name);
-                            return Container(
-                              width: columnWidth,
-                              margin: const EdgeInsets.only(right: 14, bottom: 4),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  // Column header card
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          // ------------------------------------ filter chips
+                          SizedBox(
+                            height: 46,
+                            child: ListView.separated(
+                              scrollDirection: Axis.horizontal,
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                              itemCount: taskStatuses.length,
+                              separatorBuilder: (_, __) => const SizedBox(width: 8),
+                              itemBuilder: (context, i) {
+                                final status = taskStatuses[i];
+                                final active = i == _activeColumn.clamp(0, taskStatuses.length - 1);
+                                final accent = getStatusColor(status.name);
+                                final count = status.tasks?.length ?? 0;
+                                return GestureDetector(
+                                  onTap: () {
+                                    _pageController.animateToPage(
+                                      i,
+                                      duration: const Duration(milliseconds: 260),
+                                      curve: Curves.easeOut,
+                                    );
+                                    setState(() => _activeColumn = i);
+                                  },
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 160),
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
                                     decoration: BoxDecoration(
-                                      color: colors.surface,
-                                      borderRadius: BorderRadius.circular(14),
-                                      border: Border.all(color: colors.border),
+                                      color: active ? accent : colors.surface,
+                                      borderRadius: BorderRadius.circular(999),
+                                      border: Border.all(color: active ? accent : colors.border),
                                     ),
                                     child: Row(
+                                      mainAxisSize: MainAxisSize.min,
                                       children: [
                                         Container(
-                                          width: 34,
-                                          height: 34,
+                                          width: 8,
+                                          height: 8,
                                           decoration: BoxDecoration(
-                                            color: accent.withValues(alpha: 0.15),
-                                            borderRadius: BorderRadius.circular(10),
-                                          ),
-                                          child: Center(
-                                            child: Container(
-                                              width: 10,
-                                              height: 10,
-                                              decoration: BoxDecoration(
-                                                color: accent,
-                                                shape: BoxShape.circle,
-                                              ),
-                                            ),
+                                            shape: BoxShape.circle,
+                                            color: active ? Colors.white : accent,
                                           ),
                                         ),
-                                        const SizedBox(width: 10),
-                                        Expanded(
-                                          child: Text(
-                                            status.name,
-                                            style: TextStyle(
-                                              fontSize: 15,
-                                              fontWeight: FontWeight.w700,
-                                              color: colors.text,
-                                            ),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          status.name,
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w700,
+                                            color: active ? Colors.white : colors.textSecondary,
                                           ),
                                         ),
+                                        const SizedBox(width: 6),
                                         Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                                           decoration: BoxDecoration(
-                                            color: colors.primary.withValues(alpha: 0.10),
+                                            color: active ? Colors.white24 : colors.surfaceVariant,
                                             borderRadius: BorderRadius.circular(999),
                                           ),
                                           child: Text(
-                                            '${statusTasks.length}',
+                                            '$count',
                                             style: TextStyle(
-                                              color: colors.primary,
-                                              fontSize: 11.5,
+                                              fontSize: 10,
                                               fontWeight: FontWeight.w800,
+                                              color: active ? Colors.white : colors.textSecondary,
                                             ),
                                           ),
                                         ),
                                       ],
                                     ),
                                   ),
-                                  const SizedBox(height: 10),
-                                  Expanded(
-                                    child: DragTarget<Task>(
-                                      onWillAcceptWithDetails: (details) => details.data.status != status.name,
-                                      onAcceptWithDetails: (details) {
-                                        final task = details.data;
-                                        if (task.status != status.name) {
-                                          updateTaskStatus(task, status.name);
-                                        }
-                                      },
-                                      builder: (context, candidateData, rejectedData) {
-                                        final isTargeting = candidateData.isNotEmpty;
-                                        return AnimatedContainer(
-                                          duration: const Duration(milliseconds: 180),
-                                          constraints: const BoxConstraints.expand(),
-                                          decoration: BoxDecoration(
-                                            color: isTargeting
-                                                ? accent.withValues(alpha: 0.08)
-                                                : colors.surfaceVariant,
-                                            borderRadius: BorderRadius.circular(14),
-                                            border: Border.all(
-                                              color: isTargeting ? accent : colors.border,
-                                              width: isTargeting ? 1.6 : 1,
-                                            ),
-                                          ),
-                                          child: statusTasks.isEmpty
-                                              ? Center(
-                                                  child: Column(
-                                                    mainAxisAlignment: MainAxisAlignment.center,
-                                                    children: [
-                                                      Icon(Icons.outbound_rounded,
-                                                          color: colors.textSecondary.withValues(alpha: 0.7), size: 30),
-                                                      const SizedBox(height: 8),
-                                                      Text(
-                                                        isTargeting ? 'Drop here' : 'No tasks',
-                                                        style: TextStyle(
-                                                          color: isTargeting ? accent : colors.textSecondary,
-                                                          fontSize: 12.5,
-                                                          fontWeight: isTargeting ? FontWeight.w700 : FontWeight.w400,
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                )
-                                              : ListView.builder(
-                                                  padding: const EdgeInsets.all(8),
-                                                  itemCount: statusTasks.length,
-                                                  itemBuilder: (context, index) {
-                                                    final task = statusTasks[index];
-                                                    return _BoardTaskCard(
-                                                      task: task,
-                                                      accent: accent,
-                                                      colors: colors,
-                                                      onTap: () => context.push('/main/task-detail', extra: task),
-                                                    );
-                                                  },
-                                                ),
-                                        );
-                                      },
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          }),
-                          // Add-column card
-                          GestureDetector(
-                            onTap: showCreateStatusDialog,
-                            child: Container(
-                              width: 130,
-                              decoration: BoxDecoration(
-                                color: colors.surface.withValues(alpha: 0.55),
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(
-                                  color: colors.border,
-                                  strokeAlign: BorderSide.strokeAlignInside,
-                                ),
-                              ),
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Container(
-                                    width: 40,
-                                    height: 40,
-                                    decoration: BoxDecoration(
-                                      color: colors.primary.withValues(alpha: 0.10),
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: Icon(Icons.add_rounded, size: 22, color: colors.primary),
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Add Column',
-                                    style: TextStyle(
-                                      color: colors.textSecondary,
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 12.5,
-                                    ),
-                                  ),
-                                ],
-                              ),
+                                );
+                              },
+                            ),
+                          ),
+                          // ------------------------- one full-width column/page
+                          Expanded(
+                            child: PageView.builder(
+                              controller: _pageController,
+                              itemCount: taskStatuses.length,
+                              onPageChanged: (i) => setState(() => _activeColumn = i),
+                              itemBuilder: (context, ci) {
+                                final clamped = ci.clamp(0, taskStatuses.length - 1);
+                                return _buildColumnPage(taskStatuses[clamped]);
+                              },
                             ),
                           ),
                         ],
@@ -611,11 +540,345 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
       ),
     );
   }
+
+  /// One FULL-WIDTH column page (web mobile shows a single column at a time,
+  /// navigated with the chip row / horizontal swipe).
+  Widget _buildColumnPage(TaskStatus status) {
+    final colors = AppTheme.colors;
+    final statusTasks = status.tasks ?? const <Task>[];
+    final accent = getStatusColor(status.name);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Column header card: dot + name + count pill + edit
+          GestureDetector(
+            onLongPress: showCreateStatusDialog,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: colors.surface,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: colors.border),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      status.name,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: colors.text,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: accent.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      '${statusTasks.length}',
+                      style: TextStyle(
+                        color: accent,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  GestureDetector(
+                    onTap: showCreateStatusDialog,
+                    child: Icon(Icons.edit_outlined, size: 16, color: colors.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Expanded(
+            child: DragTarget<Task>(
+              onWillAcceptWithDetails: (details) => details.data.status != status.name,
+              onAcceptWithDetails: (details) {
+                final task = details.data;
+                if (task.status != status.name) {
+                  updateTaskStatus(task, status.name);
+                }
+              },
+              builder: (context, candidateData, rejectedData) {
+                final isTargeting = candidateData.isNotEmpty;
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  constraints: const BoxConstraints.expand(),
+                  decoration: BoxDecoration(
+                    color: isTargeting
+                        ? accent.withValues(alpha: 0.08)
+                        : colors.surfaceVariant,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: isTargeting ? accent : colors.border,
+                      width: isTargeting ? 1.6 : 1,
+                    ),
+                  ),
+                  child: statusTasks.isEmpty
+                      ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.outbound_rounded,
+                                  color: colors.textSecondary.withValues(alpha: 0.7), size: 30),
+                              const SizedBox(height: 8),
+                              Text(
+                                isTargeting ? 'Drop here' : 'No tasks',
+                                style: TextStyle(
+                                  color: isTargeting ? accent : colors.textSecondary,
+                                  fontSize: 12.5,
+                                  fontWeight: isTargeting ? FontWeight.w700 : FontWeight.w400,
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      : ListView.builder(
+                          padding: const EdgeInsets.all(8),
+                          itemCount: statusTasks.length,
+                          itemBuilder: (context, index) {
+                            final task = statusTasks[index];
+                            return _BoardTaskCard(
+                              task: task,
+                              accent: accent,
+                              colors: colors,
+                              canMove: taskStatuses.length > 1,
+                              onMove: () => _moveTaskSheet(task),
+                              onTap: () => context.push('/main/task-detail', extra: task),
+                            );
+                          },
+                        ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Cross-column move (single-column view can't drag across pages): a
+  /// bottom sheet listing the OTHER statuses; picking one moves the task.
+  void _moveTaskSheet(Task task) {
+    final colors = AppTheme.colors;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: colors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+              child: Text(
+                'Move "${task.title}" to…',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14.5, color: colors.text),
+              ),
+            ),
+            ...List.generate(taskStatuses.length, (i) {
+              final status = taskStatuses[i];
+              final accent = getStatusColor(status.name);
+              final isCurrent = status.name == task.status;
+              return ListTile(
+                leading: Container(
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
+                ),
+                title: Text(
+                  status.name,
+                  style: TextStyle(
+                    color: isCurrent ? colors.textSecondary : colors.text,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
+                ),
+                trailing: isCurrent
+                    ? Icon(Icons.check_rounded, size: 18, color: colors.textSecondary)
+                    : null,
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  if (!isCurrent) updateTaskStatus(task, status.name);
+                },
+              );
+            }),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
 }
 
 // ---------------------------------------------------------------------------
 // Board building blocks
 // ---------------------------------------------------------------------------
+
+/// Pill button in the web-mobile action row (Overview / Column / Add Task).
+class _BoardActionButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final dynamic colors;
+  final bool filled;
+  final VoidCallback onTap;
+
+  const _BoardActionButton({
+    required this.label,
+    required this.icon,
+    required this.colors,
+    this.filled = false,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: filled ? Colors.transparent : colors.surface,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          height: 38,
+          padding: const EdgeInsets.symmetric(horizontal: 13),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: filled ? Colors.transparent : colors.border),
+            gradient: filled
+                ? const LinearGradient(colors: [Color(0xFF2563EB), Color(0xFF7C3AED)])
+                : null,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 15, color: filled ? Colors.white : colors.text),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  color: filled ? Colors.white : colors.text,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Web "Status Overview" grid: one summary card per column (dot, name, big
+/// count). Tapping a card jumps to that column on the board.
+class _StatusOverview extends StatelessWidget {
+  final dynamic colors;
+  final List<TaskStatus> statuses;
+  final Color Function(String) getStatusColor;
+  final void Function(int index) onPick;
+
+  const _StatusOverview({
+    required this.colors,
+    required this.statuses,
+    required this.getStatusColor,
+    required this.onPick,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+      child: LayoutBuilder(builder: (context, constraints) {
+        const gap = 12.0;
+        final columns = constraints.maxWidth >= 560 ? 2 : 1;
+        final cardWidth = (constraints.maxWidth - gap * (columns - 1)) / columns;
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            for (int i = 0; i < statuses.length; i++)
+              GestureDetector(
+                onTap: () => onPick(i),
+                child: Container(
+                  width: cardWidth,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: colors.surface,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: colors.border),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 16,
+                        height: 16,
+                        decoration: BoxDecoration(
+                          color: getStatusColor(statuses[i].name),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              statuses[i].name,
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w800,
+                                color: colors.text,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '${statuses[i].tasks?.length ?? 0} task${(statuses[i].tasks?.length ?? 0) == 1 ? '' : 's'}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: colors.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(Icons.chevron_right_rounded,
+                          size: 20, color: colors.textSecondary),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        );
+      }),
+    );
+  }
+}
 
 class _HeaderIconButton extends StatelessWidget {
   final IconData icon;
@@ -743,11 +1006,18 @@ class _BoardTaskCard extends StatelessWidget {
   final dynamic colors;
   final VoidCallback onTap;
 
+  /// When the board has >1 column, show the move affordance (single-column
+  /// pages can't drag across pages — web mobile has the same constraint).
+  final bool canMove;
+  final VoidCallback? onMove;
+
   const _BoardTaskCard({
     required this.task,
     required this.accent,
     required this.colors,
     required this.onTap,
+    this.canMove = false,
+    this.onMove,
   });
 
   @override
@@ -840,16 +1110,33 @@ class _BoardTaskCard extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(
-                          task.title,
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700,
-                            color: colors.text,
-                            height: 1.25,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                task.title,
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                  color: colors.text,
+                                  height: 1.25,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (canMove && onMove != null)
+                              GestureDetector(
+                                onTap: onMove,
+                                behavior: HitTestBehavior.opaque,
+                                child: Padding(
+                                  padding: const EdgeInsets.only(left: 6, top: 2),
+                                  child: Icon(Icons.swap_horiz_rounded,
+                                      size: 16, color: colors.textSecondary),
+                                ),
+                              ),
+                          ],
                         ),
                         if (task.description != null && task.description!.trim().isNotEmpty)
                           Padding(

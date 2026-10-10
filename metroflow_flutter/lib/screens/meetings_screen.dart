@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../services/api.dart';
+import 'recordings_pane.dart';
 
 import '../services/socket_service.dart';
 import '../models/meeting.dart';
@@ -412,7 +413,9 @@ class _MeetingsScreenState extends ConsumerState<MeetingsScreen> {
             ),
             const SizedBox(height: 8),
             Expanded(
-              child: RefreshIndicator(
+              child: _filterStatus == 'recordings'
+                  ? const RecordingsPane()
+                  : RefreshIndicator(
                 onRefresh: _loadMeetings,
                 color: colors.primary,
                 child: filtered.isEmpty
@@ -462,6 +465,8 @@ class _MeetingsScreenState extends ConsumerState<MeetingsScreen> {
       const _MeetingTab(value: 'upcoming', label: 'Upcoming', icon: Icons.schedule_rounded),
       const _MeetingTab(value: 'completed', label: 'Completed', icon: Icons.check_circle_outline_rounded),
       const _MeetingTab(value: 'cancelled', label: 'Cancelled', icon: Icons.cancel_outlined),
+      // Recordings entrance (web parity: /recordings nav entry).
+      const _MeetingTab(value: 'recordings', label: 'Recordings', icon: Icons.videocam_rounded),
     ];
     return Container(
       padding: const EdgeInsets.all(4),
@@ -505,14 +510,15 @@ class _MeetingsScreenState extends ConsumerState<MeetingsScreen> {
                       ),
                     ),
                     const SizedBox(height: 2),
-                    Text(
-                      '$count',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: selected ? colors.primary : colors.textSecondary,
+                    if (tab.value != 'recordings')
+                      Text(
+                        '$count',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: selected ? colors.primary : colors.textSecondary,
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),

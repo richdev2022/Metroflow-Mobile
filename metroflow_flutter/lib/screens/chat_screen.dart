@@ -1277,6 +1277,11 @@ class _CreateConversationDialogState extends State<_CreateConversationDialog> {
         if (mounted) {
           final navigator = Navigator.of(context, rootNavigator: true);
           navigator.pop();
+          // Restore the create-group popup: the member profile sheet used to
+          // appear right after creating a group (who's in it, roles, invite
+          // link) and quietly stopped. One-shot flag consumed by the detail
+          // screen's first frame.
+          ChatDetailScreen.autoOpenMembersNextPush = _type == 'group';
           // Refresh the list after returning from the pushed chat detail.
           // (Routed through the parent's onCreated callback which calls
           // _loadConversations() on the owning screen state.)

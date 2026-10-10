@@ -1946,18 +1946,40 @@ class ApiService {
     return result?.url;
   }
 
+  /// Upload chat media with byte-level progress (0.0–1.0) for upload UIs
+  /// (status composer progress bar, chat attachment sheets).
+  Future<String?> uploadChatMediaWithProgress(
+    File file,
+    void Function(double progress) onProgress,
+  ) async {
+    final result = await uploadChatMediaDetailed(file, onProgress: onProgress);
+    return result?.url;
+  }
+
   /// Upload chat media (images / videos / audio / documents / GIFs, 100MB
   /// limit) via POST /chat/media as multipart form-data (field name `file`).
   /// Returns the full upload payload — url, filename, mimeType, byte size and
   /// the backend-detached attachmentType (`image|video|audio|document|gif`) —
   /// so the follow-up [sendMessage] can include attachmentName/attachmentSize.
   /// Throws on network/server errors so the caller can surface them.
-  Future<ChatMediaUpload?> uploadChatMediaDetailed(File file) async {
+  Future<ChatMediaUpload?> uploadChatMediaDetailed(
+    File file, {
+    void Function(double progress)? onProgress,
+  }) async {
     final fileName = file.path.split(Platform.pathSeparator).last;
     final formData = FormData.fromMap(<String, dynamic>{
       'file': await MultipartFile.fromFile(file.path, filename: fileName),
     });
-    final response = await _dio.post('/chat/media', data: formData);
+    final response = await _dio.post(
+      '/chat/media',
+      data: formData,
+      onSendProgress: onProgress == null
+          ? null
+          : (sent, total) {
+              if (total <= 0) return;
+              onProgress((sent / total).clamp(0.0, 1.0));
+            },
+    );
     final data = response.data is Map ? response.data['data'] : null;
     if (data is Map && data['url'] != null) {
       return ChatMediaUpload.fromJson(Map<String, dynamic>.from(data));

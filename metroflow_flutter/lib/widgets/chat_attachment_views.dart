@@ -1476,6 +1476,25 @@ class _TranscriptLine {
 /// container is unsupported on the device (e.g. WEBM on iOS), the sheet
 /// degrades to "Open externally" / "Download & open" fallbacks instead of a
 /// dead player.
+/// PUBLIC entry: in-app recording playback sheet (video or audio). Reused by
+/// the Recordings tab on the meetings screen and the call-log summary sheet.
+Future<void> showRecordingPlayerSheet(
+  BuildContext context, {
+  required String url,
+  required String fileName,
+}) async {
+  final colors = AppTheme.colors;
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: colors.surface,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (_) => _RecordingPlayerSheet(url: url, fileName: fileName),
+  );
+}
+
 class _RecordingPlayerSheet extends StatefulWidget {
   final String url;
   final String fileName;
