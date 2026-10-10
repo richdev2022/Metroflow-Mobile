@@ -13,6 +13,8 @@ import '../models/message.dart';
 import '../services/api.dart';
 import '../theme/app_theme.dart';
 import '../utils/chat_media_utils.dart';
+import '../utils/app_toast.dart';
+import 'package:url_launcher/url_launcher.dart' as url_launcher;
 import '../utils/logger.dart';
 
 // =============================================================================
@@ -1011,6 +1013,9 @@ class _CallLogSummarySheetState extends State<CallLogSummarySheet> {
   final List<_TranscriptLine> _transcript = [];
   bool _loading = true;
   bool _transcriptAvailable = false;
+  /// Latest recording row for this call (from GET /calls/:id → `recording`).
+  /// `storageUrl` is already resolved/presigned by the backend.
+  Map<String, dynamic>? _recording;
 
   late final ChatCallLogMeta? _meta;
 
@@ -1036,6 +1041,14 @@ class _CallLogSummarySheetState extends State<CallLogSummarySheet> {
         final response = await api.getCallById(callId);
         if (response.data['success'] == true && response.data['data'] is Map) {
           _call = Map<String, dynamic>.from(response.data['data'] as Map);
+          final rec = _call?['recording'];
+          if (rec is Map) {
+            final url = ApiService.resolveMediaUrl(rec['storageUrl']?.toString());
+            if (url != null && url.isNotEmpty) {
+              _recording = Map<String, dynamic>.from(rec);
+              _recording!['storageUrl'] = url;
+            }
+          }
         }
       } catch (e) {
         Logger.error('CallLogSummarySheet: getCallById failed: $e');
@@ -1093,6 +1106,133 @@ class _CallLogSummarySheetState extends State<CallLogSummarySheet> {
         return '';
       default:
         return status;
+    }
+  }
+
+  /// Recording block inside the call summary: play (in-app player with an
+  /// external/download fallback), download, and processing/failed states.
+  Widget _buildRecordingSection(ThemeColors colors) {
+    final rec = _recording!;
+    final recStatus = rec['status']?.toString() ?? 'completed';
+    final url = rec['storageUrl']?.toString() ?? '';
+    if (url.isEmpty) return const SizedBox.shrink();
+
+    final seconds = rec['duration'] is num ? (rec['duration'] as num).toInt() : 0;
+    final durationLabel = seconds > 0 ? ' · ${formatCallDuration(seconds)}' : '';
+    final ext = url.split('?').first.split('.').last.toLowerCase();
+    final fileName = 'metricorex-recording-${rec['id'] ?? DateTime.now().millisecondsSinceEpoch}'
+        '${ext.length >= 2 && ext.length <= 5 ? '.$ext' : '.mp4'}';
+
+    IconData statusIcon;
+    String statusText;
+    Color statusColor;
+    switch (recStatus) {
+      case 'completed':
+        statusIcon = Icons.play_circle_fill_rounded;
+        statusText = 'Play recording$durationLabel';
+        statusColor = colors.success;
+      case 'processing':
+        statusIcon = Icons.hourglass_top_rounded;
+        statusText = 'Recording is processing…';
+        statusColor = colors.textSecondary;
+      case 'failed':
+        statusIcon = Icons.error_outline_rounded;
+        statusText = 'Recording failed';
+        statusColor = colors.error;
+      default:
+        statusIcon = Icons.graphic_eq_rounded;
+        statusText = 'Recording$durationLabel';
+        statusColor = colors.textSecondary;
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Recording',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.4,
+            color: colors.textSecondary,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          decoration: BoxDecoration(
+            color: colors.surfaceVariant,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: recStatus == 'completed'
+                      ? () => unawaited(_playRecording(url, fileName))
+                      : null,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    child: Row(
+                      children: [
+                        Icon(statusIcon, size: 22, color: statusColor),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            statusText,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w600,
+                              color: recStatus == 'completed'
+                                  ? colors.text
+                                  : colors.textSecondary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Download',
+                icon: Icon(Icons.download_rounded, size: 20, color: colors.textSecondary),
+                onPressed: recStatus == 'completed'
+                    ? () => unawaited(_downloadRecording(url, fileName))
+                    : null,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _playRecording(String url, String fileName) async {
+    final colors = AppTheme.colors;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: colors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => _RecordingPlayerSheet(url: url, fileName: fileName),
+    );
+  }
+  Future<void> _downloadRecording(String url, String fileName) async {
+    try {
+      AppToast.show('Downloading recording…');
+      final path = await downloadAttachment(context, url: url, fileName: fileName);
+      final result = await OpenFilex.open(path);
+      if (result.type != ResultType.done) {
+        AppToast.show('Saved to $fileName');
+      }
+    } catch (e) {
+      Logger.error('CallLogSummarySheet: recording download failed: $e');
+      AppToast.show('Could not download the recording', type: AppToastType.error);
     }
   }
 
@@ -1259,6 +1399,10 @@ class _CallLogSummarySheetState extends State<CallLogSummarySheet> {
                           ),
                         const SizedBox(height: 8),
                       ],
+                      if (_recording != null) ...[
+                        _buildRecordingSection(colors),
+                        const SizedBox(height: 8),
+                      ],
                       if (_transcriptAvailable) ...[
                         Text(
                           'Live transcript',
@@ -1321,4 +1465,233 @@ class _TranscriptLine {
   final String speaker;
   final String text;
   const _TranscriptLine({required this.speaker, required this.text});
+}
+
+// =============================================================================
+// Recording player (call summary)
+// =============================================================================
+
+/// In-app playback for a call recording (video OR audio-only — the platform
+/// players behind video_player, ExoPlayer/AVPlayer, handle both). If the
+/// container is unsupported on the device (e.g. WEBM on iOS), the sheet
+/// degrades to "Open externally" / "Download & open" fallbacks instead of a
+/// dead player.
+class _RecordingPlayerSheet extends StatefulWidget {
+  final String url;
+  final String fileName;
+  const _RecordingPlayerSheet({required this.url, required this.fileName});
+
+  @override
+  State<_RecordingPlayerSheet> createState() => _RecordingPlayerSheetState();
+}
+
+class _RecordingPlayerSheetState extends State<_RecordingPlayerSheet> {
+  VideoPlayerController? _controller;
+  bool _initialized = false;
+  String? _error;
+  bool _downloading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_open());
+  }
+
+  Future<void> _open() async {
+    final controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+    try {
+      await controller.initialize();
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+      setState(() {
+        _controller = controller;
+        _initialized = true;
+      });
+      await controller.play();
+    } catch (e) {
+      Logger.error('RecordingPlayer: initialize failed: $e');
+      try {
+        await controller.dispose();
+      } catch (_) {}
+      if (mounted) setState(() => _error = "Couldn't play this recording in-app.");
+    }
+  }
+
+  Future<void> _openExternally() async {
+    try {
+      await url_launcher.launchUrl(
+        Uri.parse(widget.url),
+        mode: url_launcher.LaunchMode.externalApplication,
+      );
+    } catch (_) {
+      AppToast.show('Could not open the recording externally', type: AppToastType.error);
+    }
+  }
+
+  Future<void> _downloadAndOpen() async {
+    if (_downloading) return;
+    setState(() => _downloading = true);
+    try {
+      final dir = await getTemporaryDirectory();
+      final savePath =
+          '${dir.path}/recording-${DateTime.now().millisecondsSinceEpoch}_${widget.fileName}';
+      await ApiService().downloadFile(widget.url, savePath);
+      final result = await OpenFilex.open(savePath);
+      if (result.type != ResultType.done) {
+        AppToast.show('Saved as ${widget.fileName}');
+      }
+    } catch (e) {
+      Logger.error('RecordingPlayer: download failed: $e');
+      AppToast.show('Could not download the recording', type: AppToastType.error);
+    } finally {
+      if (mounted) setState(() => _downloading = false);
+    }
+  }
+
+  String _fmt(Duration d) {
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppTheme.colors;
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.graphic_eq_rounded, size: 20, color: colors.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Call recording',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                      color: colors.text,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close_rounded, size: 20),
+                  color: colors.textSecondary,
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (_error != null) ...[
+              Text(
+                _error!,
+                style: TextStyle(fontSize: 13.5, color: colors.textSecondary),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _openExternally,
+                      icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                      label: const Text('Open externally'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: _downloading ? null : _downloadAndOpen,
+                      icon: _downloading
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.download_rounded, size: 18),
+                      label: const Text('Download'),
+                    ),
+                  ),
+                ],
+              ),
+            ] else if (!_initialized) ...[
+              SizedBox(
+                height: 120,
+                child: Center(
+                  child: CircularProgressIndicator(strokeWidth: 2, color: colors.primary),
+                ),
+              ),
+            ] else ...[
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: AspectRatio(
+                  aspectRatio: _controller!.value.aspectRatio == 0
+                      ? 16 / 9
+                      : _controller!.value.aspectRatio,
+                  child: VideoPlayer(_controller!),
+                ),
+              ),
+              const SizedBox(height: 10),
+              VideoProgressIndicator(
+                _controller!,
+                allowScrubbing: true,
+                colors: VideoProgressColors(
+                  playedColor: colors.primary,
+                  bufferedColor: colors.surfaceVariant,
+                  backgroundColor: colors.border,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Text(
+                    _fmt(_controller!.value.position),
+                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                  ),
+                  const Spacer(),
+                  Text(
+                    _fmt(_controller!.value.duration),
+                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Center(
+                child: IconButton(
+                  iconSize: 44,
+                  icon: Icon(
+                    _controller!.value.isPlaying
+                        ? Icons.pause_circle_filled_rounded
+                        : Icons.play_circle_fill_rounded,
+                    color: colors.primary,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _controller!.value.isPlaying
+                          ? _controller!.pause()
+                          : _controller!.play();
+                    });
+                  },
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }
