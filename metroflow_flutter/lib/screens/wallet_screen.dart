@@ -108,6 +108,12 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
       });
       if (ninVerified && bvnVerified) {
         await fetchWalletData();
+        // Transaction limits modal — once per session, only on the REAL
+        // wallet view (KYC verified), so it never stacks on the KYC gate.
+        if (mounted && !TransactionLimitsSession.walletShown) {
+          TransactionLimitsSession.walletShown = true;
+          await showTransactionLimitsModal(context);
+        }
       }
     } catch (e) {
       debugPrint('Failed to fetch KYC status: $e');
@@ -710,15 +716,10 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                     ),
                     const SizedBox(height: 16),
 
-                    // Web-parity inflow/outflow transaction limits card —
-                    // the tier's funding + transfer limits with live daily
-                    // head-room (same panel as the web wallet page).
-                    const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 16),
-                      child: TransactionLimitsCard(),
-                    ),
-                    const SizedBox(height: 16),
-
+                    // Transaction limits: MODAL UX — the limits panel pops
+                    // as a once-per-session dialog right after the wallet
+                    // loads (see checkKycStatus), with Upgrade Now / Skip.
+                    // The always-on inline card is gone to match.
                     const SizedBox(height: 100),
                   ],
                 ),

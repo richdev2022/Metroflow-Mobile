@@ -8,6 +8,7 @@ import '../services/biometrics.dart';
 import '../services/google_auth_service.dart';
 import '../services/push_notification_service.dart';
 import '../services/socket_service.dart';
+import '../widgets/transaction_limits_card.dart' show TransactionLimitsSession;
 
 class AuthState {
   final bool isAuthenticated;
@@ -282,6 +283,9 @@ class AuthNotifier extends Notifier<AuthState> {
         isAuthenticated: true,
         biometricsEnabled: biometricsForAccount,
       );
+      // Fresh session → the transaction-limits modal may pop again on the
+      // home dashboard / wallet / payroll (once per session, per surface).
+      TransactionLimitsSession.reset();
       resetIdleTimer();
 
       // Keep the server-backed biometric enrollment fresh for this device

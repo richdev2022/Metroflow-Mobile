@@ -8,6 +8,7 @@ import '../theme/app_theme.dart';
 import '../utils/app_timezone.dart';
 import '../utils/app_toast.dart';
 import '../widgets/modern_ui.dart';
+import '../widgets/transaction_limits_card.dart';
 
 class PayrollScreen extends StatefulWidget {
   const PayrollScreen({super.key});
@@ -97,6 +98,15 @@ class _PayrollScreenState extends State<PayrollScreen> {
     super.initState();
     _fetchPayrollData();
     _fetchBanks();
+    // Transaction limits: MODAL UX — once per session on Payroll open, with
+    // Upgrade Now / Skip. Self-dismisses when no limits are configured.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!TransactionLimitsSession.payrollShown) {
+        TransactionLimitsSession.payrollShown = true;
+        showTransactionLimitsModal(context);
+      }
+    });
   }
 
   @override
