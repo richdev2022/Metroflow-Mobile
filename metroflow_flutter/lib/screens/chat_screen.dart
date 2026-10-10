@@ -34,7 +34,7 @@ String? _formatLastMessagePreview(String? raw) {
     final isVideo = meta['callType'] == 'video';
     final icon = isVideo ? '📹' : '📞';
     final label = isVideo ? 'Video call' : 'Voice call';
-    final status = String(meta['status'] ?? '').toLowerCase();
+    final status = '${meta['status'] ?? ''}'.toLowerCase();
     final duration = int.tryParse('${meta['durationSeconds'] ?? 0}') ?? 0;
     String detail;
     if (status == 'missed') {

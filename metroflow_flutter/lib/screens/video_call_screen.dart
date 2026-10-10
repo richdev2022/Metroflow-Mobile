@@ -19,6 +19,7 @@ import '../services/calling/livekit_engine.dart';
 import '../services/captions_service.dart';
 import '../services/socket_service.dart';
 import '../services/api.dart' show ApiService, StorageService;
+import 'package:dio/dio.dart' show DioException;
 import '../models/user.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_feedback.dart';
@@ -187,6 +188,10 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   bool _isVideoEnabled = true;
   bool _isScreenSharing = false;
   bool _isRecording = false;
+  /// LiveKit egress recording id for the ACTIVE recording (from the REST
+  /// start response). Used to stop the right egress; null when not recording
+  /// or when the room fell back to client-mode (MediaSoup).
+  String? _serverRecordingId;
   bool _showChat = false;
   bool _hasLeft = false;
   bool _cleanupDone = false;
@@ -1482,17 +1487,76 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     }
   }
 
-  void _toggleRecording() {
+  /// Host recording toggle — routes through the SAME REST endpoints the web
+  /// uses (POST /rtc/rooms/:roomType/:roomId/recording/start|stop) so the
+  /// LiveKit room-composite egress actually runs and an MP4 lands in R2.
+  ///
+  /// The old implementation only emitted socket `recording:start/stop`, which
+  /// the backend merely RELAYS to other participants — no row, no egress, no
+  /// file: the red dot was cosmetic and no recording ever existed afterwards.
+  /// Socket echo (recording:started/stopped) still syncs other clients and
+  /// keeps this device's indicator honest.
+  Future<void> _toggleRecording() async {
     if (_isRecording) {
-      _socket.emitRecordingStop({
-        widget.isMeeting ? 'meetingId' : 'callId': widget.roomId,
-      });
-    } else {
-      _socket.emitRecordingStart({
-        widget.isMeeting ? 'meetingId' : 'callId': widget.roomId,
-      });
+      try {
+        await ApiService().stopRoomRecording(
+          isMeeting: widget.isMeeting,
+          roomId: widget.roomId,
+          recordingId: _serverRecordingId,
+        );
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_recordingErrorMessage(e, fallback: 'Failed to stop recording'))),
+          );
+        }
+      } finally {
+        _serverRecordingId = null;
+        if (mounted) setState(() => _isRecording = false);
+      }
+      return;
     }
-    setState(() => _isRecording = !_isRecording);
+    try {
+      final data = await ApiService().startRoomRecording(
+        isMeeting: widget.isMeeting,
+        roomId: widget.roomId,
+      );
+      if (data?['mode']?.toString() == 'server') {
+        _serverRecordingId = data?['recordingId']?.toString();
+        if (mounted) setState(() => _isRecording = true);
+      } else {
+        // MediaSoup rooms have no server-side recorder — composite recording
+        // is only available on the web client. Keep the indicator OFF instead
+        // of faking it (a fake dot produced no file afterwards).
+        _serverRecordingId = null;
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Server recording is unavailable for this session type — use the web app to record it.'),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_recordingErrorMessage(e, fallback: 'Failed to start recording'))),
+        );
+      }
+    }
+  }
+
+  /// Human-friendly message for recording REST errors (403 non-host,
+  /// 409 already recording, 410 room ended…).
+  String _recordingErrorMessage(Object e, {required String fallback}) {
+    if (e is DioException) {
+      final data = e.response?.data;
+      if (data is Map) {
+        final err = data['error']?.toString();
+        if (err != null && err.isNotEmpty) return err;
+      }
+    }
+    return fallback;
   }
 
   // -------------------------------------------------------------------------
