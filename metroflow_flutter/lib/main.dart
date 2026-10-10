@@ -162,7 +162,9 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
           transferRef = segments.first;
         }
         if (transferRef != null && transferRef.isNotEmpty) {
-          GoRouter.of(ctx).go('/main/transfers');
+          // PUSH (not go): detail-style screen needs the previous screen
+          // underneath, otherwise back exits the app from a shell-less page.
+          GoRouter.of(ctx).push('/main/transfers');
           return;
         }
         // metricorex://chat/join/<code> — group invite link (host 'chat',
@@ -179,7 +181,9 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         }
         if (inviteCode != null && inviteCode.isNotEmpty) {
           ChatDetailScreen.pendingChatJoinCode = inviteCode;
-          GoRouter.of(ctx).go('/main/chat');
+          // /main?tab=2 renders the chat list INSIDE the MainScreen shell —
+  // a bare go('/main/chat') strips the shell (no bottom bar/back).
+          GoRouter.of(ctx).go('/main?tab=2');
         }
       }
 
@@ -261,7 +265,9 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
           onTap: () {
             final context = navigatorKey.currentContext;
             if (context != null) {
-              GoRouter.of(context).go('/main/chat');
+              // Shell-safe chat tab route (see /main?tab note in
+              // push_notification_service.dart).
+              GoRouter.of(context).go('/main?tab=2');
             }
           },
         );

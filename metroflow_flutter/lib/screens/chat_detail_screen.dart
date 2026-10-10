@@ -317,6 +317,7 @@ class _ChatDetailScreenState
                   : (p.email.isNotEmpty ? p.email : 'Member'),
               email: p.email,
               avatarUrl: p.avatarUrl,
+              role: p.role,
             ))
         .toList();
     final other = conversation.otherParticipant(currentId);
@@ -326,6 +327,7 @@ class _ChatDetailScreenState
             name: other.name.trim(),
             email: other.email,
             avatarUrl: other.avatarUrl,
+            role: other.role,
           )
         : (members.isNotEmpty
             ? members.first
@@ -1101,6 +1103,7 @@ class _ChatDetailScreenState
                         : (p.email.isNotEmpty ? p.email : 'Member'),
                     email: p.email,
                     avatarUrl: p.avatarUrl,
+                    role: p.role,
                   ))
               .toList();
           _mentionLoaded = true;
