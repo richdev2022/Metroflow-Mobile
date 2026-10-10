@@ -810,6 +810,73 @@ class _AddMemberPickerState extends State<_AddMemberPicker> {
     super.dispose();
   }
 
+  // ---- Add-by-email (platform-wide members) -------------------------------
+  // The backend validates ANY registered Metricorex user for group members,
+  // but the picker only listed workspace teammates. Typing an email now
+  // resolves the account via /chat/contacts/lookup so cross-workspace users
+  // are addable exactly like the web flow.
+  static final RegExp _emailRe = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
+  bool _lookingUpEmail = false;
+  String? _emailLookupNote;
+  ChatUserProfile? _emailCandidate;
+
+  bool get _searchIsEmail => _emailRe.hasMatch(_searchController.text.trim());
+
+  Future<void> _lookupEmail() async {
+    final email = _searchController.text.trim().toLowerCase();
+    if (!_emailRe.hasMatch(email) || _lookingUpEmail) return;
+    setState(() {
+      _lookingUpEmail = true;
+      _emailLookupNote = null;
+      _emailCandidate = null;
+    });
+    try {
+      final response = await _api.lookupChatContact(email);
+      final data = response.data is Map ? response.data['data'] : null;
+      if (!mounted) return;
+      if (data is Map && data['registered'] == true) {
+        final userId = (data['userId'] ?? data['user_id'] ?? '').toString();
+        if (userId.isEmpty) {
+          setState(() {
+            _emailLookupNote = 'Could not resolve this account';
+            _lookingUpEmail = false;
+          });
+          return;
+        }
+        if (widget.existingIds.contains(userId)) {
+          setState(() {
+            _emailLookupNote = 'Already a member of this group';
+            _lookingUpEmail = false;
+          });
+          return;
+        }
+        setState(() {
+          _emailCandidate = ChatUserProfile(
+            userId: userId,
+            name: (data['name'] ?? '').toString().trim().isNotEmpty
+                ? (data['name'] ?? '').toString().trim()
+                : email,
+            email: email,
+          );
+          _lookingUpEmail = false;
+        });
+      } else {
+        setState(() {
+          _emailLookupNote =
+              'No Metricorex account found for this email';
+          _lookingUpEmail = false;
+        });
+      }
+    } catch (e) {
+      Logger.error('Add-member email lookup failed: $e');
+      if (!mounted) return;
+      setState(() {
+        _emailLookupNote = ApiService.extractErrorMessage(e);
+        _lookingUpEmail = false;
+      });
+    }
+  }
+
   Future<void> _loadTeam() async {
     setState(() {
       _loading = true;
@@ -876,6 +943,193 @@ class _AddMemberPickerState extends State<_AddMemberPicker> {
     await widget.onConfirm(ids);
   }
 
+  /// The "add by email" row: idle (tap to check), a resolvable platform
+  /// member (selectable like a teammate row), or a status note.
+  Widget _buildEmailLookupRow(ThemeColors colors) {
+    final email = _searchController.text.trim();
+    final candidate = _emailCandidate;
+    final selected = candidate != null && _selected.contains(candidate.userId);
+    return InkWell(
+      onTap: candidate == null && !_lookingUpEmail
+          ? _lookupEmail
+          : candidate == null
+              ? null
+              : () {
+                  setState(() {
+                    if (selected) {
+                      _selected.remove(candidate.userId);
+                    } else {
+                      _selected.add(candidate.userId);
+                    }
+                  });
+                },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          children: [
+            AvatarWithInitials(
+              name: candidate?.displayName ?? email,
+              imageUrl: candidate?.avatarUrl,
+              radius: 19,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    candidate?.displayName ?? 'Add by email',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w600,
+                      color: colors.text,
+                    ),
+                  ),
+                  Text(
+                    _lookingUpEmail
+                        ? 'Checking…'
+                        : candidate != null
+                            ? email
+                            : (_emailLookupNote ??
+                                'Tap to look up $email platform-wide'),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: candidate != null
+                          ? colors.textSecondary
+                          : colors.primary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            if (candidate != null)
+              Icon(
+                selected
+                    ? Icons.check_box_rounded
+                    : Icons.check_box_outline_blank_rounded,
+                size: 22,
+                color: selected ? colors.primary : colors.textSecondary,
+              )
+            else if (_lookingUpEmail)
+              SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: colors.primary),
+              )
+            else
+              Icon(Icons.alternate_email_rounded,
+                  size: 20, color: colors.textSecondary),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCandidates(ThemeColors colors, List<ChatUserProfile> filtered) {
+    if (_loadError != null) {
+      return Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _loadError!,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: colors.error),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              onPressed: _loadTeam,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+    }
+    if (filtered.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.all(24),
+        child: Text(
+          'Everyone in your workspace is already here — or type an email above to add a Metricorex user from another workspace',
+          style: TextStyle(fontSize: 13.5, color: colors.textSecondary),
+        ),
+      );
+    }
+    return ListView.builder(
+      shrinkWrap: true,
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      itemCount: filtered.length,
+      itemBuilder: (context, index) {
+        final member = filtered[index];
+        final selected = _selected.contains(member.userId);
+        return InkWell(
+          onTap: () => setState(() {
+            if (selected) {
+              _selected.remove(member.userId);
+            } else {
+              _selected.add(member.userId);
+            }
+          }),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(
+              children: [
+                AvatarWithInitials(
+                  name: member.displayName,
+                  imageUrl: member.avatarUrl,
+                  radius: 19,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        member.displayName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w600,
+                          color: colors.text,
+                        ),
+                      ),
+                      if (member.email.trim().isNotEmpty)
+                        Text(
+                          member.email.trim(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colors.textSecondary,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(
+                  selected
+                      ? Icons.check_box_rounded
+                      : Icons.check_box_outline_blank_rounded,
+                  size: 22,
+                  color: selected ? colors.primary : colors.textSecondary,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = AppTheme.colors;
@@ -939,110 +1193,16 @@ class _AddMemberPickerState extends State<_AddMemberPicker> {
                             CircularProgressIndicator(color: colors.primary),
                       ),
                     )
-                  : _loadError != null
-                      ? Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                _loadError!,
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                    fontSize: 13, color: colors.error),
-                              ),
-                              const SizedBox(height: 10),
-                              OutlinedButton.icon(
-                                onPressed: _loadTeam,
-                                icon: const Icon(Icons.refresh_rounded,
-                                    size: 18),
-                                label: const Text('Retry'),
-                              ),
-                            ],
-                          ),
-                        )
-                      : filtered.isEmpty
-                          ? Padding(
-                              padding: const EdgeInsets.all(24),
-                              child: Text(
-                                'Everyone in your workspace is already here',
-                                style: TextStyle(
-                                    fontSize: 13.5, color: colors.textSecondary),
-                              ),
-                            )
-                          : ListView.builder(
-                              shrinkWrap: true,
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 4),
-                              itemCount: filtered.length,
-                              itemBuilder: (context, index) {
-                                final member = filtered[index];
-                                final selected =
-                                    _selected.contains(member.userId);
-                                return InkWell(
-                                  onTap: () => setState(() {
-                                    if (selected) {
-                                      _selected.remove(member.userId);
-                                    } else {
-                                      _selected.add(member.userId);
-                                    }
-                                  }),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 16, vertical: 8),
-                                    child: Row(
-                                      children: [
-                                        AvatarWithInitials(
-                                          name: member.displayName,
-                                          imageUrl: member.avatarUrl,
-                                          radius: 19,
-                                        ),
-                                        const SizedBox(width: 12),
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              Text(
-                                                member.displayName,
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: TextStyle(
-                                                  fontSize: 14.5,
-                                                  fontWeight: FontWeight.w600,
-                                                  color: colors.text,
-                                                ),
-                                              ),
-                                              if (member.email.trim().isNotEmpty)
-                                                Text(
-                                                  member.email.trim(),
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                  style: TextStyle(
-                                                    fontSize: 12,
-                                                    color: colors.textSecondary,
-                                                  ),
-                                                ),
-                                            ],
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Icon(
-                                          selected
-                                              ? Icons.check_box_rounded
-                                              : Icons.check_box_outline_blank_rounded,
-                                          size: 22,
-                                          color: selected
-                                              ? colors.primary
-                                              : colors.textSecondary,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
+                  : Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Add-by-email row: appears only while the search box
+                        // holds an email address (platform-wide lookup).
+                        if (_searchIsEmail)
+                          _buildEmailLookupRow(colors),
+                        Expanded(child: _buildCandidates(colors, filtered)),
+                      ],
+                    ),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),

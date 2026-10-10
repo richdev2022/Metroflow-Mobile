@@ -65,8 +65,14 @@ class Task {
       dueDate: json['dueDate'] as String?,
       status: (json['status'] as String?) ?? 'pending',
       isOverdue: (json['isOverdue'] as bool?) ?? false,
-      assignedTo: json['assignedTo'] != null
-          ? List<String>.from(json['assignedTo'] as List<dynamic>)
+      // NEVER let one malformed row kill the whole column: convert every
+      // element defensively (List<String>.from threw on a single non-String
+      // entry — one bad task row used to abort the ENTIRE board parse).
+      assignedTo: json['assignedTo'] is List
+          ? (json['assignedTo'] as List<dynamic>)
+              .map((e) => e == null ? '' : e.toString())
+              .where((s) => s.isNotEmpty)
+              .toList()
           : null,
       attachments: json['attachments'] is List
           ? (json['attachments'] as List<dynamic>)
@@ -93,8 +99,11 @@ class Task {
               .whereType<Comment>()
               .toList()
           : null,
-      images: json['images'] != null
-          ? List<String>.from(json['images'] as List<dynamic>)
+      images: json['images'] is List
+          ? (json['images'] as List<dynamic>)
+              .map((e) => e == null ? '' : e.toString())
+              .where((s) => s.isNotEmpty)
+              .toList()
           : null,
       createdAt: (json['createdAt'] as String?) ?? '',
       updatedAt: (json['updatedAt'] as String?) ?? '',

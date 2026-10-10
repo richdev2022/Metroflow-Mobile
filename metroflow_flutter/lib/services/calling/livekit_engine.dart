@@ -272,6 +272,9 @@ class LiveKitEngine implements CallingEngine {
       id: publication.sid,
       producerId: publication.sid,
       peerId: participant.identity,
+      // LiveKit join tokens carry the caller's display name (minted server-side
+      // from the users table) — surface it so tiles show real names, not Guest.
+      participantName: (participant.name?.isNotEmpty == true) ? participant.name : null,
       kind: isAudio ? 'audio' : 'video',
       source: isScreen
           ? 'screen'

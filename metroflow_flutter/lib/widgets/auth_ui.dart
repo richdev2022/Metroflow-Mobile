@@ -82,48 +82,66 @@ class _AuthScreenShellState extends State<AuthScreenShell>
 
   @override
   Widget build(BuildContext context) {
+    // RESPONSIVE HARDENING (small phones / tall system fonts / aggressive
+    // OEM keyboards): the old structure — Center OUTSIDE the SingleChildScrollView
+    // — left the register CTA + Google SSO clipped on some devices: with the
+    // keyboard open, OEM resize quirks could pin the viewport to the TOP of
+    // the content with no reachable bottom. The canonical fix:
+    //   SingleChildScrollView > ConstrainedBox(minHeight: viewport) > Center
+    // content centers when it fits, and scrolls FROM THE TOP when it does
+    // not — the bottom is always reachable by construction.
     return SafeArea(
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 480),
-          child: SingleChildScrollView(
+      child: LayoutBuilder(
+        builder: (context, viewport) {
+          final keyboardInset = MediaQuery.of(context).viewInsets.bottom;
+          return SingleChildScrollView(
             padding: EdgeInsets.only(
               left: 24,
               right: 24,
               top: widget.padding.vertical / 2,
-              bottom: 24 + MediaQuery.of(context).viewInsets.bottom,
+              // Extra 32px headroom so the LAST row (Google SSO / switch
+              // prompt) never kisses the gesture-nav bar or the keyboard.
+              bottom: 32 + keyboardInset,
             ),
-            child: FadeTransition(
-              opacity: _fade,
-              child: SlideTransition(
-                position: _slide,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    if (widget.onBack != null)
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: _PillBackButton(
-                          onTap: () {
-                            // GUARDED back: `context.go()` navigation (deep
-                            // links, post-register flows) leaves nothing to
-                            // pop — silently do nothing there. Fall back to
-                            // /login so the arrow ALWAYS does something sane.
-                            if (context.canPop()) {
-                              context.pop();
-                            } else {
-                              context.go('/login');
-                            }
-                          },
-                        ),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: viewport.maxHeight),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 480),
+                  child: FadeTransition(
+                    opacity: _fade,
+                    child: SlideTransition(
+                      position: _slide,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (widget.onBack != null)
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: _PillBackButton(
+                                onTap: () {
+                                  // GUARDED back: `context.go()` navigation (deep
+                                  // links, post-register flows) leaves nothing to
+                                  // pop — silently do nothing there. Fall back to
+                                  // /login so the arrow ALWAYS does something sane.
+                                  if (context.canPop()) {
+                                    context.pop();
+                                  } else {
+                                    context.go('/login');
+                                  }
+                                },
+                              ),
+                            ),
+                          ...widget.children,
+                        ],
                       ),
-                    ...widget.children,
-                  ],
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
@@ -387,6 +405,11 @@ class _AuthTextFieldState extends State<AuthTextField> {
                 isDense: true,
                 contentPadding: const EdgeInsets.symmetric(vertical: 17),
               ),
+              // Default scrollPadding (20px) cannot clear a tall keyboard —
+              // focusing the LAST field left the submit CTA permanently off-
+              // screen on small phones. Reserve enough room below the focused
+              // field for the keyboard + the row behind it.
+              scrollPadding: const EdgeInsets.only(bottom: 140),
             ),
           ),
         ],
@@ -481,6 +504,8 @@ class _AuthPasswordFieldState extends State<AuthPasswordField> {
                 isDense: true,
                 contentPadding: const EdgeInsets.symmetric(vertical: 17),
               ),
+              // Same keyboard headroom as AuthTextField (see above).
+              scrollPadding: const EdgeInsets.only(bottom: 140),
             ),
           ),
           IconButton(
