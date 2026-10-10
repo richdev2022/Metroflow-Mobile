@@ -5,9 +5,12 @@ import 'package:flutter/services.dart';
 
 /// Centralised audio + haptic feedback.
 ///
-/// All sounds are bundled WAV assets under `assets/sounds/` played through
-/// `audioplayers` (replaces the old SystemSound.alert beeps which could not
-/// be customised and were inaudible on many Android devices).
+/// Sounds are bundled assets under `assets/sounds/` played through
+/// `audioplayers`. The five user-supplied clips (2026-10) ship as MP3:
+/// message-sent / message-received / push-notification / status-published /
+/// ringtone; the legacy call-ended, ringback and participant-join clips are
+/// still WAV. (Replaces the old SystemSound.alert beeps which could not be
+/// customised and were inaudible on many Android devices.)
 ///
 /// Every audio call is wrapped in try/catch — a missing/broken asset must
 /// never crash the app; haptics still run as a fallback.
@@ -49,15 +52,27 @@ class AppFeedback {
   // One-shot sounds
   // -------------------------------------------------------------------------
 
-  /// Short message/notification blip + light haptic.
+  /// Chat message received blip + light haptic.
   static void playMessageSound() {
     HapticFeedback.lightImpact();
-    _playOnce('sounds/message-received.wav');
+    _playOnce('sounds/message-received.mp3');
   }
 
   /// Subtle confirmation for outgoing messages.
   static void playSentSound() {
-    _playOnce('sounds/message-sent.wav');
+    _playOnce('sounds/message-sent.mp3');
+  }
+
+  /// Generic (non-chat) push notification sound — meeting invites, wallet
+  /// credits, admin announcements. Chat messages use [playMessageSound].
+  static void playPushNotificationSound() {
+    HapticFeedback.lightImpact();
+    _playOnce('sounds/push-notification.mp3');
+  }
+
+  /// Chat status (story) published successfully.
+  static void playStatusPublishedSound() {
+    _playOnce('sounds/status-published.mp3');
   }
 
   /// "Call ended" blip (remote end / hang-up).
@@ -110,7 +125,7 @@ class AppFeedback {
         await player.setAudioContext(_ringAudioContext);
         await player.setReleaseMode(ReleaseMode.loop);
         await player.setVolume(1.0);
-        await player.play(AssetSource('sounds/ringtone.wav'));
+        await player.play(AssetSource('sounds/ringtone.mp3'));
       } catch (_) {
         // Asset missing or platform audio error — haptics below still run.
       }

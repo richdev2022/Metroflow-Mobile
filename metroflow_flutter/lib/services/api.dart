@@ -2231,6 +2231,11 @@ class ApiService {
   /// Make a media URL absolute. The backend returns absolute URLs for
   /// R2-hosted files but RELATIVE paths (`/uploads/...`) for the local upload
   /// fallback — players (audioplayers / network images) need absolute URLs.
+  ///
+  /// Bare object keys ("recordings/<biz>/<id>.mp4" from the LiveKit egress
+  /// webhook, or chat/metricai keys uploaded to R2 without a public URL) are
+  /// NOT URLs — they are routed through the API's public /files/<key>
+  /// streaming endpoint, mirroring the web/media-upload normalization.
   static String? resolveMediaUrl(String? url) {
     if (url == null || url.isEmpty) return null;
     if (url.startsWith('http://') ||
@@ -2240,7 +2245,9 @@ class ApiService {
       return url;
     }
     if (url.startsWith('/')) return '$_apiOrigin$url';
-    return url;
+    final bare = url.replaceFirst(RegExp(r'^\.?/'), '');
+    if (bare.toLowerCase().startsWith('uploads/')) return '$_apiOrigin/$bare';
+    return '$_apiOrigin/files/$bare';
   }
 
   /// Mark a conversation as read (clears unread badge for the current user).
@@ -2420,6 +2427,51 @@ class ApiService {
       if (duration != null) 'duration': duration,
     });
     return await _dio.post('/recordings/$id/upload', data: formData);
+  }
+
+  /// Start SERVER-SIDE recording for a call/meeting room (host only).
+  /// Backend: POST /rtc/rooms/:roomType/:roomId/recording/start
+  ///
+  /// Returns the response `data` map:
+  ///  - { mode: 'server', recordingId, egressId, ... } → LiveKit egress started;
+  ///    pass `recordingId` to [stopRoomRecording]. A DB row was created and the
+  ///    finalized MP4 lands in R2 (webhook sets storage_url).
+  ///  - { mode: 'client', reason? } → the room's provider (MediaSoup) has no
+  ///    server recorder; composite recording is only available on web.
+  ///
+  /// Throws DioException on errors (403 non-host, 409 already recording, 410
+  /// room ended) — callers surface `error.response.data['error']`.
+  Future<Map<String, dynamic>?> startRoomRecording({
+    required bool isMeeting,
+    required String roomId,
+    bool audioOnly = false,
+  }) async {
+    final roomType = isMeeting ? 'meeting' : 'call';
+    final response = await _dio.post(
+      '/rtc/rooms/$roomType/$roomId/recording/start',
+      data: {'audioOnly': audioOnly},
+    );
+    return response.data is Map<String, dynamic>
+        ? (response.data['data'] as Map<String, dynamic>?)
+        : null;
+  }
+
+  /// Stop the active server-side recording (host only).
+  /// Backend: POST /rtc/rooms/:roomType/:roomId/recording/stop
+  /// Returns { recordingId, mediaStopped } from the response `data`.
+  Future<Map<String, dynamic>?> stopRoomRecording({
+    required bool isMeeting,
+    required String roomId,
+    String? recordingId,
+  }) async {
+    final roomType = isMeeting ? 'meeting' : 'call';
+    final response = await _dio.post(
+      '/rtc/rooms/$roomType/$roomId/recording/stop',
+      data: {if (recordingId != null && recordingId.isNotEmpty) 'recordingId': recordingId},
+    );
+    return response.data is Map<String, dynamic>
+        ? (response.data['data'] as Map<String, dynamic>?)
+        : null;
   }
 
   // Notifications API

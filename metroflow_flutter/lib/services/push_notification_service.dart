@@ -56,10 +56,20 @@ import 'app_badge_service.dart';
 /// ---------------------------------------------------------------------------
 
 /// Notification channel ids — MUST match the backend's `androidChannelId`
-/// ("calls" for incoming-call pushes, "general" for everything else) and the
-/// AndroidManifest meta-data `com.google.firebase.messaging.default_notification_channel_id`.
+/// ("calls" for incoming-call pushes, "messages" for chat-message pushes,
+/// "general-v2" for every other push) and the AndroidManifest meta-data
+/// `com.google.firebase.messaging.default_notification_channel_id`.
+///
+/// WHY "-v2": Android notification-channel settings (including the sound) are
+/// IMMUTABLE once the channel is created on a device — existing installs would
+/// keep the old default sound forever. New channel ids guarantee every install
+/// picks up the user-supplied sounds. The legacy "general" channel is still
+/// created as a fallback so pushes from an not-yet-updated backend never
+/// disappear.
 const String kPushCallChannelId = 'calls';
-const String kPushGeneralChannelId = 'general';
+const String kPushMessagesChannelId = 'messages';
+const String kPushGeneralChannelId = 'general-v2';
+const String kPushLegacyGeneralChannelId = 'general';
 
 /// Normalizes the backend's push `type` discriminator. The contract has used
 /// BOTH spellings over time (socket era: `incoming_call`; FCM era:
@@ -86,9 +96,20 @@ const String kPendingIncomingCallPrefKey = 'pending_incoming_call';
 const String kCallActionAccept = 'accept_call';
 const String kCallActionDecline = 'decline_call';
 
-/// Raw resource (android/app/src/main/res/raw/call_ringtone.wav) used by the
-/// "calls" channel. Raw resource names exclude the extension.
+/// Raw resources (android/app/src/main/res/raw/*.mp3) used by the
+/// notification channels. Raw resource names exclude the extension.
+///  - call_ringtone.mp3      → "calls" channel (user-supplied ringtone)
+///  - chat_receive_alert.mp3 → "messages" channel (chat pushes)
+///  - push_notification.mp3  → "general-v2" channel (misc pushes)
 const String _kCallRingtoneResource = 'call_ringtone';
+const String _kChatReceiveAlertResource = 'chat_receive_alert';
+const String _kPushNotificationResource = 'push_notification';
+
+/// iOS notification sound files bundled in ios/Runner/*.caf (UNNotificationSound
+/// looks them up in the app bundle; the backend's aps.sound uses the same names).
+const String kIosCallRingtoneSound = 'call_ringtone.caf';
+const String kIosChatReceiveAlertSound = 'chat_receive_alert.caf';
+const String kIosPushNotificationSound = 'push_notification.caf';
 
 /// Background/terminated message handler. MUST be top-level (not a closure /
 /// class method) or firebase_messaging throws at runtime; the pragma keeps it
@@ -494,6 +515,7 @@ class PushNotificationService {
           iOS: const DarwinNotificationDetails(
             presentAlert: true,
             presentSound: true,
+            sound: kIosCallRingtoneSound,
             presentBanner: true,
             presentList: true,
             interruptionLevel: InterruptionLevel.timeSensitive,
@@ -508,7 +530,8 @@ class PushNotificationService {
     }
   }
 
-  /// Chat message notification (normal priority path, "general" channel).
+  /// Chat message notification (normal priority path, "messages" channel so
+  /// it plays the user-supplied chat-receive alert instead of the misc sound).
   static Future<void> showChatNotification({
     required String senderName,
     required String body,
@@ -517,9 +540,9 @@ class PushNotificationService {
   }) async {
     try {
       final details = _instance._androidDetails(
-        channelId: kPushGeneralChannelId,
-        channelName: 'General notifications',
-        channelDescription: 'Messages, alerts and account updates.',
+        channelId: kPushMessagesChannelId,
+        channelName: 'Messages',
+        channelDescription: 'Chat messages.',
         fullScreenIntent: false,
       );
       await _instance._localNotifications.show(
@@ -531,6 +554,7 @@ class PushNotificationService {
           iOS: const DarwinNotificationDetails(
             presentAlert: true,
             presentSound: true,
+            sound: kIosChatReceiveAlertSound,
             presentBanner: true,
             presentList: true,
           ),
@@ -564,6 +588,7 @@ class PushNotificationService {
           iOS: const DarwinNotificationDetails(
             presentAlert: true,
             presentSound: true,
+            sound: kIosPushNotificationSound,
             presentBanner: true,
             presentList: true,
           ),
@@ -680,17 +705,19 @@ class PushNotificationService {
     }
   }
 
-  /// Creates the "calls" + "general" notification channels if missing.
-  /// Split out so BOTH the main isolate and the background isolate guarantee
-  /// a fresh install's first background push lands in an existing channel.
+  /// Creates the notification channels if missing. Split out so BOTH the main
+  /// isolate and the background isolate guarantee a fresh install's first
+  /// background push lands in an existing channel.
   static Future<void> _ensureAndroidChannels() async {
     if (defaultTargetPlatform != TargetPlatform.android) return;
     try {
       final androidPlugin = _instance._localNotifications
           .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
       if (androidPlugin == null) return;
-      // "calls": max importance + looping ringtone + alarm audio usage so it
-      // rings while the device is locked.
+      // "calls": max importance + ringtone + alarm audio usage so it rings
+      // while the device is locked. (The resource lookup happens by name at
+      // play time, so replacing call_ringtone.wav with call_ringtone.mp3
+      // updates EXISTING installs too.)
       const callChannel = AndroidNotificationChannel(
         kPushCallChannelId,
         'Incoming calls',
@@ -702,9 +729,32 @@ class PushNotificationService {
         audioAttributesUsage: AudioAttributesUsage.alarm,
         showBadge: true,
       );
-      // "general": default chat/notification sound.
+      // "messages": chat pushes — user-supplied chat-receive alert.
+      const messagesChannel = AndroidNotificationChannel(
+        kPushMessagesChannelId,
+        'Messages',
+        description: 'Chat messages.',
+        importance: Importance.high,
+        playSound: true,
+        sound: RawResourceAndroidNotificationSound(_kChatReceiveAlertResource),
+        enableVibration: true,
+        showBadge: true,
+      );
+      // "general-v2": every non-call non-chat push — user-supplied push sound.
       const generalChannel = AndroidNotificationChannel(
         kPushGeneralChannelId,
+        'General notifications',
+        description: 'Meeting invites, alerts and account updates.',
+        importance: Importance.high,
+        playSound: true,
+        sound: RawResourceAndroidNotificationSound(_kPushNotificationResource),
+        enableVibration: true,
+        showBadge: true,
+      );
+      // Legacy "general" (pre-sound-revamp): still created so pushes from a
+      // not-yet-updated backend land somewhere instead of vanishing.
+      const legacyGeneralChannel = AndroidNotificationChannel(
+        kPushLegacyGeneralChannelId,
         'General notifications',
         description: 'Messages, alerts and account updates.',
         importance: Importance.high,
@@ -713,7 +763,9 @@ class PushNotificationService {
         showBadge: true,
       );
       await androidPlugin.createNotificationChannel(callChannel);
+      await androidPlugin.createNotificationChannel(messagesChannel);
       await androidPlugin.createNotificationChannel(generalChannel);
+      await androidPlugin.createNotificationChannel(legacyGeneralChannel);
     } catch (_) {}
   }
 

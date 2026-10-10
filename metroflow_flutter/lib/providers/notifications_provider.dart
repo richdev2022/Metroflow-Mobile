@@ -121,7 +121,7 @@ class NotificationsNotifier extends Notifier<NotificationsState> {
     // double alerts.
     final type = notification.type.toLowerCase();
     if (type != 'chat' && type != 'call') {
-      AppFeedback.playMessageSound();
+      AppFeedback.playPushNotificationSound();
       final icon = _iconForType(type);
       final accent = _colorForType(type);
       InAppBanner.show(

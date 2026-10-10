@@ -8,7 +8,7 @@ class Recording {
   final String storageUrl;
   final int duration;
   final String status;
-  final int size;
+  final int? size;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -38,7 +38,8 @@ class Recording {
       storageUrl: (json['storageUrl'] ?? json['storage_url']) as String,
       duration: (json['duration']) as int,
       status: (json['status']) as String,
-      size: (json['size']) as int,
+      // Egress-finalized rows can carry a null size — never crash on it.
+      size: (json['size']) as int?,
       createdAt: DateTime.parse((json['createdAt'] ?? json['created_at']) as String),
       updatedAt: DateTime.parse((json['updatedAt'] ?? json['updated_at']) as String),
     );

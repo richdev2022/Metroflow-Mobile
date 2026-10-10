@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 import '../providers/auth_provider.dart';
 import '../services/api.dart';
 import '../theme/app_theme.dart';
+import '../utils/app_feedback.dart';
 import '../utils/app_toast.dart';
 
 /// WHATSAPP-STYLE CHAT STATUS (24h stories) — mobile.
@@ -440,6 +441,7 @@ class _StatusComposerSheetState extends ConsumerState<_StatusComposerSheet> {
         backgroundColor: kStatusPalette[_bgIndex],
       );
       if (!mounted) return;
+      AppFeedback.playStatusPublishedSound();
       Navigator.of(context).pop();
       AppToast.show('Status posted');
     } catch (_) {
