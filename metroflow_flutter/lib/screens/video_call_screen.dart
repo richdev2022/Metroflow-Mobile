@@ -1476,7 +1476,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     // Ours if it matches the id we opened the screen with, the canonical
     // room uuid (join ack), or the server's echo of the id WE addressed.
     if (id == widget.roomId) return true;
-    if (_resolvedRoomId.isNotEmpty && id == _resolvedRoomId) return true;
+    final resolved = _resolvedRoomId;
+    if (resolved != null && resolved.isNotEmpty && id == resolved) return true;
     final requested = payload['requestedRoom']?.toString() ?? '';
     if (requested.isNotEmpty && requested == widget.roomId) return true;
     return false;
@@ -1573,7 +1574,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _clientRecordingPath = null;
     if (danglingRecorder != null) {
       try {
-        await danglingRecorder.stopRecording();
+        await danglingRecorder.stop();
       } catch (_) {}
       if (danglingPath != null) {
         try {
@@ -1770,7 +1771,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
           (localVideo?.isNotEmpty ?? false);
       final path = '${dir.path}/metricorex-local-$stamp.mp4';
       final recorder = MediaRecorder();
-      await recorder.startRecording(
+      await recorder.start(
         path,
         videoTrack: hasVideo ? localVideo!.first : null,
         audioChannel: RecorderAudioChannel.INPUT,
@@ -1818,7 +1819,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     });
     if (recorder == null || path == null) return;
     try {
-      await recorder.stopRecording();
+      await recorder.stop();
       final file = File(path);
       if (!await file.exists()) return;
       final created = await ApiService().startRecording(<String, dynamic>{
