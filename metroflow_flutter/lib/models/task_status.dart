@@ -39,11 +39,20 @@ class TaskStatus {
           DateTime.now(),
       updatedAt: DateTime.tryParse(json['updated_at']?.toString() ?? '') ??
           DateTime.now(),
+      // Tolerant task-row parsing: accept Map<dynamic,dynamic> (some decode
+      // paths don't produce Map<String,dynamic>) and SKIP a bad row instead
+      // of letting one malformed task vanish the entire board.
       tasks: json['tasks'] is List
-          ? (json['tasks'] as List<dynamic>)
-              .whereType<Map<String, dynamic>>()
-              .map(Task.fromJson)
-              .toList()
+          ? (json['tasks'] as List<dynamic>).map((row) {
+              if (row is Map) {
+                try {
+                  return Task.fromJson(Map<String, dynamic>.from(row));
+                } catch (_) {
+                  return null;
+                }
+              }
+              return null;
+            }).whereType<Task>().toList()
           : null,
     );
   }

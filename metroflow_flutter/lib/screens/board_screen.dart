@@ -65,12 +65,58 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
       
       if (mounted) {
         final boardData = boardResponse.data;
-        
+
         if (boardData is Map && boardData['success'] == true) {
           final newStatuses = (boardData['data'] as List?)
               ?.map((e) => TaskStatus.fromJson(e as Map<String, dynamic>))
               .toList() ?? [];
-          setState(() => taskStatuses = newStatuses);
+          var statuses = newStatuses;
+
+          // DEFENSIVE FALLBACK: the board must never look empty while the
+          // tasks list has tasks. If the grouped board payload arrived with
+          // zero tasks (backend grouping regression, legacy deploy, or a
+          // payload the parser skipped), re-fetch /tasks and distribute the
+          // tasks across the columns ourselves (case-insensitive name match,
+          // orphans land in the first column — same rule as the backend).
+          final boardTaskCount = statuses.fold<int>(0, (n, s) => n + (s.tasks?.length ?? 0));
+          if (statuses.isNotEmpty && boardTaskCount == 0) {
+            try {
+              final tasksResponse = await api.getTasks();
+              final tData = tasksResponse.data;
+              final rawTasks = tData is Map
+                  ? (tData['data']?['tasks'] ?? tData['data'] ?? tData['tasks'])
+                  : tData;
+              if (rawTasks is List && rawTasks.isNotEmpty) {
+                final tasks = rawTasks
+                    .whereType<Map>()
+                    .map((e) => Task.fromJson(Map<String, dynamic>.from(e)))
+                    .toList();
+                final buckets = List<List<Task>>.generate(statuses.length, (_) => <Task>[]);
+                for (final t in tasks) {
+                  final idx = statuses.indexWhere(
+                      (s) => s.name.toLowerCase().trim() == t.status.toLowerCase().trim());
+                  (idx >= 0 ? buckets[idx] : buckets.first).add(t);
+                }
+                statuses = [
+                  for (var i = 0; i < statuses.length; i++)
+                    TaskStatus(
+                      id: statuses[i].id,
+                      businessId: statuses[i].businessId,
+                      name: statuses[i].name,
+                      color: statuses[i].color,
+                      isDefault: statuses[i].isDefault,
+                      sortOrder: statuses[i].sortOrder,
+                      createdAt: statuses[i].createdAt,
+                      updatedAt: statuses[i].updatedAt,
+                      tasks: buckets[i],
+                    ),
+                ];
+              }
+            } catch (fallbackErr) {
+              debugPrint('Board fallback /tasks fetch failed: $fallbackErr');
+            }
+          }
+          setState(() => taskStatuses = statuses);
         } else {
           setState(() => _error =
               boardData is Map ? (boardData['error']?.toString() ?? 'Could not load the board') : 'Could not load the board');

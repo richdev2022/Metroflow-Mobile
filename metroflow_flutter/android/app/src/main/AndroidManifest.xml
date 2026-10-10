@@ -12,6 +12,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA"/>
+    <!-- Android 14+ (API 34): MediaProjection screen capture MUST run inside
+         a foreground service with type mediaProjection — without this
+         permission getDisplayMedia throws SecurityException on launch. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>
     <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
     <uses-permission android:name="android.permission.USE_FINGERPRINT"/>
     <!-- Push notifications: Android 13+ runtime prompt (POST_NOTIFICATIONS),
@@ -73,6 +77,25 @@
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="metricorex"/>
+            </intent-filter>
+            <!-- HTTPS App Links (https://app.metricorex.com/meetings/<code>).
+                 WHY: WebView-based browsers (WhatsApp/Telegram/Instagram in-app
+                 browsers, some OEM browsers) BLOCK intent:// and custom-scheme
+                 navigations — the tab navigates to a literal "intent://..." or
+                 "metricorex://..." URL and the user sees the browser's
+                 "page not found". Universal https links ALWAYS resolve: with a
+                 verified assetlinks.json the app opens directly; without
+                 verification Chrome shows the standard open-with chooser.
+             -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="https"/>
+                <data android:host="app.metricorex.com"/>
+                <data android:pathPrefix="/meetings"/>
+                <data android:pathPrefix="/calls"/>
+                <data android:pathPrefix="/chat"/>
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
