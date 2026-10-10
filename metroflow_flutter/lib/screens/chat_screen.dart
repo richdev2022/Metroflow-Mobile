@@ -464,6 +464,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   bool _hasUnread(Conversation conversation, String? currentUserId) {
     if (currentUserId == null || currentUserId.isEmpty) return false;
+    // MY OWN last message never counts as unread: sending implies reading.
+    // Without this, the "New" highlight re-appeared right after you replied
+    // in a fully-read chat (lastMessageAt > your open-time lastReadAt).
+    final sender = conversation.lastMessageSenderId;
+    if (sender.isNotEmpty && sender == currentUserId) return false;
     final lastAt = conversation.lastMessageAt;
     if (lastAt == null) return false;
     ConversationParticipant? mine;
@@ -476,6 +481,36 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (mine == null) return false;
     final lastRead = mine.lastReadAt;
     return lastRead == null || lastAt.isAfter(lastRead);
+  }
+
+  /// Confirmation dialog for "delete chat" (direct chats). Returns true when
+  /// the user confirmed the deletion.
+  Future<bool> _confirmDeleteConversation(Conversation conversation, String name) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: AppTheme.colors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text('Delete chat?',
+            style: TextStyle(color: AppTheme.colors.text, fontWeight: FontWeight.w700)),
+        content: Text(
+          'This deletes "$name" from your chat list. $name will still have the chat, and it reappears here if they message you again.',
+          style: TextStyle(color: AppTheme.colors.textSecondary, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text('Cancel', style: TextStyle(color: AppTheme.colors.textSecondary)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete',
+                style: TextStyle(color: AppColors.error, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+    return result == true;
   }
 
   String _timeLabel(DateTime time) {
@@ -741,7 +776,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                                   final name = conversation.displayTitle(currentUserId);
                                   final hasUnread = conversation.unreadCount > 0 ||
                                       _hasUnread(conversation, currentUserId);
-                                  return _ConversationTile(
+                                  final tile = _ConversationTile(
                                     conversation: conversation,
                                     name: name,
                                     timeLabel: conversation.lastMessageAt != null
@@ -760,6 +795,35 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                                         ),
                                       ).then((_) => _loadConversations());
                                     },
+                                  );
+                                  // WhatsApp-style swipe-to-delete (direct
+                                  // chats only): hides the chat for ME; a new
+                                  // message brings it back.
+                                  if (conversation.type == 'group') return tile;
+                                  return Dismissible(
+                                    key: ValueKey('conv-${conversation.id}'),
+                                    direction: DismissDirection.endToStart,
+                                    background: Container(
+                                      alignment: Alignment.centerRight,
+                                      padding: const EdgeInsets.only(right: 20),
+                                      color: AppColors.error.withValues(alpha: 0.15),
+                                      child: const Icon(Icons.delete_outline_rounded,
+                                          color: AppColors.error),
+                                    ),
+                                    confirmDismiss: (_) async {
+                                      return await _confirmDeleteConversation(conversation, name);
+                                    },
+                                    onDismissed: (_) async {
+                                      setState(() {
+                                        _conversations.removeWhere((c) => c.id == conversation.id);
+                                      });
+                                      try {
+                                        await _api.deleteConversation(conversation.id);
+                                      } catch (_) {
+                                        unawaited(_loadConversations());
+                                      }
+                                    },
+                                    child: tile,
                                   );
                                 },
                               ),

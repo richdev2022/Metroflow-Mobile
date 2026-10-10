@@ -8,6 +8,10 @@ class ConversationParticipant {
   final DateTime? lastSeenAt;
   final String? presenceStatus;
 
+  /// Conversation role from the backend (`admin` / `member`) — drives the
+  /// role badge in the group member sheet (web parity).
+  final String role;
+
   // Enriched fields from the backend (LEFT JOIN users) — used to build the
   // profile sheet and derive display names when `displayName` is missing.
   final String name;
@@ -20,6 +24,7 @@ class ConversationParticipant {
     this.lastReadAt,
     this.lastSeenAt,
     this.presenceStatus,
+    this.role = 'member',
     this.name = '',
     this.email = '',
     this.avatarUrl,
@@ -32,6 +37,7 @@ class ConversationParticipant {
       lastReadAt: _parseDate(json['lastReadAt'] ?? json['last_read_at']),
       lastSeenAt: _parseDate(json['lastSeenAt'] ?? json['last_seen_at']),
       presenceStatus: (json['presenceStatus'] ?? json['presence_status'])?.toString(),
+      role: (json['role'] ?? 'member').toString(),
       name: (json['name'] ?? '').toString(),
       email: (json['email'] ?? '').toString(),
       avatarUrl: (json['avatarUrl'] ?? json['avatar_url'])?.toString(),
@@ -43,6 +49,7 @@ class ConversationParticipant {
       'id': id,
       'userId': userId,
       'lastReadAt': lastReadAt?.toIso8601String(),
+      'role': role,
       'name': name,
       'email': email,
       if (avatarUrl != null) 'avatarUrl': avatarUrl,

@@ -5,4 +5,9 @@
          res/mipmap-anydpi-v26/ic_launcher.xml, so a solid brand blue keeps
          the mark visually centered without a white halo. -->
     <color name="ic_launcher_background">#4353FF</color>
+
+    <!-- Accent color applied to the notification small icon + buttons.
+         The small icon itself (@drawable/ic_notification) is a white
+         silhouette — Android tints it with this brand blue. -->
+    <color name="notification_accent">#4353FF</color>
 </resources>

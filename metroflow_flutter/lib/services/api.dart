@@ -2256,6 +2256,13 @@ class ApiService {
     return await _dio.put('/chat/conversations/$conversationId/read');
   }
 
+  /// WhatsApp-style "delete chat": removes a DIRECT conversation from MY
+  /// chat list only (the other participant keeps it; a new message un-hides).
+  /// Groups are rejected by the backend — leave them instead.
+  Future<Response> deleteConversation(String conversationId) async {
+    return await _dio.delete('/chat/conversations/$conversationId');
+  }
+
   // -------------------------------------------------------------------------
   // Message actions (parity with the web batch-4 contract)
   // -------------------------------------------------------------------------
