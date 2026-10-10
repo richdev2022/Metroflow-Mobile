@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 
 import '../utils/logger.dart';
@@ -23,43 +24,33 @@ class AudioOutputDevice {
 
 /// Engine-agnostic audio output routing for calls.
 ///
-/// WHY THIS WORKS FOR BOTH PROVIDERS: the LiveKit engine and the MediaSoup
-/// engine both end up on the same `flutter_webrtc` native layer, so the
-/// speakerphone toggle below routes call audio identically no matter which
-/// engine is driving the room.
+/// The LiveKit engine and the MediaSoup engine both end up on the same
+/// `flutter_webrtc` native layer, so routing through either the native
+/// channel below or the WebRTC helper lands on the same audio stack.
 ///
-/// PRIMARY LEVER (Android): `Helper.setSpeakerphoneOn(bool)` on the
-/// AudioManager communication audio stream:
-/// - speaker   → setSpeakerphoneOn(true)
-/// - earpiece  → setSpeakerphoneOn(false) — audio falls back to the default
-///   communication device, which is the earpiece (or the connected Bluetooth
-///   headset, which is also what the user expects when BT is attached).
-/// - bluetooth → setSpeakerphoneOn(false) while a BT SCO headset is connected
-///   (the platform routes communication audio to it automatically).
+/// PRIMARY LEVER — native MethodChannel `metricorex/audio` (MainActivity.kt /
+/// AppDelegate.swift):
+/// - Android: `AudioManager.setCommunicationDevice` (API 31+) pins the
+///   communication route to the EXACT device — built-in speaker, earpiece or
+///   the connected Bluetooth SCO/BLE headset. Pre-31 falls back to
+///   isSpeakerphoneOn + Bluetooth SCO.
+/// - iOS: `AVAudioSession.overrideOutputAudioPort(.speaker/.none)`; iOS does
+///   not allow selecting a SPECIFIC BT device from app code, so BT is the
+///   OS default route when the override is removed.
 ///
-/// iOS: `Helper.setSpeakerphoneOn` maps to the WebRTC audio session's
-/// `overrideOutputAudioPort` in the native layer, so the earpiece/speaker
-/// distinction works the same way. KNOWN LIMITATION (documented in the
-/// worklog): iOS cannot enumerate/select a SPECIFIC Bluetooth device from
-/// Dart — when a BT headset is attached the OS decides between BT and the
-/// earpiece; the sheet still offers the toggle and the speaker always wins.
-/// `audio_session` is intentionally NOT used: it is not a locked dependency
-/// of this app (absent from pubspec.lock) and the task forbids speculative
-/// new dependencies.
+/// FALLBACK LEVER (channel unavailable / refused): the previous behavior —
+/// `rtc.Helper.setSpeakerphoneOn(bool)` — still applies, so a route can never
+/// be WORSE than before this service existed.
 ///
-/// Bluetooth device discovery: `navigator.mediaDevices.enumerateDevices()`.
-/// On Android a connected BT headset shows up with a label like "Bluetooth
-/// headset"/"BT SCO" (WebRTC exposes it on the input side); we match by label
-/// keywords. On iOS labels are typically generic — the sheet hides the BT
-/// entry when discovery finds nothing.
-///
-/// NOTE (Android audio-focus settle): after toggling the speakerphone the
-/// AudioManager takes a moment (up to ~2-3s on some devices) to settle the
-/// communication route. [apply] therefore refreshes the discovered outputs
-/// after a short delay instead of reading state synchronously.
+/// Bluetooth device discovery: the native `listOutputs` first (authoritative
+/// output devices); if the channel is unavailable, falls back to
+/// `navigator.mediaDevices.enumerateDevices()` label matching.
 class AudioRouteService {
   AudioRouteService._();
   static final AudioRouteService instance = AudioRouteService._();
+
+  static const MethodChannel _channel = MethodChannel('metricorex/audio');
+  static bool? _channelAvailable;
 
   /// Selected route for the CURRENT call. The call screen resets it via
   /// [initialRouteFor] when a new session starts.
@@ -80,9 +71,9 @@ class AudioRouteService {
     return null;
   }
 
-  /// Heuristic Bluetooth-label match. Kept deliberately broad: OEMs report
-  /// wildly different device names ("BT SCO", "Jabra Evolve", "AirPods Pro",
-  /// "Wireless Headset", ...).
+  /// Heuristic Bluetooth-label match (fallback path only). Kept deliberately
+  /// broad: OEMs report wildly different device names ("BT SCO", "Jabra
+  /// Evolve", "AirPods Pro", "Wireless Headset", ...).
   static bool _looksLikeBluetooth(String label) {
     final lower = label.toLowerCase();
     return lower.contains('bluetooth') ||
@@ -93,6 +84,17 @@ class AudioRouteService {
         lower.contains('headset');
   }
 
+  static String _routeName(AudioRoute route) {
+    switch (route) {
+      case AudioRoute.speaker:
+        return 'speaker';
+      case AudioRoute.earpiece:
+        return 'earpiece';
+      case AudioRoute.bluetooth:
+        return 'bluetooth';
+    }
+  }
+
   /// Default route for a freshly joined call: video calls open on the
   /// speaker (group/screen-sharing UX), audio calls on the earpiece —
   /// matching the phone-dialer convention.
@@ -100,9 +102,35 @@ class AudioRouteService {
       isVideoCall ? AudioRoute.speaker : AudioRoute.earpiece;
 
   /// Re-enumerate audio devices (best-effort) and keep the Bluetooth subset.
-  /// Never throws.
+  /// Native channel first, WebRTC device labels as fallback. Never throws.
   Future<List<AudioOutputDevice>> refreshOutputs() async {
     if (kIsWeb) return _bluetoothOutputs;
+    try {
+      if (_channelAvailable != false) {
+        final rows = await _channel.invokeMethod<List<dynamic>>('listOutputs');
+        _channelAvailable = true;
+        final found = <AudioOutputDevice>[];
+        for (final row in rows ?? const <dynamic>[]) {
+          if (row is! Map) continue;
+          final isBt = row['isBluetooth'] == true;
+          final label = '${row['productName'] ?? ''}'.trim();
+          final type = '${row['type'] ?? ''}';
+          if (!isBt) continue;
+          found.add(AudioOutputDevice(
+            id: '${row['id'] ?? label}',
+            label: label.isEmpty ? 'Bluetooth $type' : label,
+            isBluetooth: true,
+          ));
+        }
+        _bluetoothOutputs = found;
+        return _bluetoothOutputs;
+      }
+    } on MissingPluginException {
+      _channelAvailable = false;
+    } catch (e) {
+      // Native enumeration failed — fall through to the WebRTC labels.
+      Logger.error('AudioRouteService native refreshOutputs failed: $e');
+    }
     try {
       final devices = await rtc.navigator.mediaDevices.enumerateDevices();
       final found = <AudioOutputDevice>[];
@@ -132,23 +160,47 @@ class AudioRouteService {
     return _bluetoothOutputs;
   }
 
-  /// Switch the active output to [route]. Applies immediately through the
-  /// native layer, then refreshes the discovered outputs after
-  /// [settleDelay] so the Android audio-focus settle doesn't leave the UI
-  /// showing stale device info. Never throws.
+  /// Switch the active output to [route]. Applies through the native channel
+  /// when available, then always re-asserts through the WebRTC helper so the
+  /// speakerphone bit agrees with the requested route on every platform.
+  /// Refreshes the discovered outputs after [settleDelay] so the Android
+  /// audio-focus settle doesn't leave the UI showing stale device info.
+  /// Never throws.
   Future<void> apply(
     AudioRoute route, {
     Duration settleDelay = const Duration(milliseconds: 400),
   }) async {
     _route = route;
     if (kIsWeb) return;
+    final name = _routeName(route);
+
+    // 1) Native pin (authoritative on Android 12+; speaker/earpiece on iOS).
     try {
-      // THE one primitive both engines share. Wrapped — a phone whose
-      // AudioManager rejects the toggle must not crash the call.
+      if (_channelAvailable != false) {
+        final ok = await _channel.invokeMethod<bool>(
+          'setRoute',
+          {'route': name},
+        );
+        if (_channelAvailable == null) _channelAvailable = true;
+        if (ok == true) {
+          Logger.log('AudioRouteService: native route applied: $name');
+        }
+      }
+    } on MissingPluginException {
+      _channelAvailable = false;
+    } catch (e) {
+      Logger.error('AudioRouteService native apply($name) failed: $e');
+    }
+
+    // 2) WebRTC agreement: speaker true/false. For BT the OS picks the
+    // headset once the speakerphone is off (both native paths above make
+    // that happen; on Android setCommunicationDevice already pinned it).
+    try {
       await rtc.Helper.setSpeakerphoneOn(route == AudioRoute.speaker);
     } catch (e) {
-      Logger.error('AudioRouteService.apply($route) failed: $e');
+      Logger.error('AudioRouteService.apply($route) webrtc fallback failed: $e');
     }
+
     if (settleDelay > Duration.zero) {
       await Future<void>.delayed(settleDelay);
       await refreshOutputs();

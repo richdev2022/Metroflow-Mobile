@@ -55,6 +55,10 @@ class CallNotifier extends Notifier<IncomingCallState> {
     // participant is confirmed joined (socket truth, independent of the
     // call:accepted broadcast), every ring must die.
     _socketService.onCallParticipantJoined = _handleParticipantJoined;
+    // Multi-device stop-ring: another device of THIS account answered (or a
+    // co-callee answered a group call) — the server broadcasts
+    // call:ring-stopped so every still-ringing device silences instantly.
+    _socketService.onCallRingStopped = _handleRingStopped;
 
     ref.onDispose(() {
       _ringTimeout?.cancel();
@@ -193,7 +197,14 @@ class CallNotifier extends Notifier<IncomingCallState> {
               data['id'] ??
               '')
           .toString();
-      if (callId.isNotEmpty) return callId == current.id;
+      if (callId.isNotEmpty) {
+        if (callId == current.id) return true;
+        // ring-stopped/ended broadcasts may only carry the call CODE — the
+        // ringing device may know the call by its code (push payloads).
+        final callCode = (data['callCode'] ?? data['call_code'] ?? '').toString();
+        if (callCode.isNotEmpty && callCode == current.callCode) return true;
+        return false;
+      }
     }
     if (data is String && data.isNotEmpty) return data == current.id;
     return false;
@@ -247,6 +258,24 @@ class CallNotifier extends Notifier<IncomingCallState> {
       _ringTimeout?.cancel();
       AppFeedback.stopRingtone();
       state = IncomingCallState();
+    }
+  }
+
+  /// `call:ring-stopped` — the server fires this when someone ELSE answered
+  /// (another device of this account, or a co-callee of a group call) or the
+  /// account rejected elsewhere. Every still-ringing device silences and
+  /// drops the overlay immediately instead of ringing the full 45s window.
+  void _handleRingStopped(dynamic data) {
+    // If THIS device is the one that answered, the accept flow already owns
+    // the UI — the ringing state is gone anyway.
+    if (_matchesCurrentCall(data)) {
+      _ringTimeout?.cancel();
+      AppFeedback.stopRingtone();
+      state = IncomingCallState();
+    }
+    if (_outboundCallId != null) {
+      final stoppedId = _callIdFromPayload(data);
+      if (stoppedId == _outboundCallId) stopOutboundRing();
     }
   }
 

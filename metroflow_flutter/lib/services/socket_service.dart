@@ -131,6 +131,14 @@ class SocketService {
   void Function(dynamic)? onCallEnded;
   void Function(dynamic)? onCallParticipantJoined;
   void Function(dynamic)? onCallParticipantLeft;
+  /// `call:ring-stopped` — server broadcast fired when another device of this
+  /// account answers/rejects, or a co-callee answers a group call. Every
+  /// still-ringing device must silence immediately (multi-device stop-ring).
+  void Function(dynamic)? onCallRingStopped;
+  /// `call:participants-list` — the authoritative room roster sent right
+  /// after a successful join: { roomId, participants: [{id, name, ...}] }.
+  /// Used to resolve real peer display names on the call screen.
+  void Function(dynamic)? onCallParticipantsList;
   void Function(dynamic)? onCallDeleted;
   void Function(dynamic)? onUserPresenceUpdated;
   /// Presence parity (batch 4): `presence:update` { userId, lastSeenAt,
@@ -402,6 +410,21 @@ class SocketService {
       if (onCallParticipantJoined != null) onCallParticipantJoined!(data);
     });
 
+    // Multi-device stop-ring (see server call:accept / call:reject).
+    _socket?.on('call:ring-stopped', (data) {
+      if (onCallRingStopped != null) onCallRingStopped!(data);
+    });
+
+    // Room roster (names for the tile labels) — sent after call:join.
+    _socket?.on('call:participants-list', (data) {
+      if (onCallParticipantsList != null) onCallParticipantsList!(data);
+    });
+
+    // Meeting-room roster equivalent (meeting:join path).
+    _socket?.on('meeting:participants-list', (data) {
+      if (onCallParticipantsList != null) onCallParticipantsList!(data);
+    });
+
     _socket?.on('call:participantLeft', (data) {
       if (onCallParticipantLeft != null) onCallParticipantLeft!(data);
     });
@@ -536,6 +559,14 @@ class SocketService {
 
   void emitMeetingJoin(Map<String, dynamic> data) {
     _socket?.emit('meeting:join', data);
+  }
+
+  /// Ack variant of [emitMeetingJoin]: the server answers with the CANONICAL
+  /// meeting id (resolves codes → uuid) plus provider credentials. Capturing
+  /// the resolved id lets the call screen match room-scoped events that were
+  /// addressed by a different id shape (meeting chat/roster/reactions).
+  Future<dynamic> emitMeetingJoinWithAck(Map<String, dynamic> data) {
+    return _emitAck('meeting:join', data);
   }
 
   /// Join a call room on the server. REQUIRED for calls (meetings join via

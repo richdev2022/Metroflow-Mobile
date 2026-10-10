@@ -72,6 +72,14 @@ class _ChatDetailScreenState
   final StorageService _storage = StorageService();
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+
+  // History pagination: page 1 = newest 50 (server contract). Reaching the
+  // TOP of the list transparently fetches the next older page — conversations
+  // with hundreds of messages used to cap at the latest 50 with NO way to
+  // read older history ("old chat messages missing").
+  int _currentPage = 1;
+  bool _hasMore = false;
+  bool _loadingOlder = false;
   final AudioRecorder _voiceRecorder = AudioRecorder();
   List<Message> _messages = [];
   bool _isLoading = true;
@@ -175,6 +183,7 @@ class _ChatDetailScreenState
     _refreshPeerLastRead();
     _loadCurrentUser();
     _loadMessages();
+    _scrollController.addListener(_handleScrollForOlderMessages);
     _checkGifsConfigured();
     // MetricAi chat intelligence — probe availability, then (when enabled)
     // fetch smart replies for the latest incoming message (web parity).
@@ -541,6 +550,75 @@ class _ChatDetailScreenState
     }
   }
 
+  /// Scroll sentinel: within 250px of the TOP → fetch the next older page.
+  void _handleScrollForOlderMessages() {
+    if (!_scrollController.hasClients) return;
+    if (_scrollController.offset > 250) return;
+    if (_loadingOlder || !_hasMore || _isLoading) return;
+    _loadOlderMessages();
+  }
+
+  /// Fetch the next older page and PREPEND it, keeping the reader anchored
+  /// to the exact message they were looking at (compensate the list growth).
+  Future<void> _loadOlderMessages() async {
+    if (_loadingOlder || !_hasMore) return;
+    _loadingOlder = true;
+    if (mounted) setState(() {});
+    try {
+      final response = await _api.getConversationMessages(
+        widget.conversation.id,
+        page: _currentPage + 1,
+      );
+      if (response.data['success'] == true) {
+        final responseData = response.data['data'];
+        final data = responseData is Map && responseData['messages'] is List
+            ? responseData['messages'] as List
+            : const <dynamic>[];
+        final older = data
+            .whereType<Map>()
+            .map((json) => Message.fromJson(Map<String, dynamic>.from(json)))
+            .toList();
+        if (!mounted) return;
+        final knownIds = _messages.map((m) => m.id).toSet();
+        final fresh = older.where((m) => !knownIds.contains(m.id)).toList();
+        final total = responseData is Map ? (responseData['total'] as num?)?.toInt() : null;
+        setState(() {
+          final beforeMax = _scrollController.hasClients
+              ? _scrollController.position.maxScrollExtent
+              : 0.0;
+          final beforeOffset = _scrollController.hasClients
+              ? _scrollController.offset
+              : 0.0;
+          _messages = [...fresh, ..._messages];
+          _currentPage += 1;
+          _hasMore = total != null ? _messages.length < total : fresh.isNotEmpty;
+          if (_scrollController.hasClients && fresh.isNotEmpty) {
+            // Keep the viewport anchored: the new rows grow the top of the
+            // list, so shift the window down by exactly the growth amount.
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!_scrollController.hasClients) return;
+              final growth = _scrollController.position.maxScrollExtent - beforeMax;
+              if (growth > 0) {
+                _scrollController.jumpTo((beforeOffset + growth)
+                    .clamp(0.0, _scrollController.position.maxScrollExtent));
+              }
+            });
+          }
+        });
+        if (fresh.isEmpty) {
+          setState(() => _hasMore = false);
+        }
+      } else {
+        if (mounted) setState(() => _hasMore = false);
+      }
+    } catch (e) {
+      Logger.error('Error loading older messages: $e');
+    } finally {
+      _loadingOlder = false;
+      if (mounted) setState(() {});
+    }
+  }
+
   Future<void> _loadMessages() async {
     try {
       final response = await _api.getConversationMessages(widget.conversation.id);
@@ -576,6 +654,10 @@ class _ChatDetailScreenState
               .map((json) => Message.fromJson(Map<String, dynamic>.from(json)))
               .toList();
           _participantReadEntries = readEntries;
+          // Reset pagination: the first page IS the fresh read.
+          _currentPage = 1;
+          final total = responseData is Map ? (responseData['total'] as num?)?.toInt() : null;
+          _hasMore = total != null ? _messages.length < total : false;
           _refreshPeerLastRead();
         });
         Future.delayed(const Duration(milliseconds: 100), _scrollToBottom);
@@ -1060,6 +1142,12 @@ class _ChatDetailScreenState
       setState(() {
         _messages = [...fetched, ...pending];
         _participantReadEntries = readEntries;
+        // Re-derive pagination from the fresh first-page read.
+        _currentPage = 1;
+        final total = response.data['data'] is Map
+            ? (response.data['data']['total'] as num?)?.toInt()
+            : null;
+        _hasMore = total != null ? _messages.length < total : false;
         _refreshPeerLastRead();
       });
       if (shouldStick) {
@@ -2527,14 +2615,30 @@ class _ChatDetailScreenState
                         controller: _scrollController,
                         padding: const EdgeInsets.symmetric(
                             horizontal: 14, vertical: 14),
-                        itemCount: _messages.length,
+                        itemCount: _messages.length + (_loadingOlder ? 1 : 0),
                         itemBuilder: (context, index) {
-                          final message = _messages[index];
+                          // Loading-older sentinel row pinned to the TOP of
+                          // the history (index 0) — only present while the
+                          // previous page is in flight.
+                          if (_loadingOlder && index == 0) {
+                            return const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 12),
+                              child: Center(
+                                child: SizedBox(
+                                  width: 22,
+                                  height: 22,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                ),
+                              ),
+                            );
+                          }
+                          final mIndex = _loadingOlder ? index - 1 : index;
+                          final message = _messages[mIndex];
                           final isMe = isCurrentUser(message.senderId);
-                          final dateLabel = _dateLabelFor(index);
+                          final dateLabel = _dateLabelFor(mIndex);
                           final showHeader = !isMe &&
-                              (index == 0 ||
-                                  _messages[index - 1].senderId !=
+                              (mIndex == 0 ||
+                                  _messages[mIndex - 1].senderId !=
                                       message.senderId ||
                                   dateLabel != null);
                           // Long-press actions (reply/edit/delete) — skipped

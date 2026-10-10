@@ -1,11 +1,12 @@
 import 'dart:async';
-import 'dart:io' show Platform;
+import 'dart:io' show File, Platform;
 import 'dart:math' show Random;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 // speech_to_text 7.x does NOT re-export SpeechRecognitionResult from the
 // main library (only ListenMode/SpeechListenOptions are) — import it directly.
@@ -39,6 +40,32 @@ class VideoCallScreen extends StatefulWidget {
   // -----------------------------------------------------------------------
   static String? activeCallRoomId;
   static void Function()? _activeLeaver;
+
+  /// Args of the most recent call screen for the MINIMIZE → REJOIN flow.
+  /// A ValueNotifier so the global "Return to call" pill (main.dart overlay)
+  /// reactively appears/disappears as calls start and end.
+  static final ValueNotifier<Map<String, dynamic>?> lastCallContext =
+      ValueNotifier(null);
+
+  /// Re-presents the last call room (minimize → rejoin entry point).
+  static Future<void> reopenLastCall(BuildContext context) async {
+    final args = lastCallContext.value;
+    if (args == null) return;
+    await showModal(
+      context: context,
+      roomId: (args['roomId'] ?? '').toString(),
+      title: (args['title'] ?? 'Call').toString(),
+      isMeeting: args['isMeeting'] == true,
+      enableVideo: args['enableVideo'] != false,
+      userName: args['userName']?.toString(),
+      isHost: args['isHost'] == true,
+      isGroupCall: args['isGroupCall'] == true,
+      onLeave: args['onLeave'] as FutureOr<void> Function()?,
+      calling: args['calling'] is Map
+          ? Map<String, dynamic>.from(args['calling'] as Map)
+          : null,
+    );
+  }
 
   /// Ends (or leaves) the call screen that is currently open, if any.
   static void endActiveCall() {
@@ -88,6 +115,19 @@ class VideoCallScreen extends StatefulWidget {
     FutureOr<void> Function()? onLeave,
     Map<String, dynamic>? calling,
   }) {
+    // Remember the args for the minimize → rejoin flow (notification tap /
+    // "Return to call" pill on the global overlay).
+    VideoCallScreen.lastCallContext.value = <String, dynamic>{
+      'roomId': roomId,
+      'title': title,
+      'isMeeting': isMeeting,
+      'enableVideo': enableVideo,
+      'userName': userName,
+      'isHost': isHost,
+      'isGroupCall': isGroupCall,
+      'onLeave': onLeave,
+      'calling': calling,
+    };
     return showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -175,6 +215,14 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   final RTCVideoRenderer _screenRenderer = RTCVideoRenderer();
   final TextEditingController _chatController = TextEditingController();
   final List<_RemoteTile> _remoteTiles = [];
+
+  /// peerId/userId → display name. Fed from the LiveKit track metadata,
+  /// the mediasoup consume ack (peerName), the room roster
+  /// (call/meeting:participants-list) and call:participant-joined events —
+  /// drives real tile names instead of the old "Guest XXXX" fallback.
+  final Map<String, String> _peerNames = {};
+  void Function(dynamic)? _previousParticipantsListHandler;
+  void Function(dynamic)? _previousParticipantJoinedHandler;
   final List<_ChatLine> _chatLines = [];
 
   MediasoupRoomService? _room;
@@ -192,6 +240,13 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   /// start response). Used to stop the right egress; null when not recording
   /// or when the room fell back to client-mode (MediaSoup).
   String? _serverRecordingId;
+  /// Client-mode local recorder (MediaSoup rooms have no server recorder —
+  /// the backend answers mode:'client' and the CLIENT records). Android-only:
+  /// flutter_webrtc's MediaRecorder writes the local mic (+ camera when the
+  /// local video track is live) to an mp4, uploaded to /recordings on stop.
+  MediaRecorder? _clientRecorder;
+  String? _clientRecordingPath;
+  bool _clientRecordingHasVideo = false;
   bool _showChat = false;
   bool _hasLeft = false;
   bool _cleanupDone = false;
@@ -336,6 +391,11 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     if (VideoCallScreen.activeCallRoomId == widget.roomId) {
       VideoCallScreen.activeCallRoomId = null;
     }
+    // The room screen is gone (real leave) — drop the minimize→rejoin
+    // context so a dead call never offers a "Return to call" pill.
+    if (VideoCallScreen.lastCallContext.value?['roomId'] == widget.roomId) {
+      VideoCallScreen.lastCallContext.value = null;
+    }
     for (final timer in _reactionTimers.values) {
       timer.cancel();
     }
@@ -364,12 +424,36 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _wireRoomEvents();
 
     if (widget.isMeeting) {
-      _socket.emitMeetingJoin({
-        'meetingId': widget.roomId,
-        'userId': _resolvedUserId,
-        'userName': _resolvedUserName,
-        'isHost': false,
-      });
+      // Ack variant: capture the CANONICAL meeting id (the server resolves
+      // meeting codes → uuid) so room-scoped events (chat, roster, reactions,
+      // recording) match even when this screen was opened with a code.
+      try {
+        final ack = await _socket.emitMeetingJoinWithAck({
+          'meetingId': widget.roomId,
+          'userId': _resolvedUserId,
+          'userName': _resolvedUserName,
+          'isHost': false,
+        });
+        if (ack is Map) {
+          final resolved = ack['meetingId']?.toString();
+          if (resolved != null && resolved.isNotEmpty) {
+            _resolvedRoomId = resolved;
+          }
+          final calling = ack['calling'];
+          if (_effectiveCalling == null && calling is Map) {
+            _effectiveCalling = Map<String, dynamic>.from(calling);
+          }
+        }
+      } catch (_) {
+        // Ack unavailable (very old backend / socket hiccup) — fall back to
+        // the fire-and-forget join; room events still work when the ids match.
+        _socket.emitMeetingJoin({
+          'meetingId': widget.roomId,
+          'userId': _resolvedUserId,
+          'userName': _resolvedUserName,
+          'isHost': false,
+        });
+      }
       await _startMediaSession();
       return;
     }
@@ -693,12 +777,28 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     });
     _mediaConnected = false;
     if (widget.isMeeting) {
-      _socket.emitMeetingJoin({
-        'meetingId': widget.roomId,
-        'userId': _resolvedUserId,
-        'userName': _resolvedUserName,
-        'isHost': _isCallHost,
-      });
+      // Same ack capture as the initial join (retry path).
+      try {
+        final ack = await _socket.emitMeetingJoinWithAck({
+          'meetingId': widget.roomId,
+          'userId': _resolvedUserId,
+          'userName': _resolvedUserName,
+          'isHost': _isCallHost,
+        });
+        if (ack is Map) {
+          final resolved = ack['meetingId']?.toString();
+          if (resolved != null && resolved.isNotEmpty) {
+            _resolvedRoomId = resolved;
+          }
+        }
+      } catch (_) {
+        _socket.emitMeetingJoin({
+          'meetingId': widget.roomId,
+          'userId': _resolvedUserId,
+          'userName': _resolvedUserName,
+          'isHost': _isCallHost,
+        });
+      }
       await _startMediaSession();
     } else {
       await _joinCallRoom();
@@ -1171,6 +1271,59 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       });
     };
 
+    // ------------------------------------------------------------------
+    // Peer display names: seed from the room roster (sent right after a
+    // successful call:join / meeting:join) and from every participant-joined
+    // broadcast, so tiles show REAL names instead of "Guest XXXX".
+    // ------------------------------------------------------------------
+    void notePeerNamesFromPayload(dynamic data) {
+      if (data is! Map) return;
+      bool changed = false;
+      final roster = data['participants'];
+      if (roster is List) {
+        for (final row in roster) {
+          if (row is! Map) continue;
+          final id = (row['id'] ?? row['userId'] ?? '').toString();
+          final name = (row['name'] ?? row['userName'] ?? '').toString();
+          if (id.isNotEmpty &&
+              name.trim().isNotEmpty &&
+              name.toLowerCase() != 'guest' &&
+              !name.toLowerCase().startsWith('guest ')) {
+            if (_peerNames[id] != name.trim()) {
+              _peerNames[id] = name.trim();
+              changed = true;
+            }
+          }
+        }
+      }
+      // participant-joined shape: { userId, userName } (call + meeting).
+      final uid = (data['userId'] ?? '').toString();
+      final uname = (data['userName'] ?? '').toString();
+      if (uid.isNotEmpty &&
+          uname.trim().isNotEmpty &&
+          !uname.toLowerCase().startsWith('guest ')) {
+        if (_peerNames[uid] != uname.trim()) {
+          _peerNames[uid] = uname.trim();
+          changed = true;
+        }
+      }
+      if (changed && mounted) {
+        setState(() {}); // rebuild tiles with the resolved names
+      }
+    }
+
+    _previousParticipantsListHandler = _socket.onCallParticipantsList;
+    _socket.onCallParticipantsList = (data) {
+      _previousParticipantsListHandler?.call(data);
+      notePeerNamesFromPayload(data);
+    };
+
+    _previousParticipantJoinedHandler = _socket.onCallParticipantJoined;
+    _socket.onCallParticipantJoined = (data) {
+      _previousParticipantJoinedHandler?.call(data);
+      notePeerNamesFromPayload(data);
+    };
+
     // AI meeting notes became ready while we are in the room → subtle
     // snackbar that opens the notes view on top of the call screen.
     _socket.onMeetingNotesUpdated = (data) {
@@ -1265,7 +1418,11 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _socket.onMeetingChatMessage = (data) {
       _previousChatHandler?.call(data);
       final payload = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
-      if (payload['meetingId'] != null && payload['meetingId'] != widget.roomId) return;
+      // Accept BOTH room keys: the canonical uuid (server-resolved) AND the
+      // id/code THIS screen joined with. A meeting entered by CODE used to
+      // silently drop every message because the server echoes the canonical
+      // uuid in `meetingId` while we compare against the raw code.
+      if (!_isRoomPayload(payload)) return;
       if (!mounted) return;
       setState(() {
         _chatLines.add(_ChatLine(
@@ -1311,10 +1468,18 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   }
 
   bool _isRoomPayload(Map<String, dynamic> payload) {
-    final id = payload['meetingId'] ?? payload['callId'] ?? payload['roomId'];
+    final raw = payload['meetingId'] ?? payload['callId'] ?? payload['roomId'];
     // STRICT match: a null id is NOT ours. Treating null as "mine" leaked
     // chats/notifications from other rooms into this room's panels.
-    return id != null && id.toString() == widget.roomId;
+    if (raw == null) return false;
+    final id = raw.toString();
+    // Ours if it matches the id we opened the screen with, the canonical
+    // room uuid (join ack), or the server's echo of the id WE addressed.
+    if (id == widget.roomId) return true;
+    if (_resolvedRoomId.isNotEmpty && id == _resolvedRoomId) return true;
+    final requested = payload['requestedRoom']?.toString() ?? '';
+    if (requested.isNotEmpty && requested == widget.roomId) return true;
+    return false;
   }
 
   /// Opens the AI notes view for the meeting room on top of the call screen.
@@ -1349,6 +1514,13 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
   Future<void> _addRemoteStream(RemoteMediaStream media) async {
     if (_remoteTiles.any((tile) => tile.media.id == media.id)) return;
+    // Remember the engine-provided peer name (LiveKit token name / mediasoup
+    // consume ack) so the tile never renders as "Guest XXXX".
+    final pid = media.peerId;
+    final pname = media.participantName;
+    if (pid != null && pid.isNotEmpty && pname != null && pname.isNotEmpty) {
+      _peerNames[pid] = pname;
+    }
     final renderer = RTCVideoRenderer();
     await renderer.initialize();
     renderer.srcObject = media.stream;
@@ -1365,6 +1537,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _captions.detach();
     _captions.dispose();
     _socket.onMeetingChatMessage = _previousChatHandler;
+    _socket.onCallParticipantsList = _previousParticipantsListHandler;
+    _socket.onCallParticipantJoined = _previousParticipantJoinedHandler;
     _socket.onScreenShareStarted = _previousScreenStartHandler;
     _socket.onScreenShareStopped = _previousScreenStopHandler;
     _socket.onRecordingStarted = _previousRecordingStartHandler;
@@ -1389,6 +1563,25 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
     if (_cleanupDone) return;
     _cleanupDone = true;
+    // A screen closed mid-client-recording: stop the native recorder (best
+    // effort) and DISCARD the file — uploading from dispose() is unreliable
+    // and the user gets a clean "recording stopped" state instead of a
+    // dangling recorder.
+    final danglingRecorder = _clientRecorder;
+    final danglingPath = _clientRecordingPath;
+    _clientRecorder = null;
+    _clientRecordingPath = null;
+    if (danglingRecorder != null) {
+      try {
+        await danglingRecorder.stopRecording();
+      } catch (_) {}
+      if (danglingPath != null) {
+        try {
+          final f = File(danglingPath);
+          if (await f.exists()) await f.delete();
+        } catch (_) {}
+      }
+    }
     await _engine?.disconnect();
     _engine = null;
     await _room?.stop();
@@ -1498,6 +1691,11 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   /// keeps this device's indicator honest.
   Future<void> _toggleRecording() async {
     if (_isRecording) {
+      // Client-mode local recording (MediaSoup rooms): finalize + upload.
+      if (_clientRecorder != null) {
+        await _stopClientRecording();
+        return;
+      }
       try {
         await ApiService().stopRoomRecording(
           isMeeting: widget.isMeeting,
@@ -1525,22 +1723,130 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         _serverRecordingId = data?['recordingId']?.toString();
         if (mounted) setState(() => _isRecording = true);
       } else {
-        // MediaSoup rooms have no server-side recorder — composite recording
-        // is only available on the web client. Keep the indicator OFF instead
-        // of faking it (a fake dot produced no file afterwards).
-        _serverRecordingId = null;
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Server recording is unavailable for this session type — use the web app to record it.'),
-            ),
-          );
+        // MediaSoup rooms have no server-side recorder (backend answers
+        // mode:'client' — same contract the web client fulfils with its
+        // composite recorder). On Android we record locally through
+        // flutter_webrtc's MediaRecorder; iOS has no Dart-side recorder,
+        // so it keeps an honest unavailable message.
+        if (Platform.isAndroid) {
+          await _startClientRecording();
+        } else {
+          _serverRecordingId = null;
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                    'Recording for this session type is available on Android or on the web app.'),
+              ),
+            );
+          }
         }
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(_recordingErrorMessage(e, fallback: 'Failed to start recording'))),
+        );
+      }
+    }
+  }
+
+  /// HONEST local recording for MediaSoup/client-mode rooms on Android.
+  /// flutter_webrtc's MediaRecorder captures THIS device's microphone (and
+  /// the local camera when the video track is live). Other participants'
+  /// audio CANNOT be captured from Dart without native audio-capture modules,
+  /// so the toast and the recording title say exactly what this is — never
+  /// fake a "room recording" that would be missing everyone else.
+  Future<void> _startClientRecording() async {
+    try {
+      final dir = await getTemporaryDirectory();
+      final stamp = DateTime.now().millisecondsSinceEpoch;
+      final localVideo = _localRenderer
+          .srcObject?.getVideoTracks()
+          .where((t) => t.enabled)
+          .toList();
+      final hasVideo = widget.enableVideo &&
+          _isVideoEnabled &&
+          (localVideo?.isNotEmpty ?? false);
+      final path = '${dir.path}/metricorex-local-$stamp.mp4';
+      final recorder = MediaRecorder();
+      await recorder.startRecording(
+        path,
+        videoTrack: hasVideo ? localVideo!.first : null,
+        audioChannel: RecorderAudioChannel.INPUT,
+      );
+      _clientRecorder = recorder;
+      _clientRecordingPath = path;
+      _clientRecordingHasVideo = hasVideo;
+      if (mounted) setState(() => _isRecording = true);
+      // Sync the in-room indicator for other participants (server relays).
+      _socket.emitRecordingStart({
+        widget.isMeeting ? 'meetingId' : 'callId': widget.roomId,
+        'roomId': widget.roomId,
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 5),
+            content: Text(hasVideo
+                ? 'Local recording started — captures YOUR microphone and camera only.'
+                : 'Local recording started — captures YOUR microphone only.'),
+          ),
+        );
+      }
+    } catch (e) {
+      Logger.error('Client recording start failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Recording failed to start: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _stopClientRecording() async {
+    final recorder = _clientRecorder;
+    final path = _clientRecordingPath;
+    final hasVideo = _clientRecordingHasVideo;
+    _clientRecorder = null;
+    _clientRecordingPath = null;
+    _clientRecordingHasVideo = false;
+    if (mounted) setState(() => _isRecording = false);
+    _socket.emitRecordingStop({
+      widget.isMeeting ? 'meetingId' : 'callId': widget.roomId,
+      'roomId': widget.roomId,
+    });
+    if (recorder == null || path == null) return;
+    try {
+      await recorder.stopRecording();
+      final file = File(path);
+      if (!await file.exists()) return;
+      final created = await ApiService().startRecording(<String, dynamic>{
+        if (widget.isMeeting) 'meetingId': widget.roomId,
+        if (!widget.isMeeting) 'callId': widget.roomId,
+        'title': 'Local recording',
+        'description': hasVideo
+            ? 'Local Android recording — microphone and camera of the recording participant only.'
+            : 'Local Android recording — microphone of the recording participant only.',
+      });
+      final createdData = created.data is Map ? created.data['data'] : created.data;
+      final recordingId =
+          (createdData is Map ? createdData['id'] : null)?.toString();
+      if (recordingId == null || recordingId.isEmpty) {
+        throw StateError('Recording row was not created');
+      }
+      await ApiService().uploadRecording(recordingId, path);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Recording saved — find it under Recordings.')),
+        );
+      }
+    } catch (e) {
+      Logger.error('Client recording upload failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Recording upload failed: $e')),
         );
       }
     }
@@ -2335,6 +2641,11 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
   String _displayNameForPeer(String id) {
     if (id.isEmpty) return 'Guest';
+    // Resolve the authoritative name first: engine metadata, room roster,
+    // then participant-joined events (see _peerNames feeders).
+    final name = _peerNames[id];
+    if (name != null && name.trim().isNotEmpty) return name.trim();
+    // Legacy short ids ("John") are already display names, not UUIDs.
     if (id.length <= 10) return id;
     return 'Guest ${id.substring(id.length - 4).toUpperCase()}';
   }
