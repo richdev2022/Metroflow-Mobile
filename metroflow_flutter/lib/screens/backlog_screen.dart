@@ -140,6 +140,7 @@ class _BacklogScreenState extends State<BacklogScreen> {
           final newTasks = tasksData
               .map((t) => Task.fromJson(t as Map<String, dynamic>))
               .toList();
+          if (!mounted) return; // pull-to-refresh + navigate away
           setState(() {
             if (refresh) {
               _tasks = newTasks;
@@ -154,10 +155,12 @@ class _BacklogScreenState extends State<BacklogScreen> {
     } catch (e) {
       debugPrint('Failed to fetch backlog: $e');
     } finally {
-      setState(() {
-        _isLoading = false;
-        _isLoadingMore = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isLoadingMore = false;
+        });
+      }
     }
   }
 

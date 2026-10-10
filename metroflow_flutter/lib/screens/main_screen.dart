@@ -102,6 +102,9 @@ class _MainScreenState extends ConsumerState<MainScreen> {
     if ((index == 5 || index == 6) && !await _canAccessFinanceFeature()) {
       return;
     }
+    // The KYC-gate above performs a network call — session-expiry logout can
+    // dispose MainScreen while it's in flight.
+    if (!mounted) return;
     // Viewing the Meetings tab clears its "new invite" dot
     if (index == 3) {
       ref.read(meetingsUnreadProvider.notifier).clear();

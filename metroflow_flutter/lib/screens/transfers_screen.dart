@@ -104,6 +104,7 @@ class _TransfersScreenState extends ConsumerState<TransfersScreen> {
         final newTransfers = data
             .map((e) => Transfer.fromJson(e as Map<String, dynamic>))
             .toList();
+        if (!mounted) return; // scroll-load may outlive a fast back-tap
         setState(() {
           if (refresh) {
             _transfers = newTransfers;
@@ -193,10 +194,16 @@ class _TransfersScreenState extends ConsumerState<TransfersScreen> {
       final api = ApiService();
       final params = <String, dynamic>{};
       if (_filterStatus != 'all') params['status'] = _filterStatus;
+      if (_searchQuery.trim().isNotEmpty) params['search'] = _searchQuery.trim();
+      // EXPORT ENDPOINT FIX: this previously exported SUBSCRIPTION
+      // transactions (GET /subscription/transactions/export) — the wrong
+      // dataset. The backend's own transfers CSV honors the same filters:
+      // GET /transfers?format=csv (transfers.ts export route).
+      params['format'] = 'csv';
 
-      final response = await api.exportSubscriptionTransactions(params: params);
+      final response = await api.getTransfers(params: params);
       final data = response.data?.toString() ?? '';
-      if (data.isNotEmpty) {
+      if (data.isNotEmpty && !data.trim().startsWith('{')) {
         await SharePlus.instance.share(
           ShareParams(
             text: data,

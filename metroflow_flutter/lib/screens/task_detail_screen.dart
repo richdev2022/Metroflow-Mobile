@@ -79,6 +79,7 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
     try {
       final api = ApiService();
       final response = await api.getComments(_task!.id);
+      if (!mounted) return; // comments fetch may outlive a fast back-tap
       if (response.statusCode == 200) {
         final data = response.data;
         final commentsList = data is List ? data : (data['comments'] ?? data['data'] ?? []);
@@ -89,7 +90,7 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
     } catch (e) {
       debugPrint('Failed to fetch task details: $e');
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
