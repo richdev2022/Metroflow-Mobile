@@ -92,6 +92,7 @@ class _ChatDetailScreenState
   String? _peerTypingName;
   Timer? _typingDebounce;
   Timer? _typingStopTimer;
+  Timer? _peerTypingClearTimer;
   // Voice-note recording state (see _startVoiceRecording)
   bool _isRecordingVoice = false;
   int _recordSeconds = 0;
@@ -171,7 +172,6 @@ class _ChatDetailScreenState
         }
       }
     });
-    super.initState();
     WidgetsBinding.instance.addObserver(this);
     ChatDetailScreen.activeConversationId = widget.conversation.id;
     // Seed the read receipt from the conversation object (its enriched
@@ -275,6 +275,14 @@ class _ChatDetailScreenState
       if (!mounted || payload['conversationId'] != widget.conversation.id) return;
       if (payload['userId'] == _currentUserId) return;
       setState(() => _peerTypingName = (payload['userName'] as String?) ?? 'Someone');
+      // Auto-clear guard (mirrors the chat list): stop-typing packets get
+      // lost on socket drops — without this "typing…" sticks until reopen.
+      _peerTypingClearTimer?.cancel();
+      _peerTypingClearTimer = Timer(const Duration(seconds: 4), () {
+        if (mounted && _peerTypingName != null) {
+          setState(() => _peerTypingName = null);
+        }
+      });
     };
     _socket.onChatTyping = _typingHandler;
 
@@ -282,6 +290,7 @@ class _ChatDetailScreenState
       final payload = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
       if (!mounted || payload['conversationId'] != widget.conversation.id) return;
       if (payload['userId'] == _currentUserId) return;
+      _peerTypingClearTimer?.cancel();
       setState(() => _peerTypingName = null);
     };
     _socket.onChatStopTyping = _stopTypingHandler;
@@ -2349,6 +2358,7 @@ class _ChatDetailScreenState
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _peerTypingClearTimer?.cancel();
     _socket.removeOnReconnected(_handleSocketReconnected);
     // Leave the room locally: stops the service re-joining this conversation
     // after future reconnects (fire-and-forget emit kept for the backend).

@@ -451,6 +451,12 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
               path == '/login' ||
               path == '/register' ||
               path == '/verify-otp') {
+            // REFER & EARN: a signed-in user tapping an invite link can't sign
+            // up again — clear any pending code (it would otherwise leak into
+            // a later, unrelated signup) and land them in the app.
+            if (path == '/register') {
+              RegisterScreen.pendingReferralCode = null;
+            }
             // NOTE: /forgot-password, /verify-reset-otp and /reset-password are
             // deliberately NOT bounced — an authenticated user may legitimately
             // start the email password-reset flow from Settings > Change
@@ -486,10 +492,14 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         ),
         GoRoute(
           path: '/register',
-          builder: (context, state) => RegisterScreen(
-            initialReferralCode:
-                state.uri.queryParameters['ref'] ?? RegisterScreen.pendingReferralCode,
-          ),
+          builder: (context, state) {
+            final refParam = state.uri.queryParameters['ref'];
+            final pending = RegisterScreen.pendingReferralCode;
+            // Consume once — a stale static must never apply to a later,
+            // unrelated signup (e.g. after logout).
+            RegisterScreen.pendingReferralCode = null;
+            return RegisterScreen(initialReferralCode: refParam ?? pending);
+          },
         ),
         GoRoute(
           path: '/forgot-password',

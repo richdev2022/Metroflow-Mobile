@@ -157,7 +157,11 @@ class _BulkTransferScreenState extends ConsumerState<BulkTransferScreen> {
     try {
       final api = ApiService();
       final results = await Future.wait([
-        api.getPayrollSummary(),
+        // BATCH-CONFIRM FIX: the summary defaults to limit=10 server-side, so
+        // the confirmation sheet only showed the first 10 employees while the
+        // backend queues ALL verified active employees for the salary run —
+        // the user was confirming a smaller batch than what gets paid.
+        api.getPayrollSummary(params: {'limit': 500}),
         api.getWallet(),
         api.getEpics(),
         api.getBanks(),

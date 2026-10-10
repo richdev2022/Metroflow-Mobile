@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:dio/dio.dart' show Response;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -164,6 +165,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _industrySearchController.dispose();
     _otpController.dispose();
     _otpToggleOtpController.dispose();
+    _pinController.dispose();
+    _newPinController.dispose();
     super.dispose();
   }
 
@@ -184,18 +187,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _fetchData() async {
-    try {
-      final api = ApiService();
-      final results = await Future.wait([
-        api.getSettings(),
-        api.getCurrentSubscription(),
-        api.getKycStatus(),
-        api.getOtpPreference(),
-        api.getOtpEnabled(),
-      ]);
+    final api = ApiService();
 
-      final settingsData = results[0].data;
-      if (settingsData['success'] == true && settingsData['settings'] != null) {
+    // PER-CALL RESILIENCE: Future.wait used to fail as a unit — one 402/500
+    // (e.g. expired subscription) discarded ALL five results and the page
+    // rendered stale defaults ("Tier 0", "Free Plan") with no error. Each
+    // call now parses independently.
+    Response? settingsResponse;
+    Response? subscriptionResponse;
+    Response? kycResponse;
+    Response? otpPrefResponse;
+    Response? otpEnabledResponse;
+    await Future.wait([
+      api.getSettings().then((r) => settingsResponse = r).catchError((_) => null),
+      api.getCurrentSubscription().then((r) => subscriptionResponse = r).catchError((_) => null),
+      api.getKycStatus().then((r) => kycResponse = r).catchError((_) => null),
+      api.getOtpPreference().then((r) => otpPrefResponse = r).catchError((_) => null),
+      api.getOtpEnabled().then((r) => otpEnabledResponse = r).catchError((_) => null),
+    ]);
+
+    try {
+      final settingsData = settingsResponse?.data;
+      if (settingsData is Map && settingsData['success'] == true && settingsData['settings'] != null) {
         final profile = BusinessProfile.fromJson(settingsData['settings'] as Map<String, dynamic>);
         _settings = profile;
         _nameController.text = profile.name;
@@ -230,23 +243,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         }
       }
 
-      final subscriptionData = results[1].data;
-      if (subscriptionData['success'] == true && subscriptionData['subscription'] != null) {
+      final subscriptionData = subscriptionResponse?.data;
+      if (subscriptionData is Map && subscriptionData['success'] == true && subscriptionData['subscription'] != null) {
         _subscription = Subscription.fromJson(subscriptionData['subscription'] as Map<String, dynamic>);
       }
 
-      final kycData = results[2].data;
+      final kycData = kycResponse?.data;
       if (kycData is Map<String, dynamic>) {
         _kycStatus = KycStatus.fromJson(kycData);
       }
 
-      final otpPrefData = results[3].data;
-      if (otpPrefData['success'] == true) {
+      final otpPrefData = otpPrefResponse?.data;
+      if (otpPrefData is Map && otpPrefData['success'] == true) {
         _otpPreference = (otpPrefData['preference'] as String?) ?? 'email';
       }
 
-      final otpEnabledData = results[4].data;
-      if (otpEnabledData['success'] == true) {
+      final otpEnabledData = otpEnabledResponse?.data;
+      if (otpEnabledData is Map && otpEnabledData['success'] == true) {
         _otpEnabled = otpEnabledData['otpEnabled'] as bool? ?? true;
         _pinCreated = otpEnabledData['pinCreated'] as bool? ?? false;
       }
@@ -744,6 +757,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         // Device capability: biometrics OR the device PIN/pattern fallback.
         final canAuth = await BiometricService.canAuthenticate();
         if (!canAuth) {
+          if (!mounted) return; // idle-logout can tear the screen down mid-prompt
           setState(() => _isSaving = false);
           _showInfo(
             'Biometrics Not Available',
@@ -753,6 +767,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         }
         final enrolled = await BiometricService.isEnrolled();
         if (!enrolled && !await BiometricService.isDeviceSupported()) {
+          if (!mounted) return;
           setState(() => _isSaving = false);
           _showInfo(
             'Biometrics Not Set Up',
@@ -765,16 +780,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         // storing the returned biometric_token in secure storage.
         final result = await ref.read(authProvider.notifier).enableBiometricsWithResult();
         if (!result.success) {
+          if (!mounted) return;
           setState(() => _isSaving = false);
           _showError(result.error ?? 'Failed to enable biometric login');
           return;
         }
+        if (!mounted) return;
         setState(() => _biometricsEnabled = true);
         AppToast.show('Biometric unlock enabled', type: AppToastType.success);
       } else {
         // disableBiometrics revokes the enrollment on the backend (DELETE
         // /auth/biometric/enroll) and wipes the locally stored token.
         await ref.read(authProvider.notifier).disableBiometrics();
+        if (!mounted) return;
         setState(() => _biometricsEnabled = false);
         AppToast.show('Biometric login disabled');
       }
@@ -1615,7 +1633,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         maxHeight: 1024,
         imageQuality: 85,
       );
-      if (pickedFile == null) return;
+      // The camera/gallery can stay open for 30s+ — idle logout or a
+      // session-expiry redirect may dispose this screen meanwhile.
+      if (pickedFile == null || !mounted) return;
 
       setState(() => _isUploadingAvatar = true);
       final url = await ApiService().uploadProfileAvatar(File(pickedFile.path));

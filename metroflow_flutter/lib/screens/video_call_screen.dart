@@ -320,6 +320,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   void Function(dynamic)? _previousRecordingStopHandler;
   void Function(dynamic)? _previousRecordingPauseHandler;
   void Function(dynamic)? _previousCallEndedHandler;
+  void Function(dynamic)? _previousMeetingEndedHandler;
   void Function(dynamic)? _previousDurationStartHandler;
   void Function(dynamic)? _previousDurationActiveHandler;
   void Function(dynamic)? _previousCountdownWarnHandler;
@@ -416,11 +417,16 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       _resolvedUserName = widget.userName ?? 'User';
     }
     if (_resolvedUserName.trim().isEmpty) _resolvedUserName = widget.userName ?? 'User';
+    // The screen may have been disposed while identity resolution was in
+    // flight (call-waiting endActiveCall, fast back-tap) — re-wiring room
+    // events on a dead state leaks handlers + keeps the camera open.
+    if (!mounted || _hasLeft) return;
 
     _effectiveCalling = widget.calling;
 
     await _localRenderer.initialize();
     await _screenRenderer.initialize();
+    if (!mounted || _hasLeft) return;
     _wireRoomEvents();
 
     if (widget.isMeeting) {
@@ -552,6 +558,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     // tracks the MEDIA connection, not the overlay.
     _dismissConnectingOverlay();
     _armJoinWatchdog(payload);
+    if (!mounted || _hasLeft) return;
     await _startMediaSession();
   }
 
@@ -570,7 +577,13 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     try {
       final container = ProviderScope.containerOf(context, listen: false);
       container.read(callProvider.notifier).stopOutboundRing();
-      container.read(callProvider.notifier).clearIncomingCall();
+      // Only clear the incoming ring when it belongs to THIS room — with
+      // call-waiting active, an ICE re-connect of call A must not dismiss
+      // the still-ringing call B overlay.
+      final ringing = container.read(callProvider).call;
+      if (ringing == null || ringing.id == widget.roomId) {
+        container.read(callProvider.notifier).clearIncomingCall();
+      }
     } catch (_) {}
     // (Re-)assert the audio output route: a fresh connect must seed the
     // per-call default (video → speaker, audio → earpiece) and a reconnect
@@ -1217,6 +1230,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _previousRecordingStopHandler = _socket.onRecordingStopped;
     _previousRecordingPauseHandler = _socket.onRecordingPaused;
     _previousCallEndedHandler = _socket.onCallEnded;
+    _previousMeetingEndedHandler = _socket.onMeetingEnded;
     _previousDurationStartHandler = _socket.onCallDurationStarted;
     _previousDurationActiveHandler = _socket.onCallDurationActive;
     _previousCountdownWarnHandler = _socket.onCallCountdownWarning;
@@ -1415,6 +1429,28 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       _leave();
     };
 
+    // Host ended the MEETING from web/another device — the backend emits
+    // meeting:ended (never call:ended for meetings), so without this handler
+    // mobile participants sat in a dead room indefinitely.
+    _socket.onMeetingEnded = (data) {
+      _previousMeetingEndedHandler?.call(data);
+      if (!widget.isMeeting) return;
+      final payload = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
+      final endedMeetingId = payload['meetingId']?.toString() ?? payload['callId']?.toString();
+      if (endedMeetingId != null && endedMeetingId != widget.roomId) return;
+      if (_hasLeft) return;
+      if (!mounted) return;
+      _cancelJoinWatchdog();
+      _mediaConnected = false;
+      AppFeedback.stopRingtone();
+      AppFeedback.stopRingback();
+      AppFeedback.playCallEndedSound();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Meeting ended by host')),
+      );
+      _leave();
+    };
+
     _socket.onMeetingChatMessage = (data) {
       _previousChatHandler?.call(data);
       final payload = data is Map ? Map<String, dynamic>.from(data) : <String, dynamic>{};
@@ -1546,6 +1582,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     _socket.onRecordingStopped = _previousRecordingStopHandler;
     _socket.onRecordingPaused = _previousRecordingPauseHandler;
     _socket.onCallEnded = _previousCallEndedHandler;
+    _socket.onMeetingEnded = _previousMeetingEndedHandler;
     _socket.onCallDurationStarted = _previousDurationStartHandler;
     _socket.onCallDurationActive = _previousDurationActiveHandler;
     _socket.onCallMultiDevice = _previousMultiDeviceHandler;
