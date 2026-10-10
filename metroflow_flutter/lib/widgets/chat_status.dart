@@ -236,14 +236,23 @@ class _ChatStatusRailState extends ConsumerState<ChatStatusRail> {
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 20),
           children: [
-            // MY STATUS — tap opens the viewer when I have statuses,
-            // otherwise the composer.
+            // MY STATUS — avatar tap opens the viewer when I have statuses;
+            // the + badge ALWAYS opens the composer (discoverable add CTA).
             _StatusAvatar(
               name: myName.isEmpty ? 'Me' : myName,
-              avatarUrl: auth.avatarUrl,
+              avatarUrl: auth.avatarUrl != null
+                  ? ApiService.resolveMediaUrl(auth.avatarUrl)
+                  : null,
+              // WhatsApp parity: the circle shows my LATEST post, not the
+              // profile picture (statuses sorted oldest→newest → last).
+              previewUrl: groups.isNotEmpty
+                  ? ApiService.resolveMediaUrl(groups.first.statuses.last.mediaUrl)
+                  : null,
               ringSeen: groups.isNotEmpty && groups.first.allViewed,
               hasStatus: groups.isNotEmpty,
               isMine: true,
+              showAddBadge: true,
+              onAddTap: _openComposer,
               onTap: () {
                 if (groups.isNotEmpty) {
                   _openViewer(groups.first);
@@ -281,6 +290,19 @@ class _StatusAvatar extends StatelessWidget {
   final bool isMine;
   final VoidCallback onTap;
 
+  /// Latest status media thumbnail — when set, the avatar circle shows the
+  /// POST (WhatsApp-style) instead of the profile picture.
+  final String? previewUrl;
+
+  /// Always show the blue + badge (WhatsApp): with an existing status the
+  /// avatar tap opens the viewer, the + badge opens the composer. Without
+  /// the badge there is NO discoverable add-status entry point once you have
+  /// posted once.
+  final bool showAddBadge;
+
+  /// Tap target for the + badge itself (defaults to [onTap] when null).
+  final VoidCallback? onAddTap;
+
   const _StatusAvatar({
     required this.name,
     required this.ringSeen,
@@ -288,6 +310,9 @@ class _StatusAvatar extends StatelessWidget {
     required this.isMine,
     required this.onTap,
     this.avatarUrl,
+    this.previewUrl,
+    this.showAddBadge = false,
+    this.onAddTap,
   });
 
   @override
@@ -318,35 +343,49 @@ class _StatusAvatar extends StatelessWidget {
                     ),
                     padding: const EdgeInsets.all(2.4),
                     child: ClipOval(
-                      child: (avatarUrl != null && avatarUrl!.isNotEmpty)
-                          ? CachedNetworkImage(imageUrl: avatarUrl!, fit: BoxFit.cover)
-                          : Container(
-                              color: colors.surfaceVariant,
-                              alignment: Alignment.center,
-                              child: Text(
-                                name.isNotEmpty ? name[0].toUpperCase() : '?',
-                                style: TextStyle(
-                                  color: colors.textSecondary,
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 18,
-                                ),
+                      // Latest-status thumbnail wins over the profile picture
+                      // (WhatsApp parity: "My status" shows the newest post).
+                      child: (previewUrl != null && previewUrl!.isNotEmpty)
+                          ? CachedNetworkImage(
+                              imageUrl: previewUrl!,
+                              fit: BoxFit.cover,
+                              progressIndicatorBuilder: (_, __, ___) => Container(
+                                color: colors.surfaceVariant,
                               ),
-                            ),
+                            )
+                          : (avatarUrl != null && avatarUrl!.isNotEmpty)
+                              ? CachedNetworkImage(imageUrl: avatarUrl!, fit: BoxFit.cover)
+                              : Container(
+                                  color: colors.surfaceVariant,
+                                  alignment: Alignment.center,
+                                  child: Text(
+                                    name.isNotEmpty ? name[0].toUpperCase() : '?',
+                                    style: TextStyle(
+                                      color: colors.textSecondary,
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 18,
+                                    ),
+                                  ),
+                                ),
                     ),
                   ),
-                  if (isMine && !hasStatus)
+                  if (isMine && (showAddBadge || !hasStatus))
                     Positioned(
                       right: -2,
                       bottom: -2,
-                      child: Container(
-                        width: 20,
-                        height: 20,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: colors.primary,
-                          border: Border.all(color: colors.background, width: 2),
+                      child: GestureDetector(
+                        onTap: onAddTap ?? onTap,
+                        behavior: HitTestBehavior.opaque,
+                        child: Container(
+                          width: 20,
+                          height: 20,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: colors.primary,
+                            border: Border.all(color: colors.background, width: 2),
+                          ),
+                          child: const Icon(Icons.add, size: 12, color: Colors.white),
                         ),
-                        child: const Icon(Icons.add, size: 12, color: Colors.white),
                       ),
                     ),
                 ],
@@ -401,6 +440,19 @@ class _StatusComposerSheetState extends ConsumerState<_StatusComposerSheet> {
   bool _uploading = false;
   bool _posting = false;
 
+  /// 0.0–1.0 byte-level image upload fraction (drives the progress bar).
+  double _uploadProgress = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // The Post button's enabled state reads _text.text at build time —
+    // rebuild on every keystroke so typing enables it immediately.
+    _text.addListener(() {
+      if (mounted) setState(() {});
+    });
+  }
+
   @override
   void dispose() {
     _text.dispose();
@@ -410,9 +462,14 @@ class _StatusComposerSheetState extends ConsumerState<_StatusComposerSheet> {
   Future<void> _pickImage() async {
     final picked = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 82, maxWidth: 1600);
     if (picked == null) return;
-    setState(() => _uploading = true);
+    setState(() {
+      _uploading = true;
+      _uploadProgress = 0;
+    });
     try {
-      final url = await ApiService().uploadChatMedia(File(picked.path));
+      final url = await ApiService().uploadChatMediaWithProgress(File(picked.path), (p) {
+        if (mounted) setState(() => _uploadProgress = p);
+      });
       if (!mounted) return;
       setState(() {
         _mediaUrl = url;
@@ -541,6 +598,32 @@ class _StatusComposerSheetState extends ConsumerState<_StatusComposerSheet> {
                   ),
                 ),
               const SizedBox(height: 10),
+              // UPLOAD / POST progress bar — the user explicitly asked for a
+              // visible loading state while the image uploads / status posts.
+              if (_uploading || _posting) ...[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: _uploading
+                      ? LinearProgressIndicator(
+                          value: _uploadProgress <= 0 ? null : _uploadProgress,
+                          minHeight: 4,
+                          backgroundColor: colors.surfaceVariant,
+                          valueColor: AlwaysStoppedAnimation<Color>(colors.primary),
+                        )
+                      : const LinearProgressIndicator(minHeight: 4),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _uploading
+                      ? (_uploadProgress > 0
+                          ? 'Uploading image… ${(_uploadProgress * 100).round()}%'
+                          : 'Uploading image…')
+                      : 'Posting your status…',
+                  style: TextStyle(color: colors.textSecondary, fontSize: 11.5),
+                ),
+                const SizedBox(height: 6),
+              ],
+              const SizedBox(height: 6),
               Row(
                 children: [
                   OutlinedButton.icon(
