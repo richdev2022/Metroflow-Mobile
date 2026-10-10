@@ -92,8 +92,9 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
   }
 
   Color getStatusColor(String statusName) {
+    if (taskStatuses.isEmpty) return const Color(0xFF9E9E9E);
     final status = taskStatuses.firstWhere(
-      (s) => s.name == statusName,
+      (s) => s.name.toLowerCase() == statusName.toLowerCase(),
       orElse: () => taskStatuses.first,
     );
     try {
