@@ -468,7 +468,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     // Without this, the "New" highlight re-appeared right after you replied
     // in a fully-read chat (lastMessageAt > your open-time lastReadAt).
     final sender = conversation.lastMessageSenderId;
-    if (sender.isNotEmpty && sender == currentUserId) return false;
+    if (sender != null && sender.isNotEmpty && sender == currentUserId) return false;
     final lastAt = conversation.lastMessageAt;
     if (lastAt == null) return false;
     ConversationParticipant? mine;
