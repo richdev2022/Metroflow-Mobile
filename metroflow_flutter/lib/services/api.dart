@@ -472,9 +472,30 @@ class ApiService {
   /// Response shape mirrors /auth/login: token, userId, businessId,
   /// isNewUser, requiresPasswordSetup and user { id, name, email, avatarUrl,
   /// authProvider, hasPassword }.
-  Future<Response> googleAuth(String credential) async {
-    return await _dio.post('/auth/google', data: {'credential': credential});
+  Future<Response> googleAuth(String credential, {String? referralCode}) async {
+    return await _dio.post('/auth/google', data: {
+      'credential': credential,
+      if (referralCode != null && referralCode.trim().isNotEmpty)
+        'referralCode': referralCode.trim().toUpperCase(),
+    });
   }
+
+  // ---------------------------------------------------------------------------
+  // Refer & Earn
+  // ---------------------------------------------------------------------------
+
+  /// My referral code, link, config, stats and referred users.
+  Future<Response> getReferralInfo() => _dio.get('/referrals/me');
+
+  /// Attach a referral code to my account (post-signup / SSO prompt).
+  Future<Response> claimReferralCode(String code) =>
+      _dio.post('/referrals/claim', data: {'referralCode': code});
+
+  /// Public code check for the signup screen (shows valid/invalid inline).
+  Future<Response> validateReferralCode(String code) => _dio.get(
+        '/referrals/validate/${Uri.encodeComponent(code)}',
+        options: Options(extra: {'suppressToast': true}),
+      );
 
   /// Sets an initial password for SSO (Google) accounts that don't have one.
   /// Backend error code PASSWORD_ALREADY_SET when a password already exists.

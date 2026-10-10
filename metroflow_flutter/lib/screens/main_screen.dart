@@ -1097,6 +1097,15 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                         },
                       ),
                       _MoreTile(
+                        icon: Icons.card_giftcard_rounded,
+                        label: 'Refer & Earn',
+                        colors: colors,
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          context.push('/main/referrals');
+                        },
+                      ),
+                      _MoreTile(
                         icon: themeState.mode == ThemeMode.dark
                             ? Icons.light_mode_outlined
                             : Icons.dark_mode_outlined,

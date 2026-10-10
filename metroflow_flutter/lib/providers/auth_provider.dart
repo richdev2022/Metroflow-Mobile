@@ -368,7 +368,9 @@ class AuthNotifier extends Notifier<AuthState> {
   ///
   /// Returns `false` when the user cancelled the Google flow (not an error).
   /// Throws a friendly [Exception] on failure.
-  Future<bool> loginWithGoogle() async {
+  /// [referralCode] — Refer & Earn: attaches an optional referral code when
+  /// this Google sign-in creates a NEW account (ignored for existing users).
+  Future<bool> loginWithGoogle({String? referralCode}) async {
     String? idToken;
     try {
       idToken = await _googleAuthService.signIn();
@@ -383,7 +385,7 @@ class AuthNotifier extends Notifier<AuthState> {
     }
 
     try {
-      final response = await _apiService.googleAuth(idToken);
+      final response = await _apiService.googleAuth(idToken, referralCode: referralCode);
       final data = response.data;
 
       final token = data['token'];
