@@ -6,6 +6,7 @@ import '../theme/app_theme.dart';
 import '../services/api.dart';
 import '../widgets/pin_setup_sheet.dart';
 import '../widgets/single_transfer_sheet.dart';
+import '../widgets/transaction_limits_card.dart';
 
 class WalletScreen extends ConsumerStatefulWidget {
   const WalletScreen({super.key});
@@ -706,6 +707,15 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                           ),
                         ],
                       ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Web-parity inflow/outflow transaction limits card —
+                    // the tier's funding + transfer limits with live daily
+                    // head-room (same panel as the web wallet page).
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 16),
+                      child: TransactionLimitsCard(),
                     ),
                     const SizedBox(height: 16),
 

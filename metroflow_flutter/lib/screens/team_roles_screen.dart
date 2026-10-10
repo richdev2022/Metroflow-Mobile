@@ -54,14 +54,18 @@ class _Role {
     return _Role(
       id: (json['id'] as String?) ?? '',
       name: (json['name'] as String?) ?? '',
-      description: json['description'] as String?,
+      description: json['description']?.toString(),
       // Defensive: the backend returns snake_case; older payloads may not
       // carry the flag at all (then it's simply not a system role).
       isSystem: json['is_system'] == true || json['isSystem'] == true,
       permissions: (json['permissions'] as List<dynamic>? ?? const [])
           .map((p) => p.toString())
           .toList(),
-      memberCount: (json['memberCount'] as num?)?.toInt() ?? 0,
+      // memberCount arrives as a STRING on the live API (pg bigint via the
+      // pooler serializes as text: "0") — the old `as num?` cast THREW for
+      // every row, aborting _applyLoadedData before setState, so the screen
+      // always rendered "No custom roles yet" even with roles on the wire.
+      memberCount: int.tryParse(json['memberCount']?.toString() ?? '') ?? 0,
     );
   }
 }
@@ -209,12 +213,28 @@ class _TeamRolesScreenState extends State<TeamRolesScreen> {
 
     final roles = _dataList(rolesData, 'roles')
         .whereType<Map>()
-        .map((r) => _Role.fromJson(Map<String, dynamic>.from(r)))
+        .map((r) {
+          try {
+            return _Role.fromJson(Map<String, dynamic>.from(r));
+          } catch (e) {
+            debugPrint('Skipping malformed role row: $e');
+            return null;
+          }
+        })
+        .whereType<_Role>()
         .toList();
 
     final catalog = _dataList(permData, 'permissions')
         .whereType<Map>()
-        .map((p) => _Permission.fromJson(Map<String, dynamic>.from(p)))
+        .map((p) {
+          try {
+            return _Permission.fromJson(Map<String, dynamic>.from(p));
+          } catch (e) {
+            debugPrint('Skipping malformed permission row: $e');
+            return null;
+          }
+        })
+        .whereType<_Permission>()
         .toList();
 
     // '*' means the caller is owner/admin with full access. When /roles/me
