@@ -1339,6 +1339,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           ? null
                           : () => context.go(_kycTier == 'Tier 2' ? '/main/business-kyc' : '/kyc-prompt'),
                     ),
+                    _settingItem(
+                      icon: Icons.card_giftcard_rounded,
+                      title: 'Refer & Earn',
+                      subtitle: 'Your referral code, earnings and history',
+                      onTap: () => context.push('/main/referrals'),
+                    ),
                     _sectionTitle('Transaction Security'),
                     _otpToggleCard(),
                     _pinManagementCard(),

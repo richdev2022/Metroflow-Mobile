@@ -87,6 +87,9 @@ class _ProfileCompletionScreenState
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _phoneController = TextEditingController();
+  // Refer & Earn: optional referral code for Google SSO sign-ups — claimed on
+  // BOTH the submit and skip paths (best effort, never blocks onboarding).
+  final _referralController = TextEditingController();
   String? _industry;
   String? _logoPath;
   String? _existingLogoUrl;
@@ -103,7 +106,17 @@ class _ProfileCompletionScreenState
   void dispose() {
     _nameController.dispose();
     _phoneController.dispose();
+    _referralController.dispose();
     super.dispose();
+  }
+
+  /// Best-effort referral claim — failures are swallowed on purpose.
+  Future<void> _claimReferral() async {
+    final code = _referralController.text.trim().toUpperCase();
+    if (code.isEmpty) return;
+    try {
+      await _api.claimReferralCode(code);
+    } catch (_) {}
   }
 
   Future<void> _prefill() async {
@@ -188,6 +201,7 @@ class _ProfileCompletionScreenState
         ref.read(authProvider.notifier).markProfileCompleted();
         AppToast.show('Profile completed — welcome aboard!',
             type: AppToastType.success);
+        await _claimReferral();
 
         // Seamless continuation: offer the per-account biometric activation
         // right here, then land on the dashboard. (Previously this navigated
@@ -219,6 +233,7 @@ class _ProfileCompletionScreenState
     try {
       await ApiService().dismissProfilePrompt();
     } catch (_) {}
+    await _claimReferral();
     if (!mounted) return;
     setState(() => _saving = false);
     await maybeOfferBiometricSetup(context, ref);
@@ -339,6 +354,19 @@ class _ProfileCompletionScreenState
                       ? 'Enter a valid phone number'
                       : null,
                   decoration: _inputDecoration('e.g. 08012345678', colors),
+                ),
+                const SizedBox(height: 16),
+                _label('Referral code (optional)', colors),
+                TextFormField(
+                  controller: _referralController,
+                  enabled: _loaded,
+                  textCapitalization: TextCapitalization.characters,
+                  decoration: _inputDecoration(
+                      "Enter a friend's referral code", colors),
+                ),
+                Text(
+                  'If someone invited you, their code credits them when you subscribe.',
+                  style: TextStyle(fontSize: 11.5, color: colors.textSecondary),
                 ),
                 const SizedBox(height: 12),
                 // SKIP: finishing the business profile must never trap the

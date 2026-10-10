@@ -35,6 +35,7 @@ import 'screens/splash_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/main_screen.dart';
 import 'screens/register_screen.dart';
+import 'screens/referrals_screen.dart';
 import 'screens/forgot_password_screen.dart';
 import 'screens/verify_otp_screen.dart';
 import 'screens/verify_reset_otp_screen.dart';
@@ -176,6 +177,21 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
           // PUSH (not go): detail-style screen needs the previous screen
           // underneath, otherwise back exits the app from a shell-less page.
           GoRouter.of(ctx).push('/main/transfers');
+          return;
+        }
+        // metricorex://refer/<code> | metricorex://r/<code> | https://
+        // app.metricorex.com/refer/<code> — referral invite links. Route to
+        // the signup screen with the code prefilled (post-auth users land
+        // there too — invite links imply creating an account).
+        String? referCode;
+        if (segments.length >= 2 && (segments[0] == 'refer' || segments[0] == 'r')) {
+          referCode = segments[1];
+        } else if ((uri.host == 'refer' || uri.host == 'r') && segments.isNotEmpty) {
+          referCode = segments.first;
+        }
+        if (referCode != null && referCode.isNotEmpty) {
+          RegisterScreen.pendingReferralCode = referCode.toUpperCase();
+          GoRouter.of(ctx).go('/register?ref=${Uri.encodeComponent(referCode.toUpperCase())}');
           return;
         }
         // metricorex://chat/join/<code> — group invite link (host 'chat',
@@ -470,7 +486,10 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
         ),
         GoRoute(
           path: '/register',
-          builder: (context, state) => const RegisterScreen(),
+          builder: (context, state) => RegisterScreen(
+            initialReferralCode:
+                state.uri.queryParameters['ref'] ?? RegisterScreen.pendingReferralCode,
+          ),
         ),
         GoRoute(
           path: '/forgot-password',
@@ -607,6 +626,10 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
             GoRoute(
               path: 'settings',
               builder: (context, state) => const SettingsScreen(),
+            ),
+            GoRoute(
+              path: 'referrals',
+              builder: (context, state) => const ReferralsScreen(),
             ),
             GoRoute(
               path: 'team',
