@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/api.dart';
-import '../utils/theme.dart';
+import '../theme/app_theme.dart';
 import 'modern_ui.dart';
 
 /// Web-parity transaction-limits card (Wallet.tsx `WalletLimitCard`): an
@@ -12,10 +12,9 @@ import 'modern_ui.dart';
 ///
 /// Data shape = GET /wallet/limits → data (see [ApiService.getWalletLimits]).
 class TransactionLimitsCard extends StatefulWidget {
-  final ThemeColors colors;
   final VoidCallback? onUpgrade;
 
-  const TransactionLimitsCard({super.key, required this.colors, this.onUpgrade});
+  const TransactionLimitsCard({super.key, this.onUpgrade});
 
   @override
   State<TransactionLimitsCard> createState() => _TransactionLimitsCardState();
@@ -72,7 +71,9 @@ class _TransactionLimitsCardState extends State<TransactionLimitsCard> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = widget.colors;
+    // Self-sufficient theming: resolves the app palette directly so every
+    // call site can stay `const TransactionLimitsCard()`.
+    final colors = AppTheme.colors;
     if (!_loaded) {
       return Container(
         padding: const EdgeInsets.all(16),
