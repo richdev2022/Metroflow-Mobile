@@ -56,19 +56,22 @@ import 'app_badge_service.dart';
 /// ---------------------------------------------------------------------------
 
 /// Notification channel ids — MUST match the backend's `androidChannelId`
-/// ("calls" for incoming-call pushes, "messages" for chat-message pushes,
-/// "general-v2" for every other push) and the AndroidManifest meta-data
-/// `com.google.firebase.messaging.default_notification_channel_id`.
+/// ("calls-v3" for incoming-call pushes, "messages-v3" for chat-message
+/// pushes, "general-v3" for every other push) and the AndroidManifest
+/// meta-data `com.google.firebase.messaging.default_notification_channel_id`.
 ///
-/// WHY "-v2": Android notification-channel settings (including the sound) are
+/// WHY "-v3": Android notification-channel settings (including the sound) are
 /// IMMUTABLE once the channel is created on a device — existing installs would
-/// keep the old default sound forever. New channel ids guarantee every install
-/// picks up the user-supplied sounds. The legacy "general" channel is still
-/// created as a fallback so pushes from an not-yet-updated backend never
-/// disappear.
-const String kPushCallChannelId = 'calls';
-const String kPushMessagesChannelId = 'messages';
-const String kPushGeneralChannelId = 'general-v2';
+/// keep the old sound forever. v3 carries the FINAL user-supplied sound set
+/// (Oct 10 master audio). v2 never shipped for "calls"/"messages" (only
+/// "general" was bumped once), so devices that installed ANY earlier build
+/// were still locked to the pre-sound defaults — the reason custom sounds
+/// "didn't work" on mobile. New channel ids guarantee every install picks up
+/// the user-supplied sounds. The legacy "general" channel is still created as
+/// a fallback so pushes from an not-yet-updated backend never disappear.
+const String kPushCallChannelId = 'calls-v3';
+const String kPushMessagesChannelId = 'messages-v3';
+const String kPushGeneralChannelId = 'general-v3';
 const String kPushLegacyGeneralChannelId = 'general';
 
 /// Normalizes the backend's push `type` discriminator. The contract has used
@@ -970,12 +973,13 @@ class PushNotificationService {
           _presentIncomingCall(data);
           break;
         case 'missed_call':
-          _navigate('/main/calls');
+          _navigate(_tabCalls);
           break;
         case 'transaction':
           // Transfer reversals / payment alerts — land on the transfers list
           // where the referenced transaction (and its reversal) is visible.
-          _navigate('/main/transfers');
+          // PUSH: detail-style screen, back must return to the app.
+          _push('/main/transfers');
           break;
         case 'chat_message':
           // Deep-link into the EXACT conversation (not just the chat list).
@@ -986,21 +990,21 @@ class PushNotificationService {
               ChatDetailScreen.pendingOpenConversationId = conversationId;
             }
           } catch (_) {}
-          _navigate('/main/chat');
+          _navigate(_tabChat);
           break;
         case 'meeting':
         case 'meeting_invite':
-          _navigate('/main/meetings');
+          _navigate(_tabMeetings);
           break;
         case 'invoice':
-          _navigate('/main/invoices');
+          _push('/main/invoices');
           break;
         case 'subscription':
-          _navigate('/main/subscriptions');
+          _push('/main/subscription');
           break;
         case 'task':
         case 'assignment':
-          _navigate('/main/board');
+          _push('/main/board');
           break;
         case 'credit':
         case 'debit':
@@ -1008,18 +1012,18 @@ class PushNotificationService {
         case 'transfer':
           // Wallet money movement — the transfers screen is the mobile
           // transaction history (mirrors the in-app notifications map).
-          _navigate('/main/transfers');
+          _push('/main/transfers');
           break;
         case 'chat':
         case 'chat_new':
-          _navigate('/main/chat');
+          _navigate(_tabChat);
           break;
         case 'kyc':
         case 'business_kyc':
         case 'kyc_approved':
         case 'kyc_rejected':
           // Business-KYC upgrade wizard (dashboard banner deep link).
-          _navigate('/business-kyc-upgrade');
+          _push('/business-kyc-upgrade');
           break;
         case 'chat_invite':
         case 'group_invite':
@@ -1032,7 +1036,7 @@ class PushNotificationService {
               ChatDetailScreen.pendingChatJoinCode = code;
             }
           } catch (_) {}
-          _navigate('/main/chat');
+          _navigate(_tabChat);
           break;
         default:
           // GENERIC ESCAPE HATCH: a payload-declared route/actionUrl/screen
@@ -1042,10 +1046,10 @@ class PushNotificationService {
               (data['route'] ?? data['actionUrl'] ?? data['screen'] ?? '')
                   .toString();
           if (route.startsWith('/')) {
-            _navigate(route);
+            _push(route);
             return;
           }
-          _navigate('/main/notifications');
+          _push('/main/notifications');
       }
     } catch (e) {
       debugPrint('_handleNotificationTapPayload failed: $e');
@@ -1083,6 +1087,32 @@ class PushNotificationService {
       debugPrint('Push navigation failed: $e');
     }
   }
+
+  /// PUSH (stack-preserving) navigation for DETAIL screens: the previous
+  /// screen stays underneath so the system/page back button always works.
+  /// TAB targets use [_navigate] (go) instead — tabs are roots, and go()
+  /// guarantees the MainScreen SHELL (bottom bar) is present.
+  void _push(String location) {
+    try {
+      final context = navigatorKey.currentContext;
+      if (context == null) return;
+      GoRouter.of(context).push(location);
+    } catch (e) {
+      debugPrint('Push navigation failed: $e');
+    }
+  }
+
+  /// MainScreen tab indexes (lib/screens/main_screen.dart `_pages`).
+  /// Deep links MUST go through `/main?tab=N` — a `go('/main/<child>')`
+  /// renders the bare child route WITHOUT the MainScreen shell (no bottom
+  /// bar, no back), which left notification-tap users stuck on a shell-less
+  /// screen.
+  static const String _tabHome = '/main?tab=0';
+  static const String _tabTasks = '/main?tab=1';
+  static const String _tabChat = '/main?tab=2';
+  static const String _tabMeetings = '/main?tab=3';
+  static const String _tabCalls = '/main?tab=4';
+  static const String _tabWallet = '/main?tab=5';
 
   // -------------------------------------------------------------------------
   // Device registration

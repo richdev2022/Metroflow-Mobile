@@ -55,6 +55,11 @@ class ChatDetailScreen extends ConsumerStatefulWidget {
   /// returned conversation directly.
   static String? pendingChatJoinCode;
 
+  /// One-shot: set right before pushing a freshly CREATED group — the detail
+  /// screen then auto-opens the member profile sheet (this popup used to
+  /// appear after creating a group and quietly stopped).
+  static bool autoOpenMembersNextPush = false;
+
   @override
   ConsumerState<ChatDetailScreen> createState() => _ChatDetailScreenState();
 }
@@ -148,6 +153,16 @@ class _ChatDetailScreenState
 
   @override
   void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (ChatDetailScreen.autoOpenMembersNextPush) {
+        ChatDetailScreen.autoOpenMembersNextPush = false;
+        if (widget.conversation.type == 'group') {
+          _openChatProfile();
+        }
+      }
+    });
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     ChatDetailScreen.activeConversationId = widget.conversation.id;
@@ -317,6 +332,7 @@ class _ChatDetailScreenState
                   : (p.email.isNotEmpty ? p.email : 'Member'),
               email: p.email,
               avatarUrl: p.avatarUrl,
+              role: p.role,
             ))
         .toList();
     final other = conversation.otherParticipant(currentId);
@@ -326,6 +342,7 @@ class _ChatDetailScreenState
             name: other.name.trim(),
             email: other.email,
             avatarUrl: other.avatarUrl,
+            role: other.role,
           )
         : (members.isNotEmpty
             ? members.first
@@ -1101,6 +1118,7 @@ class _ChatDetailScreenState
                         : (p.email.isNotEmpty ? p.email : 'Member'),
                     email: p.email,
                     avatarUrl: p.avatarUrl,
+                    role: p.role,
                   ))
               .toList();
           _mentionLoaded = true;
