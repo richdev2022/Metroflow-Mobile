@@ -78,6 +78,7 @@ import 'screens/store_screen.dart';
 import 'screens/recurring_screen.dart';
 import 'screens/activity_logs_screen.dart';
 import 'screens/board_screen.dart';
+import 'screens/video_call_screen.dart';
 import 'screens/meetings_screen.dart';
 import 'screens/chat_screen.dart';
 import 'screens/calls_screen.dart';
@@ -128,6 +129,16 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       final appLinks = AppLinks();
       Future<void> handle(Uri uri) async {
         Logger.log('App link received: ' + uri.toString());
+        // HTTPS universal links (App Links — see the manifest intent-filter
+        // for app.metricorex.com): https://app.metricorex.com/meetings/<code>
+        // now opens the app instead of the browser's "page not found".
+        // Guard the host so only OUR domains navigate in-app.
+        if ((uri.scheme == 'https' || uri.scheme == 'http') &&
+            !(uri.host == 'app.metricorex.com' ||
+                uri.host == 'metricorex.com' ||
+                uri.host == 'www.metricorex.com')) {
+          return;
+        }
         final segments = List<String>.from(uri.pathSegments.where((s) => s.isNotEmpty));
         final ctx = navigatorKey.currentContext;
         if (ctx == null) return;
@@ -365,6 +376,16 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       await prefs.remove(kPendingIncomingCallPrefKey);
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return;
+      // Staleness guard: rings parked by the signed-out background handler
+      // carry `_persistedAt`. Only re-present if the call is still fresh —
+      // a login 10 minutes later must NOT ring for an ancient call. (Payloads
+      // persisted by an explicit ACCEPT tap carry no timestamp and always
+      // restore — the user explicitly asked to answer that call.)
+      final persistedAt = DateTime.tryParse(decoded['_persistedAt']?.toString() ?? '');
+      if (persistedAt != null) {
+        final age = DateTime.now().difference(persistedAt);
+        if (age.inSeconds > 120) return;
+      }
       ref
           .read(callProvider.notifier)
           .presentIncomingCall(Map<String, dynamic>.from(decoded));
@@ -943,6 +964,9 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
                 // Rendered below the incoming-call overlay so a call always
                 // takes precedence.
                 const MetricAiFloatingBubble(),
+                // Minimize → rejoin: floating "Return to call" pill while a
+                // call room is still alive but its screen is not mounted.
+                const _ReturnToCallPill(),
                 const IncomingCallDialog(),
                 // MAINTENANCE GATE (web parity): TOP-most child — while the
                 // admin has maintenance mode ON it covers the entire app
@@ -1031,6 +1055,78 @@ class _KeyboardDismissPill extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Floating "Return to call" pill (minimize → rejoin). Appears app-wide while
+/// a call room has args registered ([VideoCallScreen.lastCallContext]) but
+/// the room screen itself is not mounted — i.e. the user backed out of the
+/// room or closed the call modal without the call having ended. Tapping it
+/// re-opens the room with the SAME join args (the room re-joins with fresh
+/// credentials; an already-ended call surfaces its own join error).
+class _ReturnToCallPill extends StatelessWidget {
+  const _ReturnToCallPill();
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<Map<String, dynamic>?>(
+      valueListenable: VideoCallScreen.lastCallContext,
+      builder: (context, args, _) {
+        // The room screen registers itself on mount and clears the context on
+        // leave — while the user is IN the room there is nothing to return to.
+        if (args == null || VideoCallScreen.activeCallRoomId != null) {
+          return const SizedBox.shrink();
+        }
+        final title = (args['title'] ?? 'Call').toString();
+        return Positioned(
+          left: 16,
+          bottom: 96,
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(999),
+              onTap: () => unawaited(VideoCallScreen.reopenLastCall(context)),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2563EB).withValues(alpha: 0.92),
+                  borderRadius: BorderRadius.circular(999),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.25),
+                      offset: const Offset(0, 4),
+                      blurRadius: 12,
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.videocam_rounded,
+                        size: 16, color: Colors.white),
+                    const SizedBox(width: 6),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 180),
+                      child: Text(
+                        'Return to $title',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

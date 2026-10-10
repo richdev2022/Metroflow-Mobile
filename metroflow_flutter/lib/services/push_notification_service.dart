@@ -143,6 +143,15 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       );
       if (rendered) {
         unawaited(PushNotificationService.acknowledgeCallPush(data));
+        // Ring-while-signed-out continuity: remember this ring with a
+        // timestamp so that if the user logs in while the call is still
+        // fresh, main.dart re-presents the Accept/Decline overlay right
+        // after auth ("ring until I authenticate, then ask me to answer").
+        // Stale rings (>2 min) are dropped on restore — never resurrect an
+        // ancient call.
+        final stamped = Map<String, dynamic>.from(data)
+          ..['_persistedAt'] = DateTime.now().toIso8601String();
+        unawaited(PushNotificationService.persistPendingIncomingCall(stamped));
       } else {
         debugPrint('incoming-call render FAILED — leaving the server escalation armed');
       }
@@ -170,7 +179,10 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       // SILENT cleanup: the caller hung up while this device was still
       // ringing. Kill the full-screen ring notification — no banner, no
       // badge (the missed-call push, if any, carries the user-facing notice).
+      // ALSO drop any parked ring payload so a login moments later does not
+      // resurrect an already-ended call.
       await PushNotificationService.cancelCallNotification();
+      await PushNotificationService.clearPendingIncomingCall();
       return;
     }
     if (type == 'chat_message') {
@@ -673,6 +685,16 @@ class PushNotificationService {
     } catch (_) {
       // Never fail a notification action because of storage.
     }
+  }
+
+  /// Removes any parked incoming-call payload (call cancelled/ended while
+  /// the user was signed out — restoring it after login would ring for a
+  /// dead call). Safe in any isolate; never throws.
+  static Future<void> clearPendingIncomingCall() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(kPendingIncomingCallPrefKey);
+    } catch (_) {}
   }
 
   /// Main-isolate handler for the notification ACTION BUTTONS (Accept /

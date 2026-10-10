@@ -10,6 +10,11 @@ class RemoteMediaStream {
   final String id;
   final String producerId;
   final String? peerId;
+  /// Human display name of the remote participant when the engine can provide
+  /// it (LiveKit carries the join-token name; MediaSoup resolves it via the
+  /// room roster). Feeds the call-screen tile names — without it every peer
+  /// rendered as "Guest XXXX" even between two registered users.
+  final String? participantName;
   final String kind;
   final String? source;
   final MediaStream stream;
@@ -20,6 +25,7 @@ class RemoteMediaStream {
     required this.kind,
     required this.stream,
     this.peerId,
+    this.participantName,
     this.source,
   });
 }
@@ -55,6 +61,18 @@ class MediasoupRoomService {
   final Device _device = Device();
   final Map<String, Producer> _producers = {};
   final Map<String, Consumer> _consumers = {};
+
+  /// peerId → display name cache. The mediasoup consume ack carries the
+  /// producing peer's identity (`peerName`) but the vendored Consumer object
+  /// does not surface it — cache it here so remote tiles show REAL names
+  /// instead of "Guest XXXX".
+  final Map<String, String> peerNames = {};
+
+  String? nameForPeer(String? peerId) {
+    if (peerId == null || peerId.isEmpty) return null;
+    final name = peerNames[peerId];
+    return (name != null && name.isNotEmpty) ? name : null;
+  }
 
   Transport? _sendTransport;
   Transport? _recvTransport;
@@ -202,6 +220,7 @@ class MediasoupRoomService {
           id: consumer.id,
           producerId: consumer.producerId,
           peerId: consumer.peerId,
+          participantName: nameForPeer(consumer.peerId),
           kind: consumer.kind ?? 'video',
           source: consumer.appData['source']?.toString(),
           stream: consumer.stream,
@@ -344,6 +363,15 @@ class MediasoupRoomService {
 
       final consumerId = response['id']?.toString();
       if (consumerId == null) return;
+
+      // Cache the producing peer's display name (server consumes ack carries
+      // peerId + peerName) BEFORE the transport fires the consumer callback —
+      // the callback reads it to label the remote tile.
+      final peerId = response['peerId']?.toString() ?? response['userId']?.toString() ?? '';
+      final peerName = response['peerName']?.toString() ?? '';
+      if (peerId.isNotEmpty && peerName.isNotEmpty) {
+        peerNames[peerId] = peerName;
+      }
 
       recvTransport.consume(
         id: consumerId,
