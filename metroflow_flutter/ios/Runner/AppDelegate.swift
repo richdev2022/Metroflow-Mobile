@@ -283,7 +283,7 @@ import UIKit
     /// MANDATORY: a VoIP push MUST be reported to CallKit immediately —
     /// Apple kills the PushKit entitlement for apps that don't.
     func pushRegistry(_ registry: PKPushRegistry, didReceive incomingPush: PKPushPayload, for type: PKPushType) {
-      guard type == .voIP, let payload = incomingPush.payload as? [String: Any] else { return }
+      guard type == .voIP, let payload = incomingPush.dictionaryPayload as? [String: Any] else { return }
       NSLog("[PushKit] voip push received: \(payload.keys.joined(separator: ","))")
       appDelegate?.reportIncomingCall(payload: payload)
       appDelegate?.forwardToDart("onIncomingCall", payload)
