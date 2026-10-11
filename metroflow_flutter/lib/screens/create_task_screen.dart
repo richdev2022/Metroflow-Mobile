@@ -102,6 +102,7 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
       final api = ApiService();
       final teamRes = await api.getTeam();
       final epicsRes = await api.getEpics();
+      if (!mounted) return; // fast back-tap while /team + /epics are in flight
       if (teamRes.statusCode == 200) {
         final data = teamRes.data;
         if (data['success'] == true) {
@@ -125,7 +126,7 @@ class _CreateTaskScreenState extends ConsumerState<CreateTaskScreen> {
     } catch (e) {
       debugPrint('Failed to fetch data: $e');
     } finally {
-      setState(() => _isFetching = false);
+      if (mounted) setState(() => _isFetching = false);
     }
   }
 

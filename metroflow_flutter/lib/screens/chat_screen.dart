@@ -445,6 +445,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         teamMembers: _teamMembers,
         currentUserId: authState.userId,
         onCreated: (conversation) {
+          // The dialog just popped ChatDetailScreen, which NULLed the shared
+          // onMessageCreated slot — re-arm this list's socket handlers first.
+          _registerSocketHandlers();
           _loadConversations();
         },
       ),
@@ -793,7 +796,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                                           builder: (context) =>
                                               ChatDetailScreen(conversation: conversation),
                                         ),
-                                      ).then((_) => _loadConversations());
+                                      ).then((_) {
+                                        // ChatDetailScreen disposed and NULLed the
+                                        // shared onMessageCreated socket slot — re-arm
+                                        // this list's handlers before refreshing, or
+                                        // incoming messages stop bumping previews/unread.
+                                        if (!mounted) return;
+                                        _registerSocketHandlers();
+                                        _loadConversations();
+                                      });
                                     },
                                   );
                                   // WhatsApp-style swipe-to-delete (direct
@@ -1283,8 +1294,8 @@ class _CreateConversationDialogState extends State<_CreateConversationDialog> {
           // screen's first frame.
           ChatDetailScreen.autoOpenMembersNextPush = _type == 'group';
           // Refresh the list after returning from the pushed chat detail.
-          // (Routed through the parent's onCreated callback which calls
-          // _loadConversations() on the owning screen state.)
+          // (Routed through the parent's onCreated callback, which re-arms the
+          // parent's socket handlers and calls _loadConversations().)
           navigator
               .push(
                 MaterialPageRoute(

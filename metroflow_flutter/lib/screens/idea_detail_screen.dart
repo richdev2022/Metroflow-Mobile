@@ -67,7 +67,7 @@ class _IdeaDetailScreenState extends ConsumerState<IdeaDetailScreen> {
       }
     } catch (e) {
       debugPrint('Failed to fetch documentation: $e');
-      setState(() => _isLoadingDocs = false);
+      if (mounted) setState(() => _isLoadingDocs = false);
     }
   }
 
@@ -82,7 +82,7 @@ class _IdeaDetailScreenState extends ConsumerState<IdeaDetailScreen> {
     } catch (e) {
       debugPrint('Failed to generate doc: $e');
     } finally {
-      setState(() => _isGeneratingDoc = false);
+      if (mounted) setState(() => _isGeneratingDoc = false);
     }
   }
 
@@ -97,7 +97,7 @@ class _IdeaDetailScreenState extends ConsumerState<IdeaDetailScreen> {
     } catch (e) {
       debugPrint('Failed to regenerate doc: $e');
     } finally {
-      setState(() => _isGeneratingDoc = false);
+      if (mounted) setState(() => _isGeneratingDoc = false);
     }
   }
 
@@ -125,7 +125,7 @@ class _IdeaDetailScreenState extends ConsumerState<IdeaDetailScreen> {
     } catch (e) {
       debugPrint('Failed to update idea: $e');
     } finally {
-      setState(() => _isUpdatingIdea = false);
+      if (mounted) setState(() => _isUpdatingIdea = false);
     }
   }
 
@@ -159,7 +159,7 @@ class _IdeaDetailScreenState extends ConsumerState<IdeaDetailScreen> {
     } catch (e) {
       debugPrint('Failed to delete idea: $e');
     } finally {
-      setState(() => _isDeletingIdea = false);
+      if (mounted) setState(() => _isDeletingIdea = false);
     }
   }
 
@@ -205,7 +205,7 @@ class _IdeaDetailScreenState extends ConsumerState<IdeaDetailScreen> {
     } catch (e) {
       debugPrint('Failed: $e');
     } finally {
-      setState(() => _isUpdatingDoc = false);
+      if (mounted) setState(() => _isUpdatingDoc = false);
     }
   }
 

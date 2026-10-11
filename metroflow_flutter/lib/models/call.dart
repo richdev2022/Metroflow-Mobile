@@ -56,8 +56,12 @@ bool _parseBool(dynamic value, bool fallback) {
   if (value is bool) return value;
   if (value is num) return value != 0;
   final text = value?.toString().toLowerCase();
-  if (text == 'true') return true;
-  if (text == 'false') return false;
+  // FCM data payloads serialize booleans as "1"/"0" strings — treat "1" as
+  // true (a bare "0"/"false"/anything-else stays false). Without this the
+  // incoming-call push's isGroupCall:"1" parsed as FALSE and any callee's
+  // hangup ended group calls for everyone.
+  if (text == 'true' || text == '1') return true;
+  if (text == 'false' || text == '0') return false;
   return fallback;
 }
 

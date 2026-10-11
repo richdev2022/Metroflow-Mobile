@@ -502,11 +502,21 @@ class _PayrollScreenState extends State<PayrollScreen> {
   Future<void> _handleUpdateEmployee() async {
     if (_selectedEmployee == null) return;
 
+    // SILENT-SALARY-CORRUPTION GUARD: the backend PUT overwrites salary_amount
+    // with whatever number arrives — a non-numeric edit like "5,000" used to
+    // parse to 0 and zero the employee's pay. Reject it instead.
+    final salaryText = (_editEmployeeData['salary'] ?? '').toString().trim().replaceAll(',', '');
+    final parsedSalary = double.tryParse(salaryText);
+    if (parsedSalary == null || parsedSalary <= 0) {
+      AppToast.show('Enter a valid salary amount', type: AppToastType.error);
+      return;
+    }
+
     setState(() => _isLoading = true);
     try {
       final api = ApiService();
       await api.updatePayrollUser(_selectedEmployee!.id, {
-        'salary': double.tryParse(_editEmployeeData['salary'] ?? '0') ?? 0,
+        'salary': parsedSalary,
         'salary_currency': _editEmployeeData['salary_currency'] ?? 'NGN',
         'bank_account_number': _editEmployeeData['bank_account_number'] ?? '',
         'bank_code': _editEmployeeData['bank_code'] ?? '',
@@ -527,8 +537,13 @@ class _PayrollScreenState extends State<PayrollScreen> {
     return _employees.fold(0, (sum, e) => sum + (e.netSalary));
   }
 
-  String _formatAmount(double amount) {
-    return '\u20A6${amount.toStringAsFixed(0).replaceAllMapped(RegExp(r"(\d{1,3})(?=(\d{3})+(?!\d))"), (m) => "${m[1]},")}';
+  String _formatAmount(double amount, {String currency = 'NGN'}) {
+    // Payroll is multi-currency — symbol comes from the employee's salary
+    // currency (NGN default). Previously ₦ was hard-coded, so USD/GBP/EUR
+    // salaries displayed as "₦300".
+    const symbols = {'NGN': '\u20A6', 'USD': '\$', 'EUR': '\u20AC', 'GBP': '\u00A3'};
+    final symbol = symbols[currency] ?? '\u20A6';
+    return '$symbol${amount.toStringAsFixed(0).replaceAllMapped(RegExp(r"(\d{1,3})(?=(\d{3})+(?!\d))"), (m) => "${m[1]},")}';
   }
 
   String _formatDateParam(DateTime date) {
@@ -1374,15 +1389,15 @@ class _PayrollScreenState extends State<PayrollScreen> {
                           ),
                           child: Column(
                             children: [
-                              _buildDetailRow('Salary', _formatAmount((emp.salary is num) ? (emp.salary as num).toDouble() : 0.0)),
+                              _buildDetailRow('Salary', _formatAmount(double.tryParse('${emp.salary ?? 0}') ?? 0.0, currency: emp.salaryCurrency)),
                               const SizedBox(height: 12),
-                              _buildDetailRow('Bonuses', _formatAmount((emp.bonusesTotal ?? 0).toDouble())),
+                              _buildDetailRow('Bonuses', _formatAmount((emp.bonusesTotal ?? 0).toDouble(), currency: emp.salaryCurrency)),
                               const SizedBox(height: 12),
-                              _buildDetailRow('Deductions', _formatAmount((emp.deductionsTotal ?? 0).toDouble())),
+                              _buildDetailRow('Deductions', _formatAmount((emp.deductionsTotal ?? 0).toDouble(), currency: emp.salaryCurrency)),
                               const SizedBox(height: 12),
                               Divider(color: AppTheme.colors.border),
                               const SizedBox(height: 12),
-                              _buildDetailRow('Net Pay', _formatAmount(emp.netSalary), isPrimary: true),
+                              _buildDetailRow('Net Pay', _formatAmount(emp.netSalary, currency: emp.salaryCurrency), isPrimary: true),
                             ],
                           ),
                         ),

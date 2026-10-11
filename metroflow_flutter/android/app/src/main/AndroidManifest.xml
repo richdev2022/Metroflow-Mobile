@@ -96,6 +96,8 @@
                 <data android:pathPrefix="/meetings"/>
                 <data android:pathPrefix="/calls"/>
                 <data android:pathPrefix="/chat"/>
+                <data android:pathPrefix="/refer"/>
+                <data android:pathPrefix="/r"/>
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
