@@ -178,7 +178,8 @@ import UIKit
   private func endCallkitCall(callId: String, answered: Bool) {
     guard let uuid = callUuidByCallId.removeValue(forKey: callId) else { return }
     guard let controller = callController else { return }
-    let call = controller.callObserver.call(with: uuid)
+    // CXCallObserver exposes no per-UUID lookup — only the `calls` array.
+    let call = controller.callObserver.calls.first { $0.uuid == uuid }
     let action: CXEndCallAction
     if answered {
       action = CXEndCallAction(call: uuid)
