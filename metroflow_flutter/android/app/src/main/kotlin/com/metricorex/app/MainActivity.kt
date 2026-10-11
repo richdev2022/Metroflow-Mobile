@@ -57,6 +57,19 @@ class MainActivity : FlutterFragmentActivity() {
                         val route = call.argument<String>("route") ?: "speaker"
                         result.success(applyAudioRoute(route))
                     }
+                    "clearRoute" -> {
+                        // Call ended — restore the normal audio mode so media
+                        // audio (music, TTS, ringtones) behaves again.
+                        val am = audioManager()
+                        if (am != null) {
+                            try { am.isSpeakerphoneOn = false } catch (e: Exception) {}
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                try { am.clearCommunicationDevice() } catch (e: Exception) {}
+                            }
+                            try { am.mode = AudioManager.MODE_NORMAL } catch (e: Exception) {}
+                        }
+                        result.success(true)
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -121,6 +134,12 @@ class MainActivity : FlutterFragmentActivity() {
     private fun applyAudioRoute(route: String): Boolean {
         val am = audioManager() ?: return false
         return try {
+            // WebRTC communication audio only follows setCommunicationDevice /
+            // speakerphone flags while the device is in MODE_IN_COMMUNICATION.
+            // Without this, flutter_webrtc's audio module may have left the
+            // mode at MODE_NORMAL and the route pin silently does nothing —
+            // the classic "speaker toggle has no effect" bug.
+            try { am.mode = AudioManager.MODE_IN_COMMUNICATION } catch (e: Exception) {}
             val wantedType: Int? = when (route) {
                 "speaker" -> AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
                 "earpiece" -> AudioDeviceInfo.TYPE_BUILTIN_EARPIECE

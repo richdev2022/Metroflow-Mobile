@@ -15,6 +15,7 @@ import 'providers/auth_provider.dart';
 import 'services/api.dart';
 import 'services/app_badge_service.dart';
 import 'services/biometrics.dart';
+import 'services/callkit_service.dart';
 import 'services/push_notification_service.dart';
 import 'screens/permission_primer.dart';
 import 'services/socket_service.dart';
@@ -361,6 +362,9 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     // its build); token registration happens post-login via the auth
     // listener below and inside the service itself.
     unawaited(PushNotificationService.instance.initialize());
+    // iOS CallKit/PushKit bridge — native incoming-call ring UI. No-op on
+    // Android/web.
+    unawaited(CallKitService.instance.init());
     // Restore the persisted launcher-badge count (cold start).
     unawaited(AppBadgeService.instance.initialize());
   }
@@ -921,6 +925,8 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       final isIn = next.isAuthenticated;
       if (!wasIn && isIn) {
         unawaited(PushNotificationService.instance.registerCurrentDevice());
+        // iOS CallKit: register any VoIP token captured while signed out.
+        unawaited(CallKitService.instance.registerPendingVoipToken());
         // ACCEPT-FROM-NOTIFICATION (cold start): a user who accepted an
         // incoming call from the notification action while signed out parks
         // the payload in SharedPreferences — re-present the ring now that

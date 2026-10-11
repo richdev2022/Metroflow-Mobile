@@ -1,14 +1,50 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import '../theme/app_theme.dart';
 import '../services/api.dart';
 import '../models/task.dart';
-import '../models/task_status.dart';
 import '../utils/app_toast.dart';
 
-// Top-level so BOTH _BoardScreenState and _BoardTaskCard can use it.
+// ============================================================================
+// BOARD SCREEN — clean rebuild (web parity).
+//
+// This file intentionally mirrors client/pages/Board.tsx on the web:
+//   DATA     : GET /board -> [{id, business_id, name, color, is_default,
+//              sort_order, created_at, updated_at, tasks: Task[]}]
+//              Tasks come DOWN-LOADED IN THE COLUMNS — rendered directly,
+//              exactly like the web (no /tasks re-fetch, no local re-bucketing).
+//   MOVE     : optimistic local move + PUT /tasks/:id {status: <column NAME>}
+//              then refetch (web refetches after a status change).
+//   COLUMNS  : POST /task-statuses (create), PUT /task-statuses/:id (edit),
+//              DELETE /task-statuses/:id (delete non-default only) — same as web.
+//   PARANOID PARSING: every nested object goes through _asMap(), every task
+//              parse is individually try/catch'ed — one malformed row can
+//              never blank the board again.
+// ============================================================================
+
+/// Converts ANY decoded map (Map<String,dynamic>, Map<dynamic,dynamic>,
+/// _InternalLinkedHashMap…) into a clean Map<String, dynamic>. Decoded JSON
+/// keys are always String; values may need recursion, which call sites do.
+Map<String, dynamic> _asMap(Object? value) {
+  if (value is Map<String, dynamic>) return value;
+  if (value is Map) return Map<String, dynamic>.from(value);
+  return <String, dynamic>{};
+}
+
+/// Parses a task row defensively. Returns null (and logs) on malformed rows
+/// instead of throwing through the whole board render.
+Task? _parseTask(Object? raw) {
+  try {
+    return Task.fromJson(_asMap(raw));
+  } catch (e) {
+    debugPrint('[Board] skipped malformed task: $e');
+    return null;
+  }
+}
+
 String formatDate(String dateString) {
   try {
     final date = DateTime.parse(dateString).toLocal();
@@ -18,24 +54,65 @@ String formatDate(String dateString) {
   }
 }
 
-class BoardScreen extends ConsumerStatefulWidget {
+class _BoardColumn {
+  final String id;
+  final String name;
+  final String color;
+  final bool isDefault;
+  final int sortOrder;
+  final List<Task> tasks;
+  _BoardColumn({
+    required this.id,
+    required this.name,
+    required this.color,
+    required this.isDefault,
+    required this.sortOrder,
+    required this.tasks,
+  });
+
+  static _BoardColumn fromJson(Map<String, dynamic> json) {
+    final rawTasks = json['tasks'];
+    final tasks = <Task>[];
+    if (rawTasks is List) {
+      for (final t in rawTasks) {
+        final parsed = _parseTask(t);
+        if (parsed != null) tasks.add(parsed);
+      }
+    }
+    return _BoardColumn(
+      id: (json['id'] ?? '').toString(),
+      name: (json['name'] ?? '').toString(),
+      color: (json['color'] ?? '#6B7280').toString(),
+      isDefault: json['is_default'] == true,
+      sortOrder: (json['sort_order'] is num) ? (json['sort_order'] as num).toInt() : 0,
+      tasks: tasks,
+    );
+  }
+}
+
+Color _hexToColor(String hex, [Color fallback = const Color(0xFF6B7280)]) {
+  try {
+    var h = hex.replaceFirst('#', '').trim();
+    if (h.length == 6) h = 'ff$h';
+    if (h.length == 8) return Color(int.parse(h, radix: 16));
+    return fallback;
+  } catch (_) {
+    return fallback;
+  }
+}
+
+class BoardScreen extends StatefulWidget {
   const BoardScreen({super.key});
 
   @override
-  ConsumerState<BoardScreen> createState() => _BoardScreenState();
+  State<BoardScreen> createState() => _BoardScreenState();
 }
 
-class _BoardScreenState extends ConsumerState<BoardScreen> {
-  List<TaskStatus> taskStatuses = [];
-  bool isLoading = true;
-  bool isRefreshing = false;
-  String? _error; // surfaced — a failed load must never masquerade as an empty board
-  String? draggingTaskId;
-
-  // Web-mobile board parity (app.metricorex.com Board on a phone):
-  //  - [Status Overview] toggle -> per-column summary cards
-  //  - column FILTER CHIPS -> tapping a chip snap-pages to that column
-  //  - one FULL-WIDTH column at a time (PageView, like the web snap view)
+class _BoardScreenState extends State<BoardScreen> {
+  List<_BoardColumn> _columns = [];
+  bool _loading = true;
+  bool _refreshing = false;
+  String? _error;
   bool _showOverview = false;
   int _activeColumn = 0;
   final PageController _pageController = PageController();
@@ -43,7 +120,7 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
   @override
   void initState() {
     super.initState();
-    fetchData();
+    _fetchBoard();
   }
 
   @override
@@ -52,197 +129,184 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
     super.dispose();
   }
 
-  Future<void> fetchData() async {
+  // --------------------------------------------------------------------------
+  // DATA — one call, web parity: GET /board
+  // --------------------------------------------------------------------------
+  Future<void> _fetchBoard() async {
+    if (!_loading) setState(() => _refreshing = true);
     try {
-      setState(() {
-        isRefreshing = true;
-        _error = null;
-      });
-      final api = ApiService();
-      
-      // Fetch board data (statuses with tasks already grouped)
-      final boardResponse = await api.getBoard();
-      
-      if (mounted) {
-        final boardData = boardResponse.data;
-
-        if (boardData is Map && boardData['success'] == true) {
-          final newStatuses = (boardData['data'] as List?)
-              ?.map((e) => TaskStatus.fromJson(e as Map<String, dynamic>))
-              .toList() ?? [];
-          var statuses = newStatuses;
-
-          // DEFENSIVE FALLBACK: the board must never look empty while the
-          // tasks list has tasks. If the grouped board payload arrived with
-          // zero tasks (backend grouping regression, legacy deploy, or a
-          // payload the parser skipped), re-fetch /tasks and distribute the
-          // tasks across the columns ourselves (case-insensitive name match,
-          // orphans land in the first column — same rule as the backend).
-          final boardTaskCount = statuses.fold<int>(0, (n, s) => n + (s.tasks?.length ?? 0));
-          if (statuses.isNotEmpty && boardTaskCount == 0) {
-            try {
-              final tasksResponse = await api.getTasks();
-              final tData = tasksResponse.data;
-              final rawTasks = tData is Map
-                  ? (tData['data']?['tasks'] ?? tData['data'] ?? tData['tasks'])
-                  : tData;
-              if (rawTasks is List && rawTasks.isNotEmpty) {
-                final tasks = rawTasks
-                    .whereType<Map>()
-                    .map((e) => Task.fromJson(Map<String, dynamic>.from(e)))
-                    .toList();
-                final buckets = List<List<Task>>.generate(statuses.length, (_) => <Task>[]);
-                for (final t in tasks) {
-                  final idx = statuses.indexWhere(
-                      (s) => s.name.toLowerCase().trim() == t.status.toLowerCase().trim());
-                  (idx >= 0 ? buckets[idx] : buckets.first).add(t);
-                }
-                statuses = [
-                  for (var i = 0; i < statuses.length; i++)
-                    TaskStatus(
-                      id: statuses[i].id,
-                      businessId: statuses[i].businessId,
-                      name: statuses[i].name,
-                      color: statuses[i].color,
-                      isDefault: statuses[i].isDefault,
-                      sortOrder: statuses[i].sortOrder,
-                      createdAt: statuses[i].createdAt,
-                      updatedAt: statuses[i].updatedAt,
-                      tasks: buckets[i],
-                    ),
-                ];
-              }
-            } catch (fallbackErr) {
-              debugPrint('Board fallback /tasks fetch failed: $fallbackErr');
-            }
-          }
-          setState(() => taskStatuses = statuses);
-        } else {
-          setState(() => _error =
-              boardData is Map ? (boardData['error']?.toString() ?? 'Could not load the board') : 'Could not load the board');
+      final res = await ApiService().getBoard();
+      final body = _asMap(res.data);
+      if (body['success'] != true) {
+        throw Exception((body['error'] ?? body['message'] ?? 'Failed to fetch board').toString());
+      }
+      final list = body['data'];
+      final cols = <_BoardColumn>[];
+      if (list is List) {
+        for (final raw in list) {
+          final c = _asMap(raw);
+          if ((c['id'] ?? '').toString().isEmpty) continue;
+          cols.add(_BoardColumn.fromJson(c));
         }
       }
+      cols.sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+      if (!mounted) return;
+      setState(() {
+        _columns = cols;
+        _error = null;
+        if (_activeColumn >= cols.length) _activeColumn = 0;
+      });
     } catch (e) {
-      debugPrint('Failed to fetch board: $e');
+      debugPrint('[Board] fetch failed: $e');
       if (mounted) {
         setState(() => _error = ApiService.extractErrorMessage(e));
       }
     } finally {
       if (mounted) {
         setState(() {
-          isLoading = false;
-          isRefreshing = false;
+          _loading = false;
+          _refreshing = false;
         });
       }
     }
   }
 
-  Color getStatusColor(String statusName) {
-    if (taskStatuses.isEmpty) return const Color(0xFF9E9E9E);
-    final status = taskStatuses.firstWhere(
-      (s) => s.name.toLowerCase() == statusName.toLowerCase(),
-      orElse: () => taskStatuses.first,
-    );
-    try {
-      final colorString = status.color;
-      final buffer = StringBuffer();
-      if (colorString.length == 6 || colorString.length == 7) buffer.write('ff');
-      buffer.write(colorString.replaceFirst('#', ''));
-      return Color(int.parse(buffer.toString(), radix: 16));
-    } catch (e) {
-      return const Color(0xFF9E9E9E);
-    }
-  }
+  // --------------------------------------------------------------------------
+  // MOVE — web: PUT /tasks/:id {status} then fetchBoardData()
+  // The backend now resolves a status that matches a column id/name to the
+  // canonical column NAME, so sending the name (this screen) and the web's
+  // id both land in the same column.
+  // --------------------------------------------------------------------------
+  Future<void> _moveTask(Task task, _BoardColumn target) async {
+    if (task.status.toLowerCase() == target.name.toLowerCase()) return;
 
-  Future<void> updateTaskStatus(Task task, String newStatus) async {
-    debugPrint('Updating task ${task.id} to status $newStatus');
-    // First, update local state for immediate UI feedback
+    // 1. Optimistic local move (instant feedback — web does the same).
     setState(() {
-      // Remove task from old status
-      for (int i = 0; i < taskStatuses.length; i++) {
-        if (taskStatuses[i].tasks != null && taskStatuses[i].tasks!.any((t) => t.id == task.id)) {
-          taskStatuses[i] = TaskStatus(
-            id: taskStatuses[i].id,
-            businessId: taskStatuses[i].businessId,
-            name: taskStatuses[i].name,
-            color: taskStatuses[i].color,
-            isDefault: taskStatuses[i].isDefault,
-            sortOrder: taskStatuses[i].sortOrder,
-            createdAt: taskStatuses[i].createdAt,
-            updatedAt: taskStatuses[i].updatedAt,
-            tasks: taskStatuses[i].tasks?.where((t) => t.id != task.id).toList(),
-          );
-          break;
-        }
-      }
-      
-      // Add task to new status
-      final updatedTask = Task(
-        id: task.id,
-        businessId: task.businessId,
-        createdBy: task.createdBy,
-        title: task.title,
-        description: task.description,
-        epic: task.epic,
-        epicId: task.epicId,
-        sprint: task.sprint,
-        targetValue: task.targetValue,
-        accomplishedValue: task.accomplishedValue,
-        startDate: task.startDate,
-        endDate: task.endDate,
-        dueDate: task.dueDate,
-        status: newStatus,
-        isOverdue: task.isOverdue,
-        assignedTo: task.assignedTo,
-        attachments: task.attachments,
-        comments: task.comments,
-        images: task.images,
-        createdAt: task.createdAt,
-        updatedAt: DateTime.now().toIso8601String(),
-      );
-      
-      for (int i = 0; i < taskStatuses.length; i++) {
-        if (taskStatuses[i].name == newStatus) {
-          taskStatuses[i] = TaskStatus(
-            id: taskStatuses[i].id,
-            businessId: taskStatuses[i].businessId,
-            name: taskStatuses[i].name,
-            color: taskStatuses[i].color,
-            isDefault: taskStatuses[i].isDefault,
-            sortOrder: taskStatuses[i].sortOrder,
-            createdAt: taskStatuses[i].createdAt,
-            updatedAt: taskStatuses[i].updatedAt,
-            tasks: [...(taskStatuses[i].tasks ?? [])..add(updatedTask)],
-          );
-          break;
-        }
-      }
+      _columns = [
+        for (final c in _columns)
+          _BoardColumn(
+            id: c.id,
+            name: c.name,
+            color: c.color,
+            isDefault: c.isDefault,
+            sortOrder: c.sortOrder,
+            tasks: c.id == target.id
+                ? [task, ...c.tasks.where((t) => t.id != task.id)]
+                : c.tasks.where((t) => t.id != task.id).toList(),
+          ),
+      ];
     });
 
-    // Then, make the API call to update on backend
     try {
-      final api = ApiService();
-      await api.updateTask(task.id, {'status': newStatus});
-      debugPrint('Successfully updated task ${task.id} on backend');
+      await ApiService().updateTask(task.id, {'status': target.name});
+      AppToast.show('Task moved to ${target.name}', type: AppToastType.success);
     } catch (e) {
-      debugPrint('Failed to update task status on backend: $e');
-      // If API fails, revert back by refetching the data
-      await fetchData();
-      if (mounted) {
-        AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
-      }
+      AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
+    } finally {
+      await _fetchBoard(); // web refreshes after a status change — same here
     }
   }
 
-  Future<void> showCreateStatusDialog() async {
-    final nameController = TextEditingController();
-    Color selectedColor = const Color(0xFF6B7280);
+  // --------------------------------------------------------------------------
+  // COLUMN CRUD — web parity: /task-statuses
+  // --------------------------------------------------------------------------
+  Future<void> _createColumn() async {
+    final result = await _columnDialog(title: 'Create New Status Column');
+    if (result == null) return;
+    try {
+      final res = await ApiService().createTaskStatus({
+        'name': result.$1,
+        'color': result.$2,
+        'sort_order': _columns.length,
+      });
+      final body = _asMap(res.data);
+      if (body['success'] == true) {
+        AppToast.show('Column created', type: AppToastType.success);
+        await _fetchBoard();
+      } else {
+        throw Exception((body['error'] ?? 'Failed to create column').toString());
+      }
+    } catch (e) {
+      AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
+    }
+  }
 
-    await showDialog(
+  Future<void> _editColumn(_BoardColumn column) async {
+    final result = await _columnDialog(
+      title: 'Edit Column',
+      initialName: column.name,
+      initialColor: _hexToColor(column.color),
+    );
+    if (result == null) return;
+    try {
+      final res = await ApiService().updateTaskStatus(column.id, {
+        'name': result.$1,
+        'color': result.$2,
+      });
+      final body = _asMap(res.data);
+      if (body['success'] == true) {
+        AppToast.show('Column updated', type: AppToastType.success);
+        await _fetchBoard();
+      } else {
+        throw Exception((body['error'] ?? 'Failed to update column').toString());
+      }
+    } catch (e) {
+      AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
+    }
+  }
+
+  Future<void> _deleteColumn(_BoardColumn column) async {
+    final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Create New Status Column'),
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.colors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Delete column?'),
+        content: Text(
+          'This will delete the "${column.name}" column.',
+          style: const TextStyle(fontSize: 14),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      final res = await ApiService().deleteTaskStatus(column.id);
+      final body = _asMap(res.data);
+      if (body['success'] == true) {
+        AppToast.show('Column deleted', type: AppToastType.success);
+        await _fetchBoard();
+      } else {
+        throw Exception((body['error'] ?? 'Failed to delete column').toString());
+      }
+    } catch (e) {
+      AppToast.show(ApiService.extractErrorMessage(e), type: AppToastType.error);
+      await _fetchBoard();
+    }
+  }
+
+  Future<(String, String)?> _columnDialog({
+    required String title,
+    String initialName = '',
+    Color initialColor = const Color(0xFF6B7280),
+  }) async {
+    final nameController = TextEditingController(text: initialName);
+    Color selected = initialColor;
+    final colors = AppTheme.colors;
+    return showDialog<(String, String)>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          backgroundColor: colors.surface,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text(title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -250,6 +314,7 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
               children: [
                 TextField(
                   controller: nameController,
+                  autofocus: initialName.isEmpty,
                   decoration: const InputDecoration(
                     labelText: 'Status Name',
                     border: OutlineInputBorder(),
@@ -261,48 +326,27 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
                 SizedBox(
                   height: 200,
                   child: BlockPicker(
-                    pickerColor: selectedColor,
-                    onColorChanged: (color) {
-                      setDialogState(() {
-                        selectedColor = color;
-                      });
-                    },
+                    pickerColor: selected,
+                    onColorChanged: (c) => setDialogState(() => selected = c),
                   ),
                 ),
               ],
             ),
           ),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
             ElevatedButton(
-              onPressed: () async {
-                if (nameController.text.trim().isEmpty) {
+              onPressed: () {
+                final name = nameController.text.trim();
+                if (name.isEmpty) {
                   AppToast.show('Please enter a status name', type: AppToastType.error);
                   return;
                 }
-                
-                try {
-                  final api = ApiService();
-                  final navigator = Navigator.of(context);
-                  final response = await api.createTaskStatus({
-                    'name': nameController.text.trim(),
-                    'color': '#${selectedColor.toARGB32().toRadixString(16).substring(2).toUpperCase()}',
-                    'sort_order': taskStatuses.length,
-                  });
-                  
-                  if (response.data is Map && response.data['success'] == true) {
-                    if (!mounted) return;
-                    navigator.pop();
-                    await fetchData();
-                  }
-                } catch (e) {
-                  debugPrint('Failed to create status: $e');
-                }
+                final hex =
+                    '#${selected.toARGB32().toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}';
+                Navigator.pop(ctx, (name, hex));
               },
-              child: const Text('Create'),
+              child: const Text('Save'),
             ),
           ],
         ),
@@ -310,18 +354,10 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
     );
   }
 
-  // -------------------------------------------------------------------------
-  // UI
-  // -------------------------------------------------------------------------
-
-  int get _totalTasks => taskStatuses.fold<int>(0, (sum, s) => sum + (s.tasks?.length ?? 0));
-
-  int get _overdueCount => taskStatuses.fold<int>(
-      0, (sum, s) => sum + (s.tasks?.where((t) => t.isOverdue).length ?? 0));
-
+  // --------------------------------------------------------------------------
+  // HELPERS
+  // --------------------------------------------------------------------------
   void _goBack() {
-    // GUARDED back: the board can be reached via context.go() (no stack) or
-    // pushed from Tasks. Pop when possible, otherwise return to the app shell.
     if (context.canPop()) {
       context.pop();
     } else {
@@ -329,11 +365,65 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
     }
   }
 
+  void _openTask(Task task) => context.push('/main/task-detail', extra: task);
+
+  void _moveSheet(Task task) {
+    final colors = AppTheme.colors;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: colors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+              child: Text(
+                'Move "${task.title}" to…',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14.5),
+              ),
+            ),
+            ...List.generate(_columns.length, (i) {
+              final column = _columns[i];
+              final accent = _hexToColor(column.color);
+              final isCurrent = column.name.toLowerCase() == task.status.toLowerCase();
+              return ListTile(
+                leading: Container(width: 12, height: 12, decoration: BoxDecoration(color: accent, shape: BoxShape.circle)),
+                title: Text(column.name, style: const TextStyle(fontSize: 14)),
+                trailing: isCurrent
+                    ? const Icon(Icons.check_rounded, size: 18, color: Colors.green)
+                    : null,
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _moveTask(task, column);
+                },
+              );
+            }),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  int get _totalTasks => _columns.fold(0, (n, c) => n + c.tasks.length);
+  int get _overdueCount =>
+      _columns.fold(0, (n, c) => n + c.tasks.where((t) => t.isOverdue).length);
+
+  // --------------------------------------------------------------------------
+  // BUILD
+  // --------------------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
     final colors = AppTheme.colors;
 
-    if (isLoading) {
+    if (_loading) {
       return Scaffold(
         backgroundColor: colors.background,
         body: Center(
@@ -355,33 +445,29 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ------------------------------------------------ header (web copy)
+            // header
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
               child: Row(
                 children: [
-                  _HeaderIconButton(
-                    icon: Icons.arrow_back_ios_new_rounded,
-                    colors: colors,
-                    onTap: _goBack,
-                  ),
+                  _IconBtn(icon: Icons.arrow_back_ios_new_rounded, onTap: _goBack),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          'Board',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.w800,
-                            color: colors.text,
-                            letterSpacing: -0.5,
-                          ),
-                        ),
+                        Text('Board',
+                            style: TextStyle(
+                                fontSize: 24,
+                                fontWeight: FontWeight.w800,
+                                color: colors.text,
+                                letterSpacing: -0.5)),
                         const SizedBox(height: 2),
                         Text(
-                          'Drag and drop tasks to update their status',
+                          _totalTasks == 0
+                              ? 'No tasks yet — add one to get started'
+                              : '$_totalTasks task${_totalTasks == 1 ? '' : 's'}'
+                                  '${_overdueCount > 0 ? ' · $_overdueCount overdue' : ''}',
                           style: TextStyle(fontSize: 12, color: colors.textSecondary),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -389,52 +475,41 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
                       ],
                     ),
                   ),
-                  _HeaderIconButton(
-                    icon: Icons.refresh_rounded,
-                    colors: colors,
-                    onTap: () => fetchData(),
-                  ),
+                  _IconBtn(icon: Icons.refresh_rounded, onTap: _fetchBoard),
                 ],
               ),
             ),
 
-            // --------------------------------- action row (web mobile parity)
+            // action row (web parity: Overview · Add Column · Add Task)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
               child: Row(
                 children: [
-                  _BoardActionButton(
+                  _ActionBtn(
                     label: _showOverview ? 'Show Board' : 'Overview',
                     icon: Icons.donut_small_rounded,
-                    colors: colors,
                     onTap: () => setState(() => _showOverview = !_showOverview),
                   ),
                   const SizedBox(width: 8),
-                  _BoardActionButton(
-                    label: 'Column',
-                    icon: Icons.add_rounded,
-                    colors: colors,
-                    onTap: showCreateStatusDialog,
-                  ),
+                  _ActionBtn(label: 'Column', icon: Icons.add_rounded, onTap: _createColumn),
                   const SizedBox(width: 8),
-                  _BoardActionButton(
+                  _ActionBtn(
                     label: 'Add Task',
                     icon: Icons.add_rounded,
-                    colors: colors,
                     filled: true,
-                    onTap: () => context.push('/main/create-task'),
+                    onTap: () async {
+                      await context.push('/main/create-task');
+                      if (mounted) await _fetchBoard();
+                    },
                   ),
                 ],
               ),
             ),
 
-            // ------------------------------------------------ body
             Expanded(
               child: _error != null
-                  // A failed load must be VISIBLE — it used to swallow into
-                  // the empty state, which looked like "board not working".
                   ? RefreshIndicator(
-                      onRefresh: fetchData,
+                      onRefresh: _fetchBoard,
                       color: colors.primary,
                       backgroundColor: colors.surface,
                       child: ListView(
@@ -442,11 +517,9 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
                           const SizedBox(height: 64),
                           Icon(Icons.cloud_off_rounded, size: 44, color: colors.textSecondary),
                           const SizedBox(height: 12),
-                          Text(
-                            'Couldn\'t load the board',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: colors.text),
-                          ),
+                          Text("Couldn't load the board",
+                              textAlign: TextAlign.center,
+                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: colors.text)),
                           const SizedBox(height: 6),
                           Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 32),
@@ -459,7 +532,7 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
                           const SizedBox(height: 16),
                           Center(
                             child: OutlinedButton.icon(
-                              onPressed: fetchData,
+                              onPressed: _fetchBoard,
                               icon: const Icon(Icons.refresh_rounded, size: 18),
                               label: const Text('Retry'),
                               style: OutlinedButton.styleFrom(foregroundColor: colors.primary),
@@ -468,217 +541,165 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
                         ],
                       ),
                     )
-                  : taskStatuses.isEmpty
-                  ? _EmptyBoard(colors: colors, onAddColumn: showCreateStatusDialog)
-                  : _showOverview
-                  ? _StatusOverview(
-                      colors: colors,
-                      statuses: taskStatuses,
-                      getStatusColor: getStatusColor,
-                      onPick: (index) {
-                        setState(() {
-                          _showOverview = false;
-                          _activeColumn = index.clamp(0, taskStatuses.length - 1);
-                        });
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          if (mounted) {
-                            _pageController.jumpToPage(_activeColumn);
-                          }
-                        });
-                      },
-                    )
-                  : RefreshIndicator(
-                      onRefresh: fetchData,
-                      color: colors.primary,
-                      backgroundColor: colors.surface,
-                      child: Column(
-                        children: [
-                          // ------------------------------------ filter chips
-                          SizedBox(
-                            height: 46,
-                            child: ListView.separated(
-                              scrollDirection: Axis.horizontal,
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                              itemCount: taskStatuses.length,
-                              separatorBuilder: (_, __) => const SizedBox(width: 8),
-                              itemBuilder: (context, i) {
-                                final status = taskStatuses[i];
-                                final active = i == _activeColumn.clamp(0, taskStatuses.length - 1);
-                                final accent = getStatusColor(status.name);
-                                final count = status.tasks?.length ?? 0;
-                                return GestureDetector(
-                                  onTap: () {
-                                    _pageController.animateToPage(
-                                      i,
-                                      duration: const Duration(milliseconds: 260),
-                                      curve: Curves.easeOut,
-                                    );
-                                    setState(() => _activeColumn = i);
-                                  },
-                                  child: AnimatedContainer(
-                                    duration: const Duration(milliseconds: 160),
-                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                                    decoration: BoxDecoration(
-                                      color: active ? accent : colors.surface,
-                                      borderRadius: BorderRadius.circular(999),
-                                      border: Border.all(color: active ? accent : colors.border),
-                                    ),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Container(
-                                          width: 8,
-                                          height: 8,
-                                          decoration: BoxDecoration(
-                                            shape: BoxShape.circle,
-                                            color: active ? Colors.white : accent,
+                  : _columns.isEmpty
+                      ? _EmptyBoard(onAddColumn: _createColumn)
+                      : _showOverview
+                          ? _Overview(
+                              columns: _columns,
+                              totalTasks: _totalTasks,
+                              overdueCount: _overdueCount,
+                              onPick: (i) {
+                                setState(() {
+                                  _showOverview = false;
+                                  _activeColumn = i.clamp(0, _columns.length - 1);
+                                });
+                                WidgetsBinding.instance.addPostFrameCallback((_) {
+                                  if (mounted) _pageController.jumpToPage(_activeColumn);
+                                });
+                              },
+                            )
+                          : RefreshIndicator(
+                              onRefresh: _fetchBoard,
+                              color: colors.primary,
+                              backgroundColor: colors.surface,
+                              child: Column(
+                                children: [
+                                  _ChipRow(
+                                    columns: _columns,
+                                    active: _activeColumn,
+                                    onPick: (i) {
+                                      _pageController.animateToPage(
+                                        i,
+                                        duration: const Duration(milliseconds: 260),
+                                        curve: Curves.easeOut,
+                                      );
+                                      setState(() => _activeColumn = i);
+                                    },
+                                  ),
+                                  Expanded(
+                                    child: PageView.builder(
+                                      controller: _pageController,
+                                      itemCount: _columns.length,
+                                      onPageChanged: (i) => setState(() => _activeColumn = i),
+                                      itemBuilder: (context, i) =>
+                                          _ColumnPage(
+                                            column: _columns[i.clamp(0, _columns.length - 1)],
+                                            columns: _columns,
+                                            onMove: _moveTask,
+                                            onOpenTask: _openTask,
+                                            onMoveSheet: _moveSheet,
+                                            onEditColumn: _editColumn,
+                                            onDeleteColumn: _deleteColumn,
                                           ),
-                                        ),
-                                        const SizedBox(width: 6),
-                                        Text(
-                                          status.name,
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w700,
-                                            color: active ? Colors.white : colors.textSecondary,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 6),
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                                          decoration: BoxDecoration(
-                                            color: active ? Colors.white24 : colors.surfaceVariant,
-                                            borderRadius: BorderRadius.circular(999),
-                                          ),
-                                          child: Text(
-                                            '$count',
-                                            style: TextStyle(
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.w800,
-                                              color: active ? Colors.white : colors.textSecondary,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
                                     ),
                                   ),
-                                );
-                              },
+                                ],
+                              ),
                             ),
-                          ),
-                          // ------------------------- one full-width column/page
-                          Expanded(
-                            child: PageView.builder(
-                              controller: _pageController,
-                              itemCount: taskStatuses.length,
-                              onPageChanged: (i) => setState(() => _activeColumn = i),
-                              itemBuilder: (context, ci) {
-                                final clamped = ci.clamp(0, taskStatuses.length - 1);
-                                return _buildColumnPage(taskStatuses[clamped]);
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
             ),
           ],
         ),
       ),
     );
   }
+}
 
-  /// One FULL-WIDTH column page (web mobile shows a single column at a time,
-  /// navigated with the chip row / horizontal swipe).
-  Widget _buildColumnPage(TaskStatus status) {
+// ============================================================================
+// COLUMN PAGE — header card + DragTarget well + task cards
+// ============================================================================
+class _ColumnPage extends StatelessWidget {
+  final _BoardColumn column;
+  final List<_BoardColumn> columns;
+  final Future<void> Function(Task, _BoardColumn) onMove;
+  final void Function(Task) onOpenTask;
+  final void Function(Task) onMoveSheet;
+  final void Function(_BoardColumn) onEditColumn;
+  final void Function(_BoardColumn) onDeleteColumn;
+
+  const _ColumnPage({
+    required this.column,
+    required this.columns,
+    required this.onMove,
+    required this.onOpenTask,
+    required this.onMoveSheet,
+    required this.onEditColumn,
+    required this.onDeleteColumn,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     final colors = AppTheme.colors;
-    final statusTasks = status.tasks ?? const <Task>[];
-    final accent = getStatusColor(status.name);
+    final accent = _hexToColor(column.color);
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Column header card: dot + name + count pill + edit
-          GestureDetector(
-            onLongPress: showCreateStatusDialog,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: colors.surface,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: colors.border),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 10,
-                    height: 10,
-                    decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
+          // header card (web: dot + name + count + edit + delete-if-not-default)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: colors.surface,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: colors.border),
+            ),
+            child: Row(
+              children: [
+                Container(width: 10, height: 10, decoration: BoxDecoration(color: accent, shape: BoxShape.circle)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    column.name,
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: colors.text),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      status.name,
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: colors.text,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: accent.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(999),
                   ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: accent.withValues(alpha: 0.14),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      '${statusTasks.length}',
-                      style: TextStyle(
-                        color: accent,
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
+                  child: Text(
+                    '${column.tasks.length}',
+                    style: TextStyle(color: accent, fontSize: 11.5, fontWeight: FontWeight.w800),
                   ),
+                ),
+                const SizedBox(width: 6),
+                GestureDetector(
+                  onTap: () => onEditColumn(column),
+                  child: Icon(Icons.edit_outlined, size: 16, color: colors.textSecondary),
+                ),
+                if (!column.isDefault) ...[
                   const SizedBox(width: 6),
                   GestureDetector(
-                    onTap: showCreateStatusDialog,
-                    child: Icon(Icons.edit_outlined, size: 16, color: colors.textSecondary),
+                    onTap: () => onDeleteColumn(column),
+                    child: const Icon(Icons.delete_outline_rounded, size: 16, color: Colors.redAccent),
                   ),
                 ],
-              ),
+              ],
             ),
           ),
           const SizedBox(height: 10),
           Expanded(
             child: DragTarget<Task>(
-              onWillAcceptWithDetails: (details) => details.data.status != status.name,
-              onAcceptWithDetails: (details) {
-                final task = details.data;
-                if (task.status != status.name) {
-                  updateTaskStatus(task, status.name);
-                }
-              },
-              builder: (context, candidateData, rejectedData) {
-                final isTargeting = candidateData.isNotEmpty;
+              onWillAcceptWithDetails: (details) =>
+                  details.data.status.toLowerCase() != column.name.toLowerCase(),
+              onAcceptWithDetails: (details) => onMove(details.data, column),
+              builder: (context, candidateData, _) {
+                final targeting = candidateData.isNotEmpty;
                 return AnimatedContainer(
                   duration: const Duration(milliseconds: 180),
-                  constraints: const BoxConstraints.expand(),
                   decoration: BoxDecoration(
-                    color: isTargeting
-                        ? accent.withValues(alpha: 0.08)
-                        : colors.surfaceVariant,
+                    color: targeting ? accent.withValues(alpha: 0.08) : colors.surfaceVariant,
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(
-                      color: isTargeting ? accent : colors.border,
-                      width: isTargeting ? 1.6 : 1,
+                      color: targeting ? accent : colors.border,
+                      width: targeting ? 1.6 : 1,
                     ),
                   ),
-                  child: statusTasks.isEmpty
+                  child: column.tasks.isEmpty
                       ? Center(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
@@ -687,28 +708,27 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
                                   color: colors.textSecondary.withValues(alpha: 0.7), size: 30),
                               const SizedBox(height: 8),
                               Text(
-                                isTargeting ? 'Drop here' : 'No tasks',
+                                targeting ? 'Drop here' : 'No tasks',
                                 style: TextStyle(
-                                  color: isTargeting ? accent : colors.textSecondary,
+                                  color: targeting ? accent : colors.textSecondary,
                                   fontSize: 12.5,
-                                  fontWeight: isTargeting ? FontWeight.w700 : FontWeight.w400,
+                                  fontWeight: targeting ? FontWeight.w700 : FontWeight.w400,
                                 ),
                               ),
                             ],
                           ),
                         )
-                      : ListView.builder(
+                      : ListView.separated(
                           padding: const EdgeInsets.all(8),
-                          itemCount: statusTasks.length,
-                          itemBuilder: (context, index) {
-                            final task = statusTasks[index];
-                            return _BoardTaskCard(
+                          itemCount: column.tasks.length,
+                          separatorBuilder: (_, __) => const SizedBox(height: 8),
+                          itemBuilder: (context, i) {
+                            final task = column.tasks[i];
+                            return _TaskCard(
                               task: task,
                               accent: accent,
-                              colors: colors,
-                              canMove: taskStatuses.length > 1,
-                              onMove: () => _moveTaskSheet(task),
-                              onTap: () => context.push('/main/task-detail', extra: task),
+                              onTap: () => onOpenTask(task),
+                              onMove: () => onMoveSheet(task),
                             );
                           },
                         ),
@@ -720,105 +740,468 @@ class _BoardScreenState extends ConsumerState<BoardScreen> {
       ),
     );
   }
+}
 
-  /// Cross-column move (single-column view can't drag across pages): a
-  /// bottom sheet listing the OTHER statuses; picking one moves the task.
-  void _moveTaskSheet(Task task) {
+// ============================================================================
+// TASK CARD — web parity: accent stripe, title, description, due chip,
+// epic chip. Long-press = move sheet (single-column view can't drag across
+// pages); drag within the page targets the column well.
+// ============================================================================
+class _TaskCard extends StatelessWidget {
+  final Task task;
+  final Color accent;
+  final VoidCallback onTap;
+  final VoidCallback onMove;
+
+  const _TaskCard({required this.task, required this.accent, required this.onTap, required this.onMove});
+
+  String? _dueLabel() {
+    final raw = task.dueDate?.isNotEmpty == true ? task.dueDate : task.endDate;
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final d = DateTime.parse(raw).toLocal();
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final day = DateTime(d.year, d.month, d.day);
+      final diff = day.difference(today).inDays;
+      if (diff < 0) return 'Overdue · ${formatDate(raw)}';
+      if (diff == 0) return 'Due today';
+      if (diff == 1) return 'Due tomorrow';
+      return 'Due ${formatDate(raw)}';
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final colors = AppTheme.colors;
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: colors.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    final due = _dueLabel();
+    final overdue = task.isOverdue;
+
+    return Draggable<Task>(
+      data: task,
+      feedback: Material(
+        color: Colors.transparent,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: 260),
+          child: _card(context, colors, dragging: true),
+        ),
       ),
-      builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
-              child: Text(
-                'Move "${task.title}" to…',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14.5, color: colors.text),
-              ),
-            ),
-            ...List.generate(taskStatuses.length, (i) {
-              final status = taskStatuses[i];
-              final accent = getStatusColor(status.name);
-              final isCurrent = status.name == task.status;
-              return ListTile(
-                leading: Container(
-                  width: 12,
-                  height: 12,
-                  decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
-                ),
-                title: Text(
-                  status.name,
-                  style: TextStyle(
-                    color: isCurrent ? colors.textSecondary : colors.text,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
+      childWhenDragging: Opacity(opacity: 0.35, child: _card(context, colors)),
+      child: _card(context, colors),
+    );
+  }
+
+  Widget _card(BuildContext context, dynamic colors, {bool dragging = false}) {
+    final due = _dueLabel();
+    final overdue = task.isOverdue;
+    return GestureDetector(
+      onTap: onTap,
+      onLongPress: onMove,
+      child: Container(
+        decoration: BoxDecoration(
+          color: colors.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: colors.border),
+          boxShadow: dragging
+              ? [BoxShadow(color: Colors.black.withValues(alpha: 0.18), blurRadius: 16, offset: const Offset(0, 6))]
+              : null,
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(width: 4, color: accent),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        task.title,
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w700,
+                          color: colors.text,
+                          height: 1.25,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (task.description?.isNotEmpty == true) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          task.description!,
+                          style: TextStyle(fontSize: 11.5, height: 1.35, color: colors.textSecondary),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          if (due != null) ...[
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: overdue
+                                    ? Colors.red.withValues(alpha: 0.12)
+                                    : colors.surfaceVariant,
+                                borderRadius: BorderRadius.circular(999),
+                                border: Border.all(
+                                  color: overdue ? Colors.red.withValues(alpha: 0.4) : colors.border,
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    overdue ? Icons.warning_amber_rounded : Icons.calendar_today_rounded,
+                                    size: 10,
+                                    color: overdue ? Colors.red : colors.textSecondary,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    due,
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                      color: overdue ? Colors.red : colors.textSecondary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                          if (task.epic?.isNotEmpty == true) ...[
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: colors.primary.withValues(alpha: 0.10),
+                                  borderRadius: BorderRadius.circular(999),
+                                  border: Border.all(color: colors.primary.withValues(alpha: 0.25)),
+                                ),
+                                child: Text(
+                                  task.epic!,
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                    color: colors.primary,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ),
+                          ],
+                          const Spacer(),
+                          if (task.assignedTo?.isNotEmpty == true)
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.person_rounded, size: 11, color: colors.textSecondary),
+                                const SizedBox(width: 3),
+                                Text(
+                                  '${task.assignedTo!.length}',
+                                  style: TextStyle(fontSize: 10.5, color: colors.textSecondary),
+                                ),
+                              ],
+                            ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
-                trailing: isCurrent
-                    ? Icon(Icons.check_rounded, size: 18, color: colors.textSecondary)
-                    : null,
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  if (!isCurrent) updateTaskStatus(task, status.name);
-                },
-              );
-            }),
-            const SizedBox(height: 8),
-          ],
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
-
 }
 
-// ---------------------------------------------------------------------------
-// Board building blocks
-// ---------------------------------------------------------------------------
+// ============================================================================
+// CHIP ROW (web mobile parity — tap chip to page to that column)
+// ============================================================================
+class _ChipRow extends StatelessWidget {
+  final List<_BoardColumn> columns;
+  final int active;
+  final void Function(int) onPick;
 
-/// Pill button in the web-mobile action row (Overview / Column / Add Task).
-class _BoardActionButton extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final dynamic colors;
-  final bool filled;
-  final VoidCallback onTap;
+  const _ChipRow({required this.columns, required this.active, required this.onPick});
 
-  const _BoardActionButton({
-    required this.label,
-    required this.icon,
-    required this.colors,
-    this.filled = false,
-    required this.onTap,
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppTheme.colors;
+    return SizedBox(
+      height: 46,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        itemCount: columns.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, i) {
+          final column = columns[i];
+          final isActive = i == active.clamp(0, columns.length - 1);
+          final accent = _hexToColor(column.color);
+          return GestureDetector(
+            onTap: () => onPick(i),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              decoration: BoxDecoration(
+                color: isActive ? accent : colors.surface,
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: isActive ? accent : colors.border),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: isActive ? Colors.white : accent,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    column.name,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: isActive ? Colors.white : colors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: isActive ? Colors.white24 : colors.surfaceVariant,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      '${column.tasks.length}',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        color: isActive ? Colors.white : colors.textSecondary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// OVERVIEW (web "Status Overview" parity)
+// ============================================================================
+class _Overview extends StatelessWidget {
+  final List<_BoardColumn> columns;
+  final int totalTasks;
+  final int overdueCount;
+  final void Function(int) onPick;
+
+  const _Overview({
+    required this.columns,
+    required this.totalTasks,
+    required this.overdueCount,
+    required this.onPick,
   });
 
   @override
   Widget build(BuildContext context) {
+    final colors = AppTheme.colors;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: colors.surface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: colors.border),
+          ),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 72,
+                height: 72,
+                child: CustomPaint(
+                  painter: _DonutPainter(columns),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('$totalTasks total tasks',
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: colors.text)),
+                    const SizedBox(height: 4),
+                    Text(
+                      overdueCount > 0 ? '$overdueCount overdue — needs attention' : 'Nothing overdue',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: overdueCount > 0 ? Colors.red : colors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text('${columns.length} columns',
+                        style: TextStyle(fontSize: 11.5, color: colors.textSecondary)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+        ...List.generate(columns.length, (i) {
+          final c = columns[i];
+          final accent = _hexToColor(c.color);
+          final pct = totalTasks == 0 ? 0.0 : c.tasks.length / totalTasks;
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: GestureDetector(
+              onTap: () => onPick(i),
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: colors.surface,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: colors.border),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(width: 10, height: 10, decoration: BoxDecoration(color: accent, shape: BoxShape.circle)),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(c.name,
+                              style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: colors.text)),
+                        ),
+                        Text('${c.tasks.length}',
+                            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: accent)),
+                        const SizedBox(width: 6),
+                        Icon(Icons.chevron_right_rounded, size: 18, color: colors.textSecondary),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(999),
+                      child: LinearProgressIndicator(
+                        value: pct,
+                        minHeight: 5,
+                        backgroundColor: colors.surfaceVariant,
+                        valueColor: AlwaysStoppedAnimation<Color>(accent),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }),
+      ],
+    );
+  }
+}
+
+class _DonutPainter extends CustomPainter {
+  final List<_BoardColumn> columns;
+  _DonutPainter(this.columns);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final total = columns.fold(0, (n, c) => n + c.tasks.length);
+    final rect = Rect.fromLTWH(0, 0, size.width, size.height);
+    if (total == 0) {
+      canvas.drawCircle(rect.center, size.width / 2 - 6, Paint()..color = const Color(0x226B7280));
+      return;
+    }
+    double start = -math.pi / 2;
+    for (final c in columns) {
+      if (c.tasks.isEmpty) continue;
+      final sweep = (c.tasks.length / total) * 2 * math.pi;
+      canvas.drawArc(
+        rect.deflate(6),
+        start,
+        sweep,
+        true,
+        Paint()..color = _hexToColor(c.color),
+      );
+      start += sweep;
+    }
+    canvas.drawCircle(
+      rect.center,
+      size.width / 2 - 14,
+      Paint()..color = AppTheme.colors.surface,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _DonutPainter oldDelegate) => oldDelegate.columns != columns;
+}
+
+// ============================================================================
+// SMALL WIDGETS
+// ============================================================================
+class _IconBtn extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+  const _IconBtn({required this.icon, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppTheme.colors;
     return Material(
-      color: filled ? Colors.transparent : colors.surface,
+      color: colors.surface,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(12),
-        child: Container(
-          height: 38,
-          padding: const EdgeInsets.symmetric(horizontal: 13),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: filled ? Colors.transparent : colors.border),
-            gradient: filled
-                ? const LinearGradient(colors: [Color(0xFF2563EB), Color(0xFF7C3AED)])
-                : null,
-          ),
+        child: Padding(
+          padding: const EdgeInsets.all(9),
+          child: Icon(icon, size: 19, color: colors.text),
+        ),
+      ),
+    );
+  }
+}
+
+class _ActionBtn extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool filled;
+  final VoidCallback onTap;
+  const _ActionBtn({required this.label, required this.icon, this.filled = false, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppTheme.colors;
+    return Material(
+      color: filled ? colors.primary : colors.surface,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -840,462 +1223,39 @@ class _BoardActionButton extends StatelessWidget {
   }
 }
 
-/// Web "Status Overview" grid: one summary card per column (dot, name, big
-/// count). Tapping a card jumps to that column on the board.
-class _StatusOverview extends StatelessWidget {
-  final dynamic colors;
-  final List<TaskStatus> statuses;
-  final Color Function(String) getStatusColor;
-  final void Function(int index) onPick;
-
-  const _StatusOverview({
-    required this.colors,
-    required this.statuses,
-    required this.getStatusColor,
-    required this.onPick,
-  });
+class _EmptyBoard extends StatelessWidget {
+  final VoidCallback onAddColumn;
+  const _EmptyBoard({required this.onAddColumn});
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-      child: LayoutBuilder(builder: (context, constraints) {
-        const gap = 12.0;
-        final columns = constraints.maxWidth >= 560 ? 2 : 1;
-        final cardWidth = (constraints.maxWidth - gap * (columns - 1)) / columns;
-        return Wrap(
-          spacing: gap,
-          runSpacing: gap,
-          children: [
-            for (int i = 0; i < statuses.length; i++)
-              GestureDetector(
-                onTap: () => onPick(i),
-                child: Container(
-                  width: cardWidth,
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: colors.surface,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: colors.border),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 16,
-                        height: 16,
-                        decoration: BoxDecoration(
-                          color: getStatusColor(statuses[i].name),
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              statuses[i].name,
-                              style: TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w800,
-                                color: colors.text,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              '${statuses[i].tasks?.length ?? 0} task${(statuses[i].tasks?.length ?? 0) == 1 ? '' : 's'}',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: colors.textSecondary,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Icon(Icons.chevron_right_rounded,
-                          size: 20, color: colors.textSecondary),
-                    ],
-                  ),
-                ),
-              ),
-          ],
-        );
-      }),
-    );
-  }
-}
-
-class _HeaderIconButton extends StatelessWidget {
-  final IconData icon;
-  final dynamic colors;
-  final VoidCallback onTap;
-
-  const _HeaderIconButton({required this.icon, required this.colors, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: colors.surface,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: colors.border),
-          ),
-          child: Icon(icon, size: 18, color: colors.text),
-        ),
-      ),
-    );
-  }
-}
-
-class _StatChip extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final Color background;
-  final Color foreground;
-
-  const _StatChip({
-    required this.label,
-    required this.icon,
-    required this.background,
-    required this.foreground,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
+    final colors = AppTheme.colors;
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, size: 13, color: foreground),
-          const SizedBox(width: 5),
+          Icon(Icons.view_kanban_outlined, size: 56, color: colors.textSecondary.withValues(alpha: 0.6)),
+          const SizedBox(height: 14),
+          Text('No columns yet',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: colors.text)),
+          const SizedBox(height: 6),
           Text(
-            label,
-            style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: foreground),
+            'Create your first status column to start\norganising tasks on the board.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 12.5, height: 1.5, color: colors.textSecondary),
+          ),
+          const SizedBox(height: 18),
+          ElevatedButton.icon(
+            onPressed: onAddColumn,
+            icon: const Icon(Icons.add_rounded, size: 18),
+            label: const Text('Create Column'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: colors.primary,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _EmptyBoard extends StatelessWidget {
-  final dynamic colors;
-  final VoidCallback onAddColumn;
-
-  const _EmptyBoard({required this.colors, required this.onAddColumn});
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 88,
-              height: 88,
-              decoration: BoxDecoration(
-                color: colors.primary.withValues(alpha: 0.08),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(Icons.view_kanban_outlined, size: 42, color: colors.primary),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              'Your board is empty',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: colors.text),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Create your first status column to start\norganising tasks visually.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, height: 1.5, color: colors.textSecondary),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton.icon(
-              onPressed: onAddColumn,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: colors.primary,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              icon: const Icon(Icons.add_rounded, size: 18),
-              label: const Text('Add first column'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Draggable task card used inside every board column. Long-press starts the
-/// drag (feedback card mirrors the real one), tap opens the task detail.
-class _BoardTaskCard extends StatelessWidget {
-  final Task task;
-  final Color accent;
-  final dynamic colors;
-  final VoidCallback onTap;
-
-  /// When the board has >1 column, show the move affordance (single-column
-  /// pages can't drag across pages — web mobile has the same constraint).
-  final bool canMove;
-  final VoidCallback? onMove;
-
-  const _BoardTaskCard({
-    required this.task,
-    required this.accent,
-    required this.colors,
-    required this.onTap,
-    this.canMove = false,
-    this.onMove,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final overdue = task.isOverdue;
-    return LongPressDraggable<Task>(
-      data: task,
-      dragAnchorStrategy: pointerDragAnchorStrategy,
-      feedback: Material(
-        color: Colors.transparent,
-        child: Container(
-          width: 250,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: colors.surface,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: accent.withValues(alpha: 0.6), width: 1.4),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.18),
-                blurRadius: 16,
-                offset: const Offset(0, 6),
-              ),
-            ],
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 4,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: accent,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  task.title,
-                  style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: colors.text),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-      childWhenDragging: Opacity(
-        opacity: 0.35,
-        child: Container(
-          height: 76,
-          margin: const EdgeInsets.only(bottom: 8),
-          decoration: BoxDecoration(
-            color: colors.surface.withValues(alpha: 0.6),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: accent, width: 1.4),
-          ),
-        ),
-      ),
-      child: GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onTap: onTap,
-        child: Container(
-          margin: const EdgeInsets.only(bottom: 8),
-          decoration: BoxDecoration(
-            color: colors.surface,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: overdue ? colors.error.withValues(alpha: 0.45) : colors.border,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(13),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Container(width: 4, color: overdue ? colors.error : accent),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: Text(
-                                task.title,
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w700,
-                                  color: colors.text,
-                                  height: 1.25,
-                                ),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            if (canMove && onMove != null)
-                              GestureDetector(
-                                onTap: onMove,
-                                behavior: HitTestBehavior.opaque,
-                                child: Padding(
-                                  padding: const EdgeInsets.only(left: 6, top: 2),
-                                  child: Icon(Icons.swap_horiz_rounded,
-                                      size: 16, color: colors.textSecondary),
-                                ),
-                              ),
-                          ],
-                        ),
-                        if (task.description != null && task.description!.trim().isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 4),
-                            child: Text(
-                              task.description!,
-                              style: TextStyle(
-                                fontSize: 11.5,
-                                height: 1.35,
-                                color: colors.textSecondary,
-                              ),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            if (task.epic != null && task.epic!.trim().isNotEmpty)
-                              Flexible(
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: colors.primary.withValues(alpha: 0.07),
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Text(
-                                    task.epic!,
-                                    style: TextStyle(fontSize: 10, color: colors.textSecondary),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ),
-                            const Spacer(),
-                            if (overdue)
-                              Padding(
-                                padding: const EdgeInsets.only(right: 6),
-                                child: Icon(Icons.warning_amber_rounded, size: 13, color: colors.error),
-                              ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: overdue
-                                    ? colors.error.withValues(alpha: 0.12)
-                                    : colors.primary.withValues(alpha: 0.08),
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: Text(
-                                formatDate(task.endDate),
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w700,
-                                  color: overdue ? colors.error : colors.textSecondary,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        if (task.assignedTo != null && task.assignedTo!.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 8),
-                            child: Row(
-                              children: [
-                                for (int i = 0; i < task.assignedTo!.length && i < 3; i++)
-                                  Padding(
-                                    padding: EdgeInsets.only(left: i > 0 ? -6 : 0),
-                                    child: Container(
-                                      width: 22,
-                                      height: 22,
-                                      decoration: BoxDecoration(
-                                        color: i.isEven
-                                            ? colors.primary
-                                            : colors.primaryDark,
-                                        shape: BoxShape.circle,
-                                        border: Border.all(color: colors.surface, width: 2),
-                                      ),
-                                      child: Center(
-                                        child: Text(
-                                          task.assignedTo![i][0].toUpperCase(),
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 9,
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                if (task.assignedTo!.length > 3)
-                                  Padding(
-                                    padding: const EdgeInsets.only(left: 6),
-                                    child: Text(
-                                      '+${task.assignedTo!.length - 3}',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w600,
-                                        color: colors.textSecondary,
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }
