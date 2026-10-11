@@ -1493,10 +1493,12 @@ class ApiService {
     required String platform,
     String? deviceName,
     String? appVersion,
+    String? voipToken,
   }) async {
     return await _dio.post('/notifications/register-device', data: {
       'fcm_token': fcmToken,
       'platform': platform,
+      if (voipToken != null && voipToken.isNotEmpty) 'voip_token': voipToken,
       if (deviceName != null && deviceName.isNotEmpty) 'device_name': deviceName,
       if (appVersion != null && appVersion.isNotEmpty) 'app_version': appVersion,
     }, options: Options(extra: {'suppressToast': true}));
