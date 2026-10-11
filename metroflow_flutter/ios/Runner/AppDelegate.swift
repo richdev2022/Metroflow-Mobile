@@ -16,6 +16,16 @@ import UIKit
   private var callProvider: CXProvider?
   private var callController: CXCallController?
 
+  /// CXProvider stores its delegate weakly — retain the bridge here or the
+  /// Answer/Decline buttons in the native call UI would stop working as soon
+  /// as setupCallKit() returns (the temporary would be deallocated).
+  private var callKitBridge: CallKitDelegateBridge?
+  /// PKPushRegistry stops delivering VoIP pushes once deallocated, and its
+  /// `delegate` property is weak too — both MUST be retained for the whole
+  /// app lifetime or PushKit never hands us the VoIP token / incoming pushes.
+  private var pushRegistry: PKPushRegistry?
+  private var pushKitBridge: PushKitDelegateBridge?
+
   /// callId (backend) -> CallKit call UUID. Lets Dart end the CallKit call
   /// when the in-app UI accepted/ended the same call (and vice versa).
   private var callUuidByCallId: [String: UUID] = [:]
@@ -158,15 +168,17 @@ import UIKit
     config.supportedHandleTypes = [.generic]
     let provider = CXProvider(configuration: config)
     let controller = CXCallController()
-    provider.setDelegate(CallKitDelegateBridge(appDelegate: self), queue: nil)
+    let bridge = CallKitDelegateBridge(appDelegate: self)
+    provider.setDelegate(bridge, queue: nil)
     self.callProvider = provider
     self.callController = controller
+    self.callKitBridge = bridge
   }
 
   private func endCallkitCall(callId: String, answered: Bool) {
     guard let uuid = callUuidByCallId.removeValue(forKey: callId) else { return }
     guard let controller = callController else { return }
-    let call = controller.callObserver.call(withUUID: uuid)
+    let call = controller.callObserver.call(with: uuid)
     let action: CXEndCallAction
     if answered {
       action = CXEndCallAction(call: uuid)
@@ -257,8 +269,11 @@ import UIKit
 
   private func setupPushKit() {
     let registry = PKPushRegistry(queue: .main)
-    registry.delegate = PushKitDelegateBridge(appDelegate: self)
+    let bridge = PushKitDelegateBridge(appDelegate: self)
+    registry.delegate = bridge
     registry.desiredPushTypes = [.voIP]
+    self.pushRegistry = registry
+    self.pushKitBridge = bridge
   }
 
   private final class PushKitDelegateBridge: NSObject, PKPushRegistryDelegate {
