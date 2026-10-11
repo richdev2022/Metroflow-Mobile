@@ -13,9 +13,10 @@ name: Android Play Release
 #                                 flutter-build.yml; publishing REQUIRES them —
 #                                 Play rejects debug-signed bundles).
 #
-# versionCode strategy: --build-number=${{ github.run_number }} — the workflow
-# run number is strictly increasing, so Play never rejects a duplicate
-# versionCode (internal track currently holds vc=1 from the manual upload).
+# versionCode strategy: run_number + 50000 — strictly increasing per run and
+# always above the historical uploads (internal track currently holds vc=1).
+# The +50000 offset keeps this range disjoint from flutter-build.yml's auto
+# Play uploads (+1000) so the two publishing workflows never collide.
 
 on:
   workflow_dispatch:
@@ -106,8 +107,9 @@ jobs:
       - name: Build signed AAB
         working-directory: metroflow_flutter
         run: |
-          flutter build appbundle --release \
-            --build-number=${{ github.run_number }}
+          VER=$(( ${{ github.run_number }} + 50000 ))
+          echo "VERSION_CODE=$VER" >> "$GITHUB_ENV"
+          flutter build appbundle --release --build-number=$VER
 
       - name: Upload AAB artifact (backup copy)
         uses: actions/upload-artifact@v4
@@ -121,7 +123,8 @@ jobs:
           NOTES: ${{ github.event.inputs.release_notes }}
         run: |
           mkdir -p fastlane/metadata/android/en-US/changelogs
-          printf '%s' "$NOTES" > "fastlane/metadata/android/en-US/changelogs/${{ github.run_number }}.txt"
+          # Changelog filename MUST equal the versionCode (fastlane matches it).
+          printf '%s' "$NOTES" > "fastlane/metadata/android/en-US/changelogs/${VERSION_CODE}.txt"
 
       - name: Write service-account key
         env:

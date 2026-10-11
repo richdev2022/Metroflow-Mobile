@@ -68,11 +68,16 @@ jobs:
 
       - name: Build APK
         working-directory: metroflow_flutter
-        run: flutter build apk --release
+        # versionCode = run_number + 1000 — strictly increasing per run and
+        # always above the historical uploads (Play already consumed vc=1).
+        # The +1000 offset keeps this range disjoint from the manual
+        # android-play-internal.yml workflow (+50000) so the two Play
+        # publishing workflows can never produce a duplicate versionCode.
+        run: flutter build apk --release --build-number=$(( ${{ github.run_number }} + 1000 ))
 
       - name: Build AAB
         working-directory: metroflow_flutter
-        run: flutter build appbundle --release
+        run: flutter build appbundle --release --build-number=$(( ${{ github.run_number }} + 1000 ))
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -102,6 +107,6 @@ jobs:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: com.metricorex.app
           releaseFiles: metroflow_flutter/build/app/outputs/bundle/release/app-release.aab
-          track: ${{ github.event.inputs.play_track || 'internal' }}
+          tracks: ${{ github.event.inputs.play_track || 'internal' }}
           status: completed
           mappingFile: metroflow_flutter/build/app/outputs/mapping/release/mapping.txt
