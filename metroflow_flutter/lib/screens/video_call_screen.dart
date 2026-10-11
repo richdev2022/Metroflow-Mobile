@@ -2,17 +2,20 @@ import 'dart:async';
 import 'dart:io' show File, Platform;
 import 'dart:math' show Random;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:record/record.dart' as rec;
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 // speech_to_text 7.x does NOT re-export SpeechRecognitionResult from the
 // main library (only ListenMode/SpeechListenOptions are) — import it directly.
 import 'package:speech_to_text/speech_recognition_result.dart';
 
 import '../providers/call_provider.dart';
+import '../services/callkit_service.dart';
 import '../services/audio_route_service.dart';
 import '../services/mediasoup_room_service.dart';
 import '../services/calling/calling_engine.dart';
@@ -246,6 +249,10 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   /// local video track is live) to an mp4, uploaded to /recordings on stop.
   MediaRecorder? _clientRecorder;
   String? _clientRecordingPath;
+  /// iOS client-mode recording — flutter_webrtc's MediaRecorder is
+  /// Android-only, so iOS records the microphone through the `record`
+  /// package (native AVAudioSession, AAC .m4a) instead.
+  rec.AudioRecorder? _clientAudioRecorder;
   bool _clientRecordingHasVideo = false;
   bool _showChat = false;
   bool _hasLeft = false;
@@ -610,6 +617,17 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       await _audioRoutes.reapply();
     }
     if (mounted) setState(() {});
+    // RACE GUARD: flutter_webrtc's native audio module toggles the speaker
+    // bit itself when the audio track becomes live — which can happen AFTER
+    // the route was applied above, silently reverting the user's route
+    // (the "speaker output not working" bug). Re-assert at +2s and +6s;
+    // reapply() is idempotent and never throws.
+    Future<void>.delayed(const Duration(seconds: 2), () {
+      if (mounted && !_hasLeft) unawaited(_audioRoutes.reapply());
+    });
+    Future<void>.delayed(const Duration(seconds: 6), () {
+      if (mounted && !_hasLeft) unawaited(_audioRoutes.reapply());
+    });
   }
 
   /// Apply a route picked from the bottom sheet. [apply] already waits out
@@ -1607,8 +1625,22 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     // dangling recorder.
     final danglingRecorder = _clientRecorder;
     final danglingPath = _clientRecordingPath;
+    final danglingAudioRecorder = _clientAudioRecorder;
     _clientRecorder = null;
+    _clientAudioRecorder = null;
     _clientRecordingPath = null;
+    if (danglingAudioRecorder != null) {
+      try {
+        final stopped = await danglingAudioRecorder.stop();
+        try { await danglingAudioRecorder.dispose(); } catch (_) {}
+        if (stopped != null && File(stopped).existsSync()) {
+          // Discard — uploading from dispose() is unreliable.
+          await File(stopped).delete();
+        }
+      } catch (_) {
+        try { await danglingAudioRecorder.dispose(); } catch (_) {}
+      }
+    }
     if (danglingRecorder != null) {
       try {
         await danglingRecorder.stop();
@@ -1763,22 +1795,11 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       } else {
         // MediaSoup rooms have no server-side recorder (backend answers
         // mode:'client' — same contract the web client fulfils with its
-        // composite recorder). On Android we record locally through
-        // flutter_webrtc's MediaRecorder; iOS has no Dart-side recorder,
-        // so it keeps an honest unavailable message.
-        if (Platform.isAndroid) {
-          await _startClientRecording();
-        } else {
-          _serverRecordingId = null;
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                    'Recording for this session type is available on Android or on the web app.'),
-              ),
-            );
-          }
-        }
+        // composite recorder). Android records mic (+ local camera) through
+        // flutter_webrtc's MediaRecorder; iOS records the microphone through
+        // the `record` package (flutter_webrtc's MediaRecorder is
+        // Android-only).
+        await _startClientRecording();
       }
     } catch (e) {
       if (mounted) {
@@ -1789,16 +1810,49 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     }
   }
 
-  /// HONEST local recording for MediaSoup/client-mode rooms on Android.
-  /// flutter_webrtc's MediaRecorder captures THIS device's microphone (and
-  /// the local camera when the video track is live). Other participants'
-  /// audio CANNOT be captured from Dart without native audio-capture modules,
-  /// so the toast and the recording title say exactly what this is — never
-  /// fake a "room recording" that would be missing everyone else.
+  /// HONEST local recording for MediaSoup/client-mode rooms.
+  /// - ANDROID: flutter_webrtc's MediaRecorder captures THIS device's
+  ///   microphone (and the local camera when the video track is live).
+  /// - iOS: the `record` package captures the microphone (AAC .m4a) —
+  ///   flutter_webrtc has no iOS MediaRecorder.
+  /// Other participants' audio CANNOT be captured from Dart without native
+  /// audio-capture modules, so the toast and the recording title say exactly
+  /// what this is — never fake a "room recording" that would be missing
+  /// everyone else.
   Future<void> _startClientRecording() async {
     try {
       final dir = await getTemporaryDirectory();
       final stamp = DateTime.now().millisecondsSinceEpoch;
+      if (Platform.isIOS) {
+        final path = '${dir.path}/metricorex-local-$stamp.m4a';
+        final audioRecorder = rec.AudioRecorder();
+        await audioRecorder.start(
+          const rec.RecordConfig(
+            encoder: rec.AudioEncoder.aacLc,
+            sampleRate: 44100,
+            numChannels: 1,
+            bitRate: 96000,
+          ),
+          path: path,
+        );
+        _clientAudioRecorder = audioRecorder;
+        _clientRecordingPath = path;
+        _clientRecordingHasVideo = false;
+        if (mounted) setState(() => _isRecording = true);
+        _socket.emitRecordingStart({
+          widget.isMeeting ? 'meetingId' : 'callId': widget.roomId,
+          'roomId': widget.roomId,
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              duration: Duration(seconds: 5),
+              content: Text('Local recording started — captures YOUR microphone only (audio).'),
+            ),
+          );
+        }
+        return;
+      }
       final localVideo = _localRenderer
           .srcObject?.getVideoTracks()
           .where((t) => t.enabled)
@@ -1844,9 +1898,12 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
   Future<void> _stopClientRecording() async {
     final recorder = _clientRecorder;
+    final audioRecorder = _clientAudioRecorder;
     final path = _clientRecordingPath;
     final hasVideo = _clientRecordingHasVideo;
+    final isIosAudio = audioRecorder != null;
     _clientRecorder = null;
+    _clientAudioRecorder = null;
     _clientRecordingPath = null;
     _clientRecordingHasVideo = false;
     if (mounted) setState(() => _isRecording = false);
@@ -1854,32 +1911,31 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       widget.isMeeting ? 'meetingId' : 'callId': widget.roomId,
       'roomId': widget.roomId,
     });
+    if (isIosAudio) {
+      if (audioRecorder == null || path == null) return;
+      try {
+        final stoppedPath = await audioRecorder.stop();
+        try { await audioRecorder.dispose(); } catch (_) {}
+        final finalPath = (stoppedPath != null && stoppedPath.isNotEmpty) ? stoppedPath : path;
+        final file = File(finalPath);
+        if (!await file.exists()) return;
+        await _uploadClientRecording(finalPath, hasVideo: false, platformLabel: 'iOS');
+      } catch (e) {
+        Logger.error('Client recording upload failed: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Recording upload failed: $e')),
+          );
+        }
+      }
+      return;
+    }
     if (recorder == null || path == null) return;
     try {
       await recorder.stop();
       final file = File(path);
       if (!await file.exists()) return;
-      final created = await ApiService().startRecording(<String, dynamic>{
-        if (widget.isMeeting) 'meetingId': widget.roomId,
-        if (!widget.isMeeting) 'callId': widget.roomId,
-        'title': 'Local recording',
-        'description': hasVideo
-            ? 'Local Android recording — microphone and camera of the recording participant only.'
-            : 'Local Android recording — microphone of the recording participant only.',
-      });
-      final createdData = created.data is Map ? created.data['data'] : created.data;
-      final recordingId =
-          (createdData is Map ? createdData['id'] : null)?.toString();
-      if (recordingId == null || recordingId.isEmpty) {
-        throw StateError('Recording row was not created');
-      }
-      await ApiService().uploadRecording(recordingId, path);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('Recording saved — find it under Recordings.')),
-        );
-      }
+      await _uploadClientRecording(path, hasVideo: hasVideo, platformLabel: 'Android');
     } catch (e) {
       Logger.error('Client recording upload failed: $e');
       if (mounted) {
@@ -1887,6 +1943,36 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
           SnackBar(content: Text('Recording upload failed: $e')),
         );
       }
+    }
+  }
+
+  /// Shared upload path for client-mode recordings: create the recordings
+  /// row (same REST contract as the web) and upload the local file to R2.
+  Future<void> _uploadClientRecording(
+    String path, {
+    required bool hasVideo,
+    required String platformLabel,
+  }) async {
+    final created = await ApiService().startRecording(<String, dynamic>{
+      if (widget.isMeeting) 'meetingId': widget.roomId,
+      if (!widget.isMeeting) 'callId': widget.roomId,
+      'title': 'Local recording',
+      'description': hasVideo
+          ? 'Local $platformLabel recording — microphone and camera of the recording participant only.'
+          : 'Local $platformLabel audio recording — microphone of the recording participant only.',
+    });
+    final createdData = created.data is Map ? created.data['data'] : created.data;
+    final recordingId =
+        (createdData is Map ? createdData['id'] : null)?.toString();
+    if (recordingId == null || recordingId.isEmpty) {
+      throw StateError('Recording row was not created');
+    }
+    await ApiService().uploadRecording(recordingId, path);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Recording saved — find it under Recordings.')),
+      );
     }
   }
 
@@ -2140,6 +2226,12 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     // the call screen closes.
     AppFeedback.stopRingtone();
     AppFeedback.stopRingback();
+    // iOS/Android: release the native CallKit call + audio session (route
+    // override, communication mode) so system audio behaves after the call.
+    unawaited(CallKitService.instance.endCallIfOwned(widget.roomId, answered: true));
+    if (!kIsWeb) {
+      const MethodChannel('metricorex/audio').invokeMethod<void>('clearRoute').catchError((_) => null);
+    }
 
     // POP FIRST: previously we awaited onLeave (a REST call that could throw,
     // e.g. joining with an empty id) before popping, which trapped the user on

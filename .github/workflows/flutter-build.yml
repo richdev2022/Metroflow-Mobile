@@ -5,10 +5,21 @@ on:
     branches:
       - main
       - master
+  workflow_dispatch:
+    inputs:
+      play_track:
+        description: 'Play Store track to upload to (internal / alpha / beta / production)'
+        required: false
+        default: 'internal'
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
+    env:
+      # Present only when the user configured the Play Store service account
+      # secret — the upload step keys off this to activate.
+      PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
 
     steps:
       - name: Checkout Repository
@@ -74,3 +85,23 @@ jobs:
         with:
           name: release-aab
           path: metroflow_flutter/build/app/outputs/bundle/release/app-release.aab
+
+      # ---------------------------------------------------------------------
+      # DIRECT PLAY STORE PUSH — activates automatically once the repo secret
+      # PLAY_SERVICE_ACCOUNT_JSON is set (a Google Play service-account JSON
+      # key with release access, created in Play Console → Setup → API
+      # access). Uploads the signed AAB to the given track (default:
+      # internal testing) so releases reach testers without a manual console
+      # upload. Requirement: the app must already EXIST in Play Console
+      # (first upload is manual, Google requires it).
+      # ---------------------------------------------------------------------
+      - name: Upload to Google Play (internal testing)
+        if: env.PLAY_SERVICE_ACCOUNT_JSON != ''
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.metricorex.app
+          releaseFiles: metroflow_flutter/build/app/outputs/bundle/release/app-release.aab
+          track: ${{ github.event.inputs.play_track || 'internal' }}
+          status: completed
+          mappingFile: metroflow_flutter/build/app/outputs/mapping/release/mapping.txt
