@@ -1,0 +1,161 @@
+name: Android Play Release
+
+# Publishes the signed release AAB straight to the Google Play tracks.
+# Manual button only (workflow_dispatch) — publishing must be an explicit
+# act, never an accident of a git push.
+#
+# REQUIRED SECRETS (Settings → Secrets and variables → Actions):
+#   PLAY_SERVICE_ACCOUNT_JSON   — full Google Play service-account JSON key
+#                                 (SA invited in Play Console → Users and
+#                                 permissions with "Release to testing tracks")
+#   ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS /
+#   ANDROID_KEY_PASSWORD        — release signing material (same secrets as
+#                                 flutter-build.yml; publishing REQUIRES them —
+#                                 Play rejects debug-signed bundles).
+#
+# versionCode strategy: --build-number=${{ github.run_number }} — the workflow
+# run number is strictly increasing, so Play never rejects a duplicate
+# versionCode (internal track currently holds vc=1 from the manual upload).
+
+on:
+  workflow_dispatch:
+    inputs:
+      track:
+        description: "Release track"
+        type: choice
+        options: [internal, alpha, beta, production]
+        default: internal
+      status:
+        description: "Release status (draft = prepare only, completed = live to testers/users)"
+        type: choice
+        options: [completed, draft]
+        default: completed
+      release_notes:
+        description: "What's new (shown on the track page)"
+        required: false
+        default: "Bug fixes and improvements."
+      production_ack:
+        description: "Type true to allow publishing to the PRODUCTION track"
+        required: false
+        default: "false"
+
+concurrency:
+  group: play-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      TRACK: ${{ github.event.inputs.track }}
+      STATUS: ${{ github.event.inputs.status }}
+      PROD_ACK: ${{ github.event.inputs.production_ack }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Production pushes are irreversible-ish (halted rollouts take hours to
+      # stop) — require the explicit ack input.
+      - name: Production guard
+        run: |
+          if [ "$TRACK" = "production" ] && [ "$PROD_ACK" != "true" ]; then
+            echo "::error::TRACK=production requires production_ack=true. Use 'internal' for test releases."
+            exit 1
+          fi
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter (same version as the other workflows)
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.1'
+          cache: true
+
+      # Publishing REQUIRES the pinned release keystore — a debug-signed AAB
+      # would be rejected by Play (and would burn a versionCode), so fail
+      # hard instead of falling back like flutter-build.yml does.
+      - name: Restore release keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is not set — a release AAB cannot be signed without it."
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/metricorex-release.keystore"
+          {
+            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/metricorex-release.keystore"
+            echo "ANDROID_KEYSTORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD"
+            echo "ANDROID_KEY_ALIAS=$ANDROID_KEY_ALIAS"
+            echo "ANDROID_KEY_PASSWORD=$ANDROID_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+
+      - name: Install Flutter dependencies
+        working-directory: metroflow_flutter
+        run: flutter pub get
+
+      - name: Build signed AAB
+        working-directory: metroflow_flutter
+        run: |
+          flutter build appbundle --release \
+            --build-number=${{ github.run_number }}
+
+      - name: Upload AAB artifact (backup copy)
+        uses: actions/upload-artifact@v4
+        with:
+          name: metricorex-aab-${{ github.run_number }}
+          path: metroflow_flutter/build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+
+      - name: Prepare Play release notes
+        env:
+          NOTES: ${{ github.event.inputs.release_notes }}
+        run: |
+          mkdir -p fastlane/metadata/android/en-US/changelogs
+          printf '%s' "$NOTES" > "fastlane/metadata/android/en-US/changelogs/${{ github.run_number }}.txt"
+
+      - name: Write service-account key
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -z "$PLAY_SERVICE_ACCOUNT_JSON" ]; then
+            echo "::error::PLAY_SERVICE_ACCOUNT_JSON secret is not set — paste the service-account JSON in repo Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          printf '%s' "$PLAY_SERVICE_ACCOUNT_JSON" > "$RUNNER_TEMP/play-service-account.json"
+
+      - name: Setup Ruby + fastlane
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+
+      - name: Install fastlane
+        run: gem install fastlane --no-document
+
+      # fastlane supply: creates an edit, uploads the AAB to the chosen track,
+      # attaches the release notes, commits the edit. Track 'internal' with
+      # status 'completed' goes live to internal testers within minutes.
+      - name: Upload to Google Play
+        run: |
+          fastlane supply \
+            --json_key "$RUNNER_TEMP/play-service-account.json" \
+            --package_name com.metricorex.app \
+            --track "$TRACK" \
+            --release_status "$STATUS" \
+            --aab "metroflow_flutter/build/app/outputs/bundle/release/app-release.aab" \
+            --metadata_path fastlane/metadata \
+            --skip_upload_images true \
+            --skip_upload_screenshots true
+
+      - name: Cleanup key material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/play-service-account.json" "$RUNNER_TEMP/metricorex-release.keystore"
