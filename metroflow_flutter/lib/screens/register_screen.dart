@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../components/google_sign_in_button.dart';
 import '../providers/auth_provider.dart';
+import '../services/api.dart';
 import '../theme/app_theme.dart';
 import '../widgets/auth_ui.dart';
 
@@ -363,7 +365,16 @@ const List<String> businessIndustries = [
 ];
 
 class RegisterScreen extends ConsumerStatefulWidget {
-  const RegisterScreen({super.key});
+  /// Refer & Earn: optional referral code prefilled from a referral deep link
+  /// (/register?ref=CODE or metricorex://refer/CODE). Also consumed via the
+  /// static [pendingReferralCode] before the router rebuilds.
+  final String? initialReferralCode;
+
+  /// Captured from a referral deep link when the app cold-starts into the
+  /// splash/auth flow — read by the /register route builder.
+  static String? pendingReferralCode;
+
+  const RegisterScreen({super.key, this.initialReferralCode});
 
   @override
   ConsumerState<RegisterScreen> createState() => _RegisterScreenState();
@@ -376,6 +387,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   final TextEditingController adminEmailController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
   final TextEditingController industrySearchController = TextEditingController();
+  final TextEditingController referralCodeController = TextEditingController();
 
   String? selectedIndustry;
   String industrySearchQuery = '';
@@ -387,6 +399,8 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   String selectedBusinessType = 'non_registered';
   bool isLoading = false;
   bool showIndustryModal = false;
+  // Refer & Earn: 'idle' | 'valid' | 'invalid' (debounced server check).
+  String referralValid = 'idle';
 
   List<String> get filteredIndustries {
     return businessIndustries
@@ -403,7 +417,35 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     adminEmailController.dispose();
     passwordController.dispose();
     industrySearchController.dispose();
+    referralCodeController.dispose();
     super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    if ((widget.initialReferralCode ?? '').isNotEmpty) {
+      referralCodeController.text = widget.initialReferralCode!.toUpperCase();
+      referralValid = 'idle';
+      WidgetsBinding.instance.addPostFrameCallback((_) => _validateReferralCode());
+    }
+  }
+
+  Future<void> _validateReferralCode() async {
+    final code = referralCodeController.text.trim().toUpperCase();
+    if (code.length < 4) {
+      if (mounted) setState(() => referralValid = 'idle');
+      return;
+    }
+    try {
+      final response = await ApiService().validateReferralCode(code);
+      final data = response.data['data'] as Map?;
+      if (mounted) {
+        setState(() => referralValid = data?['valid'] == true ? 'valid' : 'invalid');
+      }
+    } catch (_) {
+      if (mounted) setState(() => referralValid = 'idle');
+    }
   }
 
   Future<void> handleRegister() async {
@@ -430,6 +472,8 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
         'adminName': adminNameController.text,
         'adminEmail': adminEmailController.text,
         'password': passwordController.text,
+        if (referralCodeController.text.trim().isNotEmpty)
+          'referralCode': referralCodeController.text.trim().toUpperCase(),
       });
 
       if (result['requiresOtp'] == true) {
@@ -468,7 +512,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     if (isLoading) return;
     setState(() => isLoading = true);
     try {
-      final success = await ref.read(authProvider.notifier).loginWithGoogle();
+      final success = await ref.read(authProvider.notifier).loginWithGoogle(
+            referralCode: referralCodeController.text.trim().toUpperCase(),
+          );
       if (!success) return; // user cancelled — stay on screen
       if (!mounted) return;
       await _routeAfterGoogleAuth();
@@ -611,6 +657,44 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 controller: passwordController,
                 hint: 'Password',
               ),
+              const SizedBox(height: 12),
+              AuthTextField(
+                controller: referralCodeController,
+                hint: 'Referral Code (optional)',
+                icon: Icons.card_giftcard_rounded,
+                onChanged: (_) => _validateReferralCode(),
+              ),
+              if (referralValid != 'idle')
+                Padding(
+                  padding: const EdgeInsets.only(top: 6, left: 4),
+                  child: Row(
+                    children: [
+                      Icon(
+                        referralValid == 'valid'
+                            ? Icons.check_circle_rounded
+                            : Icons.cancel_rounded,
+                        size: 14,
+                        color: referralValid == 'valid'
+                            ? AppColors.success
+                            : AppColors.error,
+                      ),
+                      const SizedBox(width: 5),
+                      Expanded(
+                        child: Text(
+                          referralValid == 'valid'
+                              ? 'Valid referral code — applied on signup'
+                              : "Code not found — leave empty if you don't have one",
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: referralValid == 'valid'
+                                ? AppColors.success
+                                : AppColors.error,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               const SizedBox(height: 24),
               AuthGradientButton(
                 label: 'Create Account',

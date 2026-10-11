@@ -142,6 +142,8 @@ class _FundWalletScreenState extends ConsumerState<FundWalletScreen> {
           if (kIsWeb) {
             final paymentUrl = data['payment_url'] as String;
             await openExternalPaymentUrl(paymentUrl);
+            // The external-launch await can outlive the screen (tab switch).
+            if (!mounted) return;
             _showWebPaymentPrompt(paymentUrl, reference);
             return;
           }
@@ -418,7 +420,9 @@ class _FundWalletScreenState extends ConsumerState<FundWalletScreen> {
                 children: ['5000', '10000', '20000', '50000'].map((val) {
                   final isActive = _amountController.text == val;
                   return GestureDetector(
-                    onTap: () => _amountController.text = val,
+                    // setState so the chip's active highlight repaints — the
+                    // isActive flag is computed in build from the controller.
+                    onTap: () => setState(() => _amountController.text = val),
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                       decoration: BoxDecoration(
