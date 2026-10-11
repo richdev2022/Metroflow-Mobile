@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../providers/auth_provider.dart';
 import '../providers/call_provider.dart';
 import '../services/biometrics.dart';
+import '../services/callkit_service.dart';
 import '../services/push_notification_service.dart';
 import '../widgets/avatar_with_initials.dart';
 import 'video_call_screen.dart';
@@ -147,6 +148,9 @@ class _IncomingCallDialogState extends ConsumerState<IncomingCallDialog>
       } catch (e) {
         debugPrint('Error accepting call: $e');
       }
+      // The in-app UI won the race — clear the native CallKit ring so it
+      // doesn't linger behind the Flutter call screen.
+      await CallKitService.instance.endCallIfOwned(call.id, answered: true);
       if (navContext == null || !navContext.mounted) return;
       try {
         await VideoCallScreen.showModal(
@@ -292,6 +296,7 @@ class _IncomingCallDialogState extends ConsumerState<IncomingCallDialog>
                           label: 'Decline',
                           color: const Color(0xFFEF4444),
                           onTap: () {
+                            CallKitService.instance.endCallIfOwned(call.id, answered: false);
                             ref.read(callProvider.notifier).rejectCall(call);
                           },
                         ),

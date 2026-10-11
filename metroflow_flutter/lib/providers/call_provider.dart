@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../services/callkit_service.dart';
 import '../services/socket_service.dart';
 import '../services/api.dart';
 import '../models/call.dart';
@@ -142,6 +143,14 @@ class CallNotifier extends Notifier<IncomingCallState> {
       // Prefer a human-readable caller name; `from` is a raw user UUID.
       final fromUserName = (callData['callerName'] ?? callData['fromName'] ?? callData['from'] ?? '')
           .toString();
+
+      // iOS: the native CallKit ring (PushKit VoIP push) owns the incoming
+      // call UI. Suppressing the in-app overlay + ringtone here prevents two
+      // ringing UIs stacking — CallKit answered/declined events drive the
+      // same accept/reject flow through CallKitService.
+      if (CallKitService.instance.isOwningCall(call.id)) {
+        return;
+      }
 
       _ringTimeout?.cancel();
       state = IncomingCallState(
