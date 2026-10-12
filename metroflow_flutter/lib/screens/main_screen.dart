@@ -402,14 +402,17 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                   padding: const EdgeInsets.fromLTRB(12, 14, 12, 8),
                   children: [
                     const _DrawerSectionLabel('Workspace'),
-                    _DrawerTile(
-                      icon: Icons.view_kanban_outlined,
-                      title: 'Board',
-                      colors: colors,
-                      onTap: () async {
-                        context.go('/main/board');
-                      },
-                    ),
+                    // BOARD REMOVED FROM MOBILE (screen not displaying —
+                    // kept for web only). Restore this tile together with
+                    // the '/main/board' route in main.dart.
+                    // _DrawerTile(
+                    //   icon: Icons.view_kanban_outlined,
+                    //   title: 'Board',
+                    //   colors: colors,
+                    //   onTap: () async {
+                    //     context.go('/main/board');
+                    //   },
+                    // ),
                     _DrawerTile(
                       icon: Icons.calendar_month_outlined,
                       title: 'Calendar',
@@ -861,15 +864,16 @@ class _MainScreenState extends ConsumerState<MainScreen> {
                           _onItemTapped(4);
                         },
                       ),
-                      _MoreTile(
-                        icon: Icons.view_kanban_outlined,
-                        label: 'Board',
-                        colors: colors,
-                        onTap: () {
-                          Navigator.of(sheetContext).pop();
-                          context.go('/main/board');
-                        },
-                      ),
+                      // BOARD REMOVED FROM MOBILE (see drawer note).
+                      // _MoreTile(
+                      //   icon: Icons.view_kanban_outlined,
+                      //   label: 'Board',
+                      //   colors: colors,
+                      //   onTap: () {
+                      //     Navigator.of(sheetContext).pop();
+                      //     context.go('/main/board');
+                      //   },
+                      // ),
                       _MoreTile(
                         icon: Icons.calendar_month_outlined,
                         label: 'Calendar',

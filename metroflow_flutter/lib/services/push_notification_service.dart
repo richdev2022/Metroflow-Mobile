@@ -1026,7 +1026,9 @@ class PushNotificationService {
           break;
         case 'task':
         case 'assignment':
-          _push('/main/board');
+          // BOARD REMOVED FROM MOBILE (screen not displaying) — task
+          // notifications now land on the Tasks tab instead.
+          _navigate(_tabTasks);
           break;
         case 'credit':
         case 'debit':
