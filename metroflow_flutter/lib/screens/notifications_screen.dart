@@ -29,7 +29,8 @@ void _navigateForNotification(BuildContext context, AppNotification notification
   } else if (type == 'meeting' || actionUrl.startsWith('/meetings')) {
     target = '/main/meetings';
   } else if (type == 'task' || type == 'assignment' || actionUrl.startsWith('/tasks')) {
-    target = '/main/board';
+    // Board removed from mobile — Tasks tab (1) instead.
+    target = '/main?tab=1';
   } else if (type == 'invoice' || actionUrl.startsWith('/invoices')) {
     target = '/main/invoices';
   } else if (actionUrl.startsWith('/subscriptions')) {
