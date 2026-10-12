@@ -79,7 +79,8 @@ import 'screens/invoices_screen.dart';
 import 'screens/store_screen.dart';
 import 'screens/recurring_screen.dart';
 import 'screens/activity_logs_screen.dart';
-import 'screens/board_screen.dart';
+// BOARD REMOVED FROM MOBILE (screen not displaying — kept for web only).
+// import 'screens/board_screen.dart';
 import 'screens/video_call_screen.dart';
 import 'screens/meetings_screen.dart';
 import 'screens/chat_screen.dart';
@@ -661,10 +662,12 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
               path: 'subscription',
               builder: (context, state) => const SubscriptionScreen(),
             ),
-            GoRoute(
-              path: 'board',
-              builder: (context, state) => const BoardScreen(),
-            ),
+            // BOARD REMOVED FROM MOBILE — route disabled together with the
+            // drawer/more-sheet tiles and the notification deep links.
+            // GoRoute(
+            //   path: 'board',
+            //   builder: (context, state) => const BoardScreen(),
+            // ),
             GoRoute(
               path: 'fees',
               builder: (context, state) => const FeesScreen(),
