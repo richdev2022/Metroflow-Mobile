@@ -260,29 +260,31 @@ jobs:
               if age_rel:
                   decl = call("GET", f"{age_base}/{age_rel}").get("data")
                   if decl:
+                      # Content attrs take the NONE/INFREQUENT_OR_MILD/... enum;
+                      # safety attrs take booleans (per ASC 409 guidance).
                       answers = {
-                          "unrestrictedWebAccess": "NO",
-                          "contests": "NO",
-                          "gunsOrOtherWeapons": "NO",
-                          "violenceCartoonOrFantasy": "NO",
-                          "violenceRealistic": "NO",
-                          "violenceRealisticProlongedGraphicOrSadistic": "NO",
-                          "sexualContentOrNudity": "NO",
-                          "sexualContentGraphicAndNudity": "NO",
-                          "profanityOrCrudeHumor": "NO",
-                          "matureOrSuggestiveThemes": "NO",
-                          "horrorOrFearThemes": "NO",
-                          "medicalOrTreatmentInformation": "NO",
-                          "healthOrWellnessTopics": "NO",
-                          "alcoholTobaccoOrDrugUseOrReferences": "NO",
-                          "gambling": "NO",
-                          "gamblingSimulated": "NO",
-                          "lootBox": "NO",
-                          "advertising": "NO",
-                          "userGeneratedContent": "YES",
-                          "messagingAndChat": "YES",
-                          "ageAssurance": "NO",
-                          "parentalControls": "NO",
+                          "unrestrictedWebAccess": False,
+                          "contests": "NONE",
+                          "gunsOrOtherWeapons": "NONE",
+                          "violenceCartoonOrFantasy": "NONE",
+                          "violenceRealistic": "NONE",
+                          "violenceRealisticProlongedGraphicOrSadistic": "NONE",
+                          "sexualContentOrNudity": "NONE",
+                          "sexualContentGraphicAndNudity": "NONE",
+                          "profanityOrCrudeHumor": "NONE",
+                          "matureOrSuggestiveThemes": "NONE",
+                          "horrorOrFearThemes": "NONE",
+                          "medicalOrTreatmentInformation": "NONE",
+                          "healthOrWellnessTopics": "NONE",
+                          "alcoholTobaccoOrDrugUseOrReferences": "NONE",
+                          "gambling": "NONE",
+                          "gamblingSimulated": "NONE",
+                          "lootBox": "NONE",
+                          "advertising": False,
+                          "userGeneratedContent": True,
+                          "messagingAndChat": True,
+                          "ageAssurance": False,
+                          "parentalControls": False,
                       }
                       cur = decl.get("attributes") or {}
                       patch = {k: v for k, v in answers.items() if cur.get(k) != v}
