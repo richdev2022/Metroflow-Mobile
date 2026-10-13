@@ -115,7 +115,7 @@ def step_version_attrs(vid, loc_id):
     print("appStoreVersions copyright PATCHED" if ok(st) else f"copyright patch FAILED ({st})")
     st, b = call("PATCH", f"apps/{APP_ID}",
                  {"data": {"type": "apps", "id": APP_ID,
-                           "attributes": {"contentRightsDeclaration": "DOES_NOT_CONTAIN_THIRD_PARTY_CONTENT"}}})
+                           "attributes": {"contentRightsDeclaration": "DOES_NOT_USE_THIRD_PARTY_CONTENT"}}})
     print("apps contentRightsDeclaration PATCHED" if ok(st) else f"contentRights patch FAILED ({st})")
 
 
@@ -303,16 +303,15 @@ def step_screenshots(loc_id):
         os.system("pip install pillow --quiet")
     tmpdir = "/tmp/asc_shots"
     os.makedirs(tmpdir, exist_ok=True)
+    st, b = call("GET", f"appStoreVersionLocalizations/{loc_id}/appScreenshotSets")
+    sets = b.get("data", []) if ok(st) else []
+    print(f"  existing screenshot sets: {[s['attributes'].get('screenshotDisplayType') for s in sets]}")
+
     for kind, shots in SCREENSHOT_SPECS.items():
-        # existing sets enumerate the valid display types for this app
-        st, b = call("GET", f"appStoreVersionLocalizations/{loc_id}/appScreenshotSets")
-        sets = b.get("data", []) if ok(st) else []
-        existing_types = [s["attributes"].get("screenshotDisplayType") for s in sets]
-        print(f"  existing screenshot sets: {existing_types}")
-        targets = []
-        if existing_types:
-            targets = [(s["id"], s["attributes"].get("screenshotDisplayType")) for s in sets]
-        else:
+        targets = [(s["id"], s["attributes"].get("screenshotDisplayType"))
+                   for s in sets
+                   if s["attributes"].get("screenshotDisplayType") in SCREENSHOT_SET_CANDIDATES[kind]]
+        if not targets:
             for cand in SCREENSHOT_SET_CANDIDATES[kind]:
                 st, b = call("POST", "appScreenshotSets",
                              {"data": {"type": "appScreenshotSets",
@@ -325,32 +324,35 @@ def step_screenshots(loc_id):
                     break
         for sid, t in targets:
             st, b = call("GET", f"appScreenshotSets/{sid}/appScreenshots")
-            have = len(b.get("data", [])) if ok(st) else 0
-            if have > 0:
-                print(f"  set {t}: {have} screenshot(s) already present — skipping")
+            existing_shots = b.get("data", []) if ok(st) else []
+            pending = [s for s in existing_shots
+                       if ((s.get("attributes") or {}).get("assetDeliveryState") or {}).get("state") != "COMPLETE"]
+            if not pending:
+                print(f"  set {t}: {len(existing_shots)} screenshot(s) COMPLETE - skipping")
                 continue
             for (w, h, title, sub) in shots:
                 png = os.path.join(tmpdir, f"{t}.png")
                 make_screenshot(png, w, h, title, sub)
-                size = os.path.getsize(png)
-                body = {"data": {"type": "appScreenshots",
-                                 "attributes": {"fileName": f"{t}.png", "fileSize": size},
-                                 "relationships": {"appScreenshotSet": {
-                                     "data": {"type": "appScreenshotSets", "id": sid}}}}}
-                st, b = call("POST", "appScreenshots", body)
-                if not ok(st):
-                    # older resource-name fallback
-                    body2 = {"data": {"type": "appScreenshots",
-                                      "attributes": {"fileName": f"{t}.png", "fileSize": size},
-                                      "relationships": {"appScreenshotSet": {
-                                          "data": {"type": "appScreenshotSets", "id": sid}}}}}
-                    st, b = call("POST", "appScreenshots", body2)
+                data = open(png, "rb").read()
+                shot = None
+                ops = []
+                for s in pending:
+                    o = (s.get("attributes") or {}).get("uploadOperations") or []
+                    if o:
+                        shot, ops = s, o
+                        break
+                if not shot:
+                    size = len(data)
+                    body = {"data": {"type": "appScreenshots",
+                                     "attributes": {"fileName": f"{t}.png", "fileSize": size},
+                                     "relationships": {"appScreenshotSet": {
+                                         "data": {"type": "appScreenshotSets", "id": sid}}}}}
+                    st, b = call("POST", "appScreenshots", body)
                     if not ok(st):
                         print(f"  screenshot reservation FAILED for {t}")
                         continue
-                shot = b["data"]
-                ops = (shot.get("attributes") or {}).get("uploadOperations") or []
-                data = open(png, "rb").read()
+                    shot = b["data"]
+                    ops = (shot.get("attributes") or {}).get("uploadOperations") or []
                 upload_ok = True
                 for op in ops:
                     req = urllib.request.Request(op["url"], method=op.get("method", "PUT"))
@@ -370,8 +372,6 @@ def step_screenshots(loc_id):
                     st2, _ = call("PATCH", f"{shot['type']}/{shot['id']}", patch)
                     print(f"  screenshot uploaded to set {t}: {'OK' if ok(st2) else 'commit failed'}")
 
-
-# ------------------------------------------------------------------ main ----
 
 def main():
     global TOKEN
