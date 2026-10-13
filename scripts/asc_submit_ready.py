@@ -336,7 +336,7 @@ def step_screenshots(loc_id):
                 data = open(png, "rb").read()
                 shot = None
                 ops = []
-                for s in pending:
+                for s in existing_shots:
                     o = (s.get("attributes") or {}).get("uploadOperations") or []
                     if o:
                         shot, ops = s, o
