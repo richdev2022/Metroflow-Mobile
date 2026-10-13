@@ -87,115 +87,135 @@ jobs:
       - name: Set review info (demo user) + check submission readiness
         id: check
         env:
-          ASC_KEY_PATH: ${{ runner.temp }}/asc-api-key.json
+          ASC_KEY_FILE: ${{ runner.temp }}/asc-api-key.json
         run: |
-          cat > asc_finisher.rb <<'RB'
-          require "json"
-          require "spaceship"
+          pip install cryptography --quiet
+          cat > "$RUNNER_TEMP/finisher.py" <<'PY'
+          import base64, json, os, time, urllib.request, urllib.parse, urllib.error
+          from cryptography.hazmat.primitives.serialization import load_pem_private_key
+          from cryptography.hazmat.primitives.asymmetric import ec
+          from cryptography.hazmat.primitives import hashes
 
-          KEY_PATH = ENV.fetch("ASC_KEY_PATH")
-          BUNDLE   = ENV.fetch("BUNDLE_ID")
-          DEMO_USER = ENV.fetch("DEMO_USER")
-          DEMO_PASSWORD = ENV.fetch("DEMO_PASSWORD")
+          key = json.load(open(os.environ["ASC_KEY_FILE"]))
+          key_id, issuer = key["key_id"], key["issuer_id"]
+          priv = load_pem_private_key(key["key"].encode(), password=None)
 
-          Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.from_json_file(KEY_PATH)
-          client = Spaceship::ConnectAPI.client
+          def b64url(b): return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+          now = int(time.time())
+          header = b64url(json.dumps({"alg": "ES256", "kid": key_id}).encode())
+          payload = b64url(json.dumps({"iss": issuer, "iat": now, "exp": now + 1200, "aud": "appstoreconnect-v1"}).encode())
+          der = priv.sign(f"{header}.{payload}".encode(), ec.ECDSA(hashes.SHA256()))
+          r = int.from_bytes(der[4:4 + der[3]], "big"); s_off = 6 + der[3]; s_len = der[s_off - 1]
+          s = int.from_bytes(der[s_off:s_off + s_len], "big")
+          sig = r.to_bytes(32, "big") + s.to_bytes(32, "big")
+          TOKEN = f"{header}.{payload}.{b64url(sig)}"
 
-          app = Spaceship::ConnectAPI::App.find(BUNDLE)
-          abort("::error::App #{BUNDLE} not found in App Store Connect") unless app
-          puts "APP: #{app.id} #{app.name}"
+          BASE = "https://api.appstoreconnect.apple.com/v1/"
+
+          def call(method, path, body=None, **params):
+              url = BASE + path
+              if params:
+                  url += "?" + urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
+              data = json.dumps(body).encode() if body is not None else None
+              req = urllib.request.Request(url, data=data, method=method,
+                                           headers={"Authorization": f"Bearer {TOKEN}",
+                                                    "Content-Type": "application/json"})
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      raw = resp.read()
+                      return json.loads(raw) if raw else {}
+              except urllib.error.HTTPError as e:
+                  body_txt = e.read().decode(errors="replace")
+                  raise RuntimeError(f"{method} {path} -> HTTP {e.code}: {body_txt[:1200]}")
+
+          APP_ID = "6818319166"
+          DEMO_USER = os.environ["DEMO_USER"]
+          DEMO_PASSWORD = os.environ["DEMO_PASSWORD"]
 
           # ---- editable version ----
-          versions = client.get("apps/#{app.id}/appStoreVersions",
-                                filter: { appStoreState: "PREPARE_FOR_SUBMISSION" },
-                                includes: "appStoreVersionLocalizations")["data"]
-          abort("::error::No PREPARE_FOR_SUBMISSION version found") if versions.empty?
-          version = versions.first
+          vers = call("GET", f"apps/{APP_ID}/appStoreVersions",
+                      filter={"appVersionState": "PREPARE_FOR_SUBMISSION"}).get("data", [])
+          if not vers:
+              vers = call("GET", f"apps/{APP_ID}/appStoreVersions", limit=5).get("data", [])
+          assert vers, "No editable App Store version found"
+          version = vers[0]
           vid = version["id"]
-          puts "VERSION: #{vid} #{version.dig('attributes', 'versionString')}"
+          print("VERSION:", vid, version["attributes"].get("versionString"), version["attributes"].get("appVersionState"))
 
           # ---- App Review Information (the credential fix) ----
-          begin
-            details = client.get("appStoreReviewDetails", filter: { app: app.id })["data"]
-            detail = details.first
-            unless detail
-              detail = client.post("appStoreReviewDetails", {
-                data: {
-                  type: "appStoreReviewDetails",
-                  attributes: {},
-                  relationships: { app: { data: { type: "apps", id: app.id } } },
-                },
-              })
-              puts "REVIEW DETAIL: created (was missing — this was blocking submission)"
-            end
-            locs = client.get("appStoreReviewDetails/#{detail['id']}/appStoreReviewDetailLocalizations")["data"]
-            loc = locs.find { |l| l.dig("attributes", "locale") == "en-US" }
-            unless loc
-              loc = client.post("appStoreReviewDetails/#{detail['id']}/appStoreReviewDetailLocalizations", {
-                data: {
-                  type: "appStoreReviewDetailLocalizations",
-                  attributes: { locale: "en-US" },
-                },
-              })
-              puts "REVIEW DETAIL LOC: created en-US"
-            end
-            existing = loc["attributes"] || {}
-            patch = {
-              demoUser: DEMO_USER,
-              demoPassword: DEMO_PASSWORD,
-              demoRequired: true,
-              notes: "Sign in with the provided demo account (a regular user account) to explore the app. No payment method is required to review Metricorex.",
-            }
-            # Keep any existing reviewer contact info; only fill it in if absent.
-            patch[:contactFirstName] = "Metricorex" unless existing["contactFirstName"].to_s.strip.length > 0
-            patch[:contactLastName]  = "Support"    unless existing["contactLastName"].to_s.strip.length > 0
-            patch[:contactEmail]     = DEMO_USER    unless existing["contactEmail"].to_s.strip.length > 0
-            patch[:contactPhone]     = "+234 800 000 0000" unless existing["contactPhone"].to_s.strip.length > 0
-            client.patch("appStoreReviewDetailLocalizations/#{loc['id']}", {
-              data: { type: "appStoreReviewDetailLocalizations", id: loc["id"], attributes: patch },
-            })
-            puts "REVIEW INFO: demo user set to #{DEMO_USER} (admin credentials replaced)"
-          rescue => e
-            puts "::error::Review-info update failed: #{e.class} #{e.message}"
-            puts e.response.body if e.respond_to?(:response) && e.response
-          end
+          try:
+              details = call("GET", "appStoreReviewDetails", filter={"app": APP_ID}).get("data", [])
+              detail = details[0] if details else call("POST", "appStoreReviewDetails", {
+                  "data": {"type": "appStoreReviewDetails", "attributes": {},
+                           "relationships": {"app": {"data": {"type": "apps", "id": APP_ID}}}}})
+              print("REVIEW DETAIL:", detail["id"], "(created)" if not details else "(existing)")
+              did = detail["id"]
+              locs = call("GET", f"appStoreReviewDetails/{did}/appStoreReviewDetailLocalizations").get("data", [])
+              loc = next((l for l in locs if l["attributes"].get("locale") == "en-US"), None)
+              if not loc:
+                  loc = call("POST", f"appStoreReviewDetails/{did}/appStoreReviewDetailLocalizations",
+                             {"data": {"type": "appStoreReviewDetailLocalizations", "attributes": {"locale": "en-US"}}})
+                  print("REVIEW DETAIL LOC: created en-US")
+              existing = loc["attributes"] or {}
+              print("REVIEW DETAIL existing fields:", {k: ("***" if "Password" in k else v) for k, v in existing.items()})
+              patch = {
+                  "demoUser": DEMO_USER,
+                  "demoPassword": DEMO_PASSWORD,
+                  "demoRequired": True,
+                  "notes": "Sign in with the provided demo account (a regular user account) to explore the app. No payment method is required to review Metricorex.",
+              }
+              if not (existing.get("contactFirstName") or "").strip(): patch["contactFirstName"] = "Metricorex"
+              if not (existing.get("contactLastName") or "").strip(): patch["contactLastName"] = "Support"
+              if not (existing.get("contactEmail") or "").strip(): patch["contactEmail"] = DEMO_USER
+              if not (existing.get("contactPhone") or "").strip(): patch["contactPhone"] = "+234 800 000 0000"
+              call("PATCH", f"appStoreReviewDetailLocalizations/{loc['id']}", {
+                  "data": {"type": "appStoreReviewDetailLocalizations", "id": loc["id"], "attributes": patch}})
+              print(f"REVIEW INFO: demo user set to {DEMO_USER} (admin credentials replaced)")
+          except Exception as e:
+              print("::error::Review-info update failed:", e)
 
           # ---- attached build ----
-          build = client.get("builds", filter: { app: app.id, appStoreVersion: vid, limit: 1 })["data"].first
-          puts "BUILD ATTACHED: #{build ? build.dig('attributes', 'version') : 'NONE'}"
+          try:
+              builds = call("GET", "builds", **{"filter[app]": APP_ID, "filter[appStoreVersion]": vid, "limit": 1}).get("data", [])
+              print("BUILD ATTACHED:", builds[0]["attributes"].get("version") if builds else "NONE")
+          except Exception as e:
+              print("[BUILD ERROR]", e)
 
-          # ---- screenshots per display type (en-US) ----
-          locs = client.get("appStoreVersions/#{vid}/appStoreVersionLocalizations")["data"]
-          en = locs.find { |l| l.dig("attributes", "locale") == "en-US" } || locs.first
-          shots = client.get("appStoreVersionLocalizations/#{en['id']}/appStoreVersionScreenshots", limit: 200)["data"]
-          by_type = Hash.new(0)
-          shots.each do |s|
-            dt = s.dig("attributes", "screenshotDisplayType") || "UNKNOWN"
-            by_type[dt] += 1
-          end
-          puts "SCREENSHOTS (#{en.dig('attributes', 'locale')}):"
-          by_type.sort.each { |k, n| puts "  #{k}: #{n}" }
-          iphone_ok = by_type.any? { |k, n| n > 0 && k =~ /IPHONE_(67|69|65)/ }
-          ipad_ok   = by_type.any? { |k, n| n > 0 && k =~ /IPAD_(PRO_3GEN_)?13|IPAD_PRO_129/ }
-          puts "IPHONE LARGE SET: #{iphone_ok ? 'OK' : 'MISSING (need iPhone 6.9"/Dynamic Island screenshots)'}"
-          puts "IPAD 13 SET: #{ipad_ok ? 'OK' : 'MISSING (need iPad Pro 13\" screenshots)'}"
+          # ---- screenshots per display type ----
+          iphone_ok = ipad_ok = False
+          try:
+              locs = call("GET", f"appStoreVersions/{vid}/appStoreVersionLocalizations").get("data", [])
+              en = next((l for l in locs if l["attributes"].get("locale") == "en-US"), locs[0])
+              shots = call("GET", f"appStoreVersionLocalizations/{en['id']}/appStoreVersionScreenshots", limit=200).get("data", [])
+              by_type = {}
+              for s in shots:
+                  dt = s["attributes"].get("screenshotDisplayType") or "UNKNOWN"
+                  by_type[dt] = by_type.get(dt, 0) + 1
+              print("SCREENSHOTS (en-US):", json.dumps(by_type, indent=2))
+              iphone_ok = any(n > 0 and any(x in dt for x in ("IPHONE_67", "IPHONE_69", "IPHONE_65")) for dt, n in by_type.items())
+              ipad_ok = any(n > 0 and ("IPAD_13" in dt or "IPAD_PRO_3GEN_13" in dt or "IPAD_PRO_129" in dt) for dt, n in by_type.items())
+              print("IPHONE LARGE SET:", "OK" if iphone_ok else "MISSING (iPhone 6.9\"/Dynamic Island screenshots required)")
+              print("IPAD 13 SET:", "OK" if ipad_ok else "MISSING (iPad Pro 13\" screenshots required)")
+          except Exception as e:
+              print("[SCREENSHOT ERROR]", e)
 
           # ---- pricing ----
-          schedules = client.get("apps/#{app.id}/appPriceSchedules")["data"] rescue []
-          puts "PRICE SCHEDULES: #{schedules.size} #{schedules.empty? ? '(pricing not set — ASC will reject the submission)' : ''}"
+          pricing_ok = False
+          try:
+              schedules = call("GET", f"apps/{APP_ID}/appPriceSchedules").get("data", [])
+              pricing_ok = len(schedules) > 0
+              print("PRICE SCHEDULES:", len(schedules), "" if pricing_ok else "(pricing NOT set — set a price tier in ASC, e.g. Free)")
+          except Exception as e:
+              print("[PRICING ERROR]", e)
 
-          ready = iphone_ok && ipad_ok && !schedules.empty?
-          File.open(ENV["GITHUB_OUTPUT"], "a") do |f|
-            f.puts "ready=#{ready}"
-            f.puts "version_id=#{vid}"
-          end
-          if ready
-            puts "::notice::All API-checkable requirements present — submitting for review."
-          else
-            puts "::warning::NOT submitting — add the missing screenshots / pricing in App Store Connect, then re-run."
-          end
-          RB
-          ruby asc_finisher.rb
+          ready = bool(iphone_ok and ipad_ok and pricing_ok)
+          print("READY FOR SUBMISSION:", ready)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"ready={'true' if ready else 'false'}\nversion_id={vid}\n")
+          if not ready:
+              print("::warning::NOT submitting — add the missing screenshots / pricing in App Store Connect, then re-run this workflow.")
+          PY
+          python3 "$RUNNER_TEMP/finisher.py"
 
       - name: Submit for App Store review
         if: steps.check.outputs.ready == 'true'
@@ -217,4 +237,4 @@ jobs:
 
       - name: Cleanup API key file
         if: always()
-        run: rm -f "$RUNNER_TEMP/asc-api-key.json" asc_finisher.rb
+        run: rm -f "$RUNNER_TEMP/asc-api-key.json" "$RUNNER_TEMP/finisher.py"
