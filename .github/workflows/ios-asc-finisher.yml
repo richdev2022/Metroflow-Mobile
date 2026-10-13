@@ -146,13 +146,13 @@ jobs:
           try:
               detail = None
               try:
-                  detail = call("GET", f"apps/{APP_ID}/appStoreReviewDetail").get("data")
+                  detail = call("GET", f"appStoreVersions/{vid}/appStoreReviewDetail").get("data")
               except Exception:
                   detail = None
               if not detail:
                   detail = call("POST", "appStoreReviewDetails", {
                       "data": {"type": "appStoreReviewDetails", "attributes": {},
-                               "relationships": {"app": {"data": {"type": "apps", "id": APP_ID}}}}})
+                               "relationships": {"appStoreVersion": {"data": {"type": "appStoreVersions", "id": vid}}}}})
                   print("REVIEW DETAIL: created (was missing — this was blocking submission)")
               else:
                   print("REVIEW DETAIL: found", detail["id"])
@@ -188,22 +188,35 @@ jobs:
           except Exception as e:
               print("[BUILD ERROR]", e)
 
-          # ---- screenshots per display type ----
+          # ---- screenshots per display type (discover real relationship name) ----
           iphone_ok = ipad_ok = False
           try:
               locs = call("GET", f"appStoreVersions/{vid}/appStoreVersionLocalizations").get("data", [])
               en = next((l for l in locs if l["attributes"].get("locale") == "en-US"), locs[0])
-              shots_by_type = {}
-              sets = call("GET", f"appStoreVersionLocalizations/{en['id']}/appStoreVersionScreenshotSets", limit=200).get("data", [])
-              for st in sets:
-                  dt = st["attributes"].get("screenshotDisplayType") or "UNKNOWN"
-                  try:
-                      n = len(call("GET", f"appStoreVersionScreenshotSets/{st['id']}/appStoreVersionScreenshots", limit=200).get("data", []))
-                  except Exception:
-                      n = 0
-                  if n:
-                      shots_by_type[dt] = shots_by_type.get(dt, 0) + n
-              by_type = shots_by_type
+              en_id = en["id"]
+              # Discover the actual screenshots relationship from the resource doc
+              loc_doc = call("GET", f"appStoreVersionLocalizations/{en_id}")
+              rel_names = list((loc_doc.get("data", {}).get("relationships") or {}).keys())
+              print("LOC RELATIONSHIPS:", rel_names)
+              shots_rel = next((r for r in rel_names if "creenshot" in r), None)
+              by_type = {}
+              if shots_rel:
+                  sets = call("GET", f"appStoreVersionLocalizations/{en_id}/{shots_rel}", limit=200).get("data", [])
+                  for st in sets:
+                      dt = st["attributes"].get("screenshotDisplayType") or "UNKNOWN"
+                      sub_rel = None
+                      try:
+                          st_doc = call("GET", f"appStoreVersionScreenshotSets/{st['id']}")
+                          sub_rel = next((r for r in (st_doc.get("data", {}).get("relationships") or {}).keys() if "creenshot" in r), None)
+                      except Exception:
+                          pass
+                      sub_rel = sub_rel or "appStoreVersionScreenshots"
+                      try:
+                          n = len(call("GET", f"appStoreVersionScreenshotSets/{st['id']}/{sub_rel}", limit=200).get("data", []))
+                      except Exception:
+                          n = 0
+                      if n:
+                          by_type[dt] = by_type.get(dt, 0) + n
               print("SCREENSHOTS (en-US):", json.dumps(by_type, indent=2))
               iphone_ok = any(n > 0 and any(x in dt for x in ("IPHONE_67", "IPHONE_69", "IPHONE_65")) for dt, n in by_type.items())
               ipad_ok = any(n > 0 and ("IPAD_13" in dt or "IPAD_PRO_3GEN_13" in dt or "IPAD_PRO_129" in dt) for dt, n in by_type.items())
