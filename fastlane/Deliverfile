@@ -1,0 +1,11 @@
+# Deliberately minimal deliver configuration.
+#
+# Presence of this file stops `fastlane deliver` from prompting
+# "No deliver configuration found in the current directory. Do you want to
+# setup deliver?" - which crashes CI (non-interactive) before any App Store
+# Connect API call is made.
+#
+# All submission options are passed on the CLI in
+# .github/workflows/store-production-release.yml (skip metadata/screenshots/
+# binary upload, submit latest processed TestFlight build for review).
+# The App Store Connect listing itself is the source of truth.
