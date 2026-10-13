@@ -325,10 +325,10 @@ def step_screenshots(loc_id):
         for sid, t in targets:
             st, b = call("GET", f"appScreenshotSets/{sid}/appScreenshots")
             existing_shots = b.get("data", []) if ok(st) else []
-            pending = [s for s in existing_shots
-                       if ((s.get("attributes") or {}).get("assetDeliveryState") or {}).get("state") != "COMPLETE"]
-            if not pending:
-                print(f"  set {t}: {len(existing_shots)} screenshot(s) COMPLETE - skipping")
+            complete = [s for s in existing_shots
+                        if ((s.get("attributes") or {}).get("assetDeliveryState") or {}).get("state") == "COMPLETE"]
+            if complete:
+                print(f"  set {t}: {len(complete)} screenshot(s) COMPLETE - skipping")
                 continue
             for (w, h, title, sub) in shots:
                 png = os.path.join(tmpdir, f"{t}.png")
