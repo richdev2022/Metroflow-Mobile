@@ -264,8 +264,8 @@ jobs:
                       # new-style declarations = booleans (per ASC 409 guidance).
                       answers = {
                           "unrestrictedWebAccess": False,
-                          "contests": False,
-                          "gunsOrOtherWeapons": False,
+                          "contests": "NONE",
+                          "gunsOrOtherWeapons": "NONE",
                           "gambling": False,
                           "lootBox": False,
                           "advertising": False,
