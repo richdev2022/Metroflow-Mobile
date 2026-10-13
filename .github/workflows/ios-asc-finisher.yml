@@ -244,7 +244,54 @@ jobs:
                   print("[PRICING ERROR]", e)
           print("PRICING:", "SET" if pricing_ok else "NOT SET — set a price tier in ASC (e.g. Free)")
 
-          ready = bool(iphone_ok and ipad_ok and pricing_ok)
+          # ---- age rating questionnaire (all declarations must be answered) ----
+          age_ok = False
+          try:
+              vrels = rel_names(f"appStoreVersions/{vid}")
+              age_rel = next((r for r in vrels if "ating" in r.lower()), None)
+              print("AGE RATING RELATIONSHIP:", age_rel, "(version rels:", vrels, ")")
+              if age_rel:
+                  decl = call("GET", f"appStoreVersions/{vid}/{age_rel}").get("data")
+                  if decl:
+                      answers = {
+                          "unrestrictedWebAccess": "NO",
+                          "contests": "NO",
+                          "gunsOrOtherWeapons": "NO",
+                          "violenceCartoonOrFantasy": "NO",
+                          "violenceRealistic": "NO",
+                          "violenceRealisticProlongedGraphicOrSadistic": "NO",
+                          "sexualContentOrNudity": "NO",
+                          "sexualContentGraphicAndNudity": "NO",
+                          "profanityOrCrudeHumor": "NO",
+                          "matureOrSuggestiveThemes": "NO",
+                          "horrorOrFearThemes": "NO",
+                          "medicalOrTreatmentInformation": "NO",
+                          "healthOrWellnessTopics": "NO",
+                          "alcoholTobaccoOrDrugUseOrReferences": "NO",
+                          "gambling": "NO",
+                          "gamblingSimulated": "NO",
+                          "lootBox": "NO",
+                          "advertising": "NO",
+                          "userGeneratedContent": "YES",
+                          "messagingAndChat": "YES",
+                          "ageAssurance": "NO",
+                          "parentalControls": "NO",
+                      }
+                      cur = decl.get("attributes") or {}
+                      patch = {k: v for k, v in answers.items() if cur.get(k) != v}
+                      if patch:
+                          call("PATCH", f"{decl['type']}/{decl['id']}", {
+                              "data": {"type": decl["type"], "id": decl["id"], "attributes": patch}})
+                          print("AGE RATING: patched", len(patch), "declarations")
+                      else:
+                          print("AGE RATING: already complete")
+                      age_ok = True
+                  else:
+                      print("AGE RATING: no declaration instance found")
+          except Exception as e:
+              print("[AGE RATING ERROR]", e)
+
+          ready = bool(iphone_ok and ipad_ok and pricing_ok and age_ok)
           print("READY FOR SUBMISSION:", ready)
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"ready={'true' if ready else 'false'}\nversion_id={vid}\n")
