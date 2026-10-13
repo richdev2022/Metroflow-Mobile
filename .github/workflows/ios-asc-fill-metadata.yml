@@ -204,6 +204,24 @@ jobs:
           PY
           python3 "$RUNNER_TEMP/fill.py"
 
+      # Ground truth for ASC resource names: dump the endpoint paths the
+      # installed spaceship gem uses (Apple's docs drift; the gem is current).
+      - name: Dump spaceship ASC resource paths
+        run: |
+          ruby - <<'RB'
+          require 'spaceship'
+          root = Gem::Specification.find_by_name('fastlane').gem_dir
+          terms = %w[ageRating dataUsage appPricePoint appPriceSchedule appPriceTier
+                     appScreenshotSet appScreenshot appStoreReviewDetail contentRightsDeclaration]
+          hits = Hash.new { |h, k| h[k] = [] }
+          Dir.glob("#{root}/spaceship/lib/spaceship/connect_api/**/*.rb").each do |f|
+            File.readlines(f).each_with_index do |l, i|
+              terms.each { |t| hits[t] << "#{File.basename(f)}:#{i + 1}: #{l.strip[0, 150]}" if l.include?(t) }
+            end
+          end
+          terms.each { |t| puts "=== #{t} ==="; hits[t].uniq.first(6).each { |h| puts "  #{h}" } }
+          RB
+
       # Fixes every remaining data blocker Apple reported on the failed
       # submission (age rating, category, copyright, content rights, review
       # detail, pricing, privacy answers, screenshots). Idempotent + defensive.
