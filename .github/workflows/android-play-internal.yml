@@ -13,7 +13,7 @@ name: Android Play Release
 #                                 flutter-build.yml; publishing REQUIRES them —
 #                                 Play rejects debug-signed bundles).
 #
-# versionCode strategy: UTC epoch minutes — ONE app-wide monotonic counter
+# versionCode strategy: UTC epoch SECONDS — ONE app-wide monotonic counter
 # shared by every Play publishing workflow (see flutter-build.yml
 # "Compute versionCode"). Computed once and reused for both the AAB build
 # and the changelog filename.
@@ -105,7 +105,7 @@ jobs:
         run: flutter pub get
 
       - name: Compute versionCode
-        run: echo "VERSION_CODE=$(( $(date -u +%s) / 60 ))" >> "$GITHUB_ENV"
+        run: echo "VERSION_CODE=$(date -u +%s)" >> "$GITHUB_ENV"
 
       - name: Build signed AAB
         working-directory: metroflow_flutter
