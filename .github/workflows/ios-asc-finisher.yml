@@ -164,18 +164,9 @@ jobs:
               else:
                   print("REVIEW DETAIL: found", detail["id"])
               did = detail["id"]
-              rd_rels = rel_names(f"appStoreReviewDetails/{did}")
-              print("REVIEW DETAIL RELATIONSHIPS:", rd_rels)
-              locs_rel = next((r for r in rd_rels if "ocalization" in r), None)
-              assert locs_rel, f"No localizations relationship on review detail: {rd_rels}"
-              locs = call("GET", f"appStoreReviewDetails/{did}/{locs_rel}").get("data", [])
-              loc = next((l for l in locs if l["attributes"].get("locale") == "en-US"), None)
-              if not loc:
-                  loc = call("POST", f"appStoreReviewDetails/{did}/{locs_rel}",
-                             {"data": {"type": "appStoreReviewDetailLocalizations", "attributes": {"locale": "en-US"}}})
-                  print("REVIEW DETAIL LOC: created en-US")
-              existing = loc["attributes"] or {}
-              print("REVIEW DETAIL existing fields:", {k: ("***" if "Password" in k else v) for k, v in existing.items()})
+              ddoc = call("GET", f"appStoreReviewDetails/{did}")
+              existing = ddoc.get("data", {}).get("attributes") or {}
+              print("REVIEW DETAIL ATTRS:", {k: ("***" if "assword" in k else v) for k, v in existing.items()})
               patch = {
                   "demoUser": DEMO_USER,
                   "demoPassword": DEMO_PASSWORD,
@@ -186,8 +177,8 @@ jobs:
               if not (existing.get("contactLastName") or "").strip(): patch["contactLastName"] = "Support"
               if not (existing.get("contactEmail") or "").strip(): patch["contactEmail"] = DEMO_USER
               if not (existing.get("contactPhone") or "").strip(): patch["contactPhone"] = "+234 800 000 0000"
-              call("PATCH", f"appStoreReviewDetailLocalizations/{loc['id']}", {
-                  "data": {"type": "appStoreReviewDetailLocalizations", "id": loc["id"], "attributes": patch}})
+              call("PATCH", f"appStoreReviewDetails/{did}", {
+                  "data": {"type": "appStoreReviewDetails", "id": did, "attributes": patch}})
               print(f"REVIEW INFO: demo user set to {DEMO_USER} (admin credentials replaced)")
           except Exception as e:
               print("::error::Review-info update failed:", e)
@@ -207,9 +198,9 @@ jobs:
               en_id = en["id"]
               # Discover the actual screenshots relationship from the resource doc
               loc_doc = call("GET", f"appStoreVersionLocalizations/{en_id}")
-              rel_names = list((loc_doc.get("data", {}).get("relationships") or {}).keys())
-              print("LOC RELATIONSHIPS:", rel_names)
-              shots_rel = next((r for r in rel_names if "creenshot" in r), None)
+              loc_rels = list((loc_doc.get("data", {}).get("relationships") or {}).keys())
+              print("LOC RELATIONSHIPS:", loc_rels)
+              shots_rel = next((r for r in loc_rels if "creenshot" in r), None)
               by_type = {}
               if shots_rel:
                   sets = call("GET", f"appStoreVersionLocalizations/{en_id}/{shots_rel}", limit=200).get("data", [])
