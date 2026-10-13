@@ -144,11 +144,18 @@ jobs:
 
           # ---- App Review Information (the credential fix) ----
           try:
-              details = call("GET", "appStoreReviewDetails", **{"filter[app]": APP_ID}).get("data", [])
-              detail = details[0] if details else call("POST", "appStoreReviewDetails", {
-                  "data": {"type": "appStoreReviewDetails", "attributes": {},
-                           "relationships": {"app": {"data": {"type": "apps", "id": APP_ID}}}}})
-              print("REVIEW DETAIL:", detail["id"], "(created)" if not details else "(existing)")
+              detail = None
+              try:
+                  detail = call("GET", f"apps/{APP_ID}/appStoreReviewDetail").get("data")
+              except Exception:
+                  detail = None
+              if not detail:
+                  detail = call("POST", "appStoreReviewDetails", {
+                      "data": {"type": "appStoreReviewDetails", "attributes": {},
+                               "relationships": {"app": {"data": {"type": "apps", "id": APP_ID}}}}})
+                  print("REVIEW DETAIL: created (was missing — this was blocking submission)")
+              else:
+                  print("REVIEW DETAIL: found", detail["id"])
               did = detail["id"]
               locs = call("GET", f"appStoreReviewDetails/{did}/appStoreReviewDetailLocalizations").get("data", [])
               loc = next((l for l in locs if l["attributes"].get("locale") == "en-US"), None)
@@ -186,11 +193,17 @@ jobs:
           try:
               locs = call("GET", f"appStoreVersions/{vid}/appStoreVersionLocalizations").get("data", [])
               en = next((l for l in locs if l["attributes"].get("locale") == "en-US"), locs[0])
-              shots = call("GET", f"appStoreVersionLocalizations/{en['id']}/appStoreVersionScreenshots", limit=200).get("data", [])
-              by_type = {}
-              for s in shots:
-                  dt = s["attributes"].get("screenshotDisplayType") or "UNKNOWN"
-                  by_type[dt] = by_type.get(dt, 0) + 1
+              shots_by_type = {}
+              sets = call("GET", f"appStoreVersionLocalizations/{en['id']}/appStoreVersionScreenshotSets", limit=200).get("data", [])
+              for st in sets:
+                  dt = st["attributes"].get("screenshotDisplayType") or "UNKNOWN"
+                  try:
+                      n = len(call("GET", f"appStoreVersionScreenshotSets/{st['id']}/appStoreVersionScreenshots", limit=200).get("data", []))
+                  except Exception:
+                      n = 0
+                  if n:
+                      shots_by_type[dt] = shots_by_type.get(dt, 0) + n
+              by_type = shots_by_type
               print("SCREENSHOTS (en-US):", json.dumps(by_type, indent=2))
               iphone_ok = any(n > 0 and any(x in dt for x in ("IPHONE_67", "IPHONE_69", "IPHONE_65")) for dt, n in by_type.items())
               ipad_ok = any(n > 0 and ("IPAD_13" in dt or "IPAD_PRO_3GEN_13" in dt or "IPAD_PRO_129" in dt) for dt, n in by_type.items())
@@ -202,11 +215,15 @@ jobs:
           # ---- pricing ----
           pricing_ok = False
           try:
-              schedules = call("GET", f"apps/{APP_ID}/appPriceSchedules").get("data", [])
-              pricing_ok = len(schedules) > 0
-              print("PRICE SCHEDULES:", len(schedules), "" if pricing_ok else "(pricing NOT set — set a price tier in ASC, e.g. Free)")
-          except Exception as e:
-              print("[PRICING ERROR]", e)
+              sched = call("GET", f"apps/{APP_ID}/appPriceSchedule").get("data")
+              pricing_ok = bool(sched)
+          except Exception:
+              try:
+                  ap = call("GET", "appPrices", **{"filter[app]": APP_ID}).get("data", [])
+                  pricing_ok = len(ap) > 0
+              except Exception as e:
+                  print("[PRICING ERROR]", e)
+          print("PRICING:", "SET" if pricing_ok else "NOT SET — set a price tier in ASC (e.g. Free)")
 
           ready = bool(iphone_ok and ipad_ok and pricing_ok)
           print("READY FOR SUBMISSION:", ready)
