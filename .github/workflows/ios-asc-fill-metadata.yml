@@ -101,32 +101,35 @@ jobs:
           loc_id = loc["id"]
 
           # --- copy ------------------------------------------------------------
-          DESCRIPTION = """Metricorex is the all-in-one platform for modern businesses - business banking, meetings, calls, messaging and team collaboration in a single app.
+          import textwrap
+          DESCRIPTION = textwrap.dedent("""
+              Metricorex is the all-in-one platform for modern businesses - business banking, meetings, calls, messaging and team collaboration in a single app.
 
-WALLET & PAYMENTS
-- Multi-currency business wallet with instant transfers
-- Send and receive payments, pay vendors and get paid faster
-- Transaction limits and approvals that match your company policy
-- Full transaction history with receipts and export
+              WALLET & PAYMENTS
+              - Multi-currency business wallet with instant transfers
+              - Send and receive payments, pay vendors and get paid faster
+              - Transaction limits and approvals that match your company policy
+              - Full transaction history with receipts and export
 
-MEETINGS & CALLS
-- Schedule and join business meetings with calendar sync
-- High-quality video and voice calls - one-on-one or group
-- Native ringing on iPhone, even when the app is in the background
-- Record meetings and calls and replay them any time
+              MEETINGS & CALLS
+              - Schedule and join business meetings with calendar sync
+              - High-quality video and voice calls - one-on-one or group
+              - Native ringing on iPhone, even when the app is in the background
+              - Record meetings and calls and replay them any time
 
-TEAM COLLABORATION
-- Real-time team chat with MetricAi assistant
-- Company directory, roles and permissions
-- Push notifications that keep everyone in sync
+              TEAM COLLABORATION
+              - Real-time team chat with MetricAi assistant
+              - Company directory, roles and permissions
+              - Push notifications that keep everyone in sync
 
-SECURITY FIRST
-- Biometric login and secure session handling
-- Encrypted communication and industry-standard protections
+              SECURITY FIRST
+              - Biometric login and secure session handling
+              - Encrypted communication and industry-standard protections
 
-Refer & Earn: invite your team and network to Metricorex and earn rewards.
+              Refer & Earn: invite your team and network to Metricorex and earn rewards.
 
-Download Metricorex and run your business from your pocket."""
+              Download Metricorex and run your business from your pocket.
+          """).strip()
 
           KEYWORDS = "business banking,wallet,payments,money transfer,meetings,team chat,payroll,calls"
           WHATS_NEW = "First release of Metricorex - business banking, meetings, calls, chat and team collaboration in one app."
