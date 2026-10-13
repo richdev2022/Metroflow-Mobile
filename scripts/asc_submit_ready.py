@@ -113,47 +113,43 @@ def step_version_attrs(vid, loc_id):
                  {"data": {"type": "appStoreVersions", "id": vid,
                            "attributes": {"copyright": "© 2026 Metricorex Technologies"}}})
     print("appStoreVersions copyright PATCHED" if ok(st) else f"copyright patch FAILED ({st})")
-    st, b = call("PATCH", f"appStoreVersionLocalizations/{loc_id}",
-                 {"data": {"type": "appStoreVersionLocalizations", "id": loc_id,
+    st, b = call("PATCH", f"apps/{APP_ID}",
+                 {"data": {"type": "apps", "id": APP_ID,
                            "attributes": {"contentRightsDeclaration": "DOES_NOT_CONTAIN_THIRD_PARTY_CONTENT"}}})
-    print("contentRightsDeclaration PATCHED" if ok(st) else f"contentRights patch FAILED ({st})")
+    print("apps contentRightsDeclaration PATCHED" if ok(st) else f"contentRights patch FAILED ({st})")
 
 
 # ------------------------------------------------------------ age rating ----
 
 def step_age_rating():
     print("--- age rating questionnaire")
-    ratings = []
-    st, b = call("GET", f"apps/{APP_ID}/ageRating")
-    if ok(st) and b.get("data"):
-        ratings = b["data"]
-    if not ratings:
-        for cand in ("ageRatingDeclarations", "ageRatings"):
-            st, b = call("GET", cand, **{"filter[app]": APP_ID})
-            if ok(st) and b.get("data"):
-                ratings = b["data"]
-                break
-    if not ratings:
-        print("age rating resource not found via any known path - needs ASC UI (Age Rating section)")
+    # per spaceship: GET /v1/appInfos/{id}/ageRatingDeclaration
+    st, infos = call("GET", f"apps/{APP_ID}/appInfos")
+    decl = None
+    for info in (infos.get("data", []) if ok(st) else []):
+        st, b = call("GET", f"appInfos/{info['id']}/ageRatingDeclaration")
+        if ok(st) and b.get("data"):
+            decl = b["data"]
+            break
+    if not decl:
+        print("ageRatingDeclaration not found under any appInfo - needs ASC UI (Age Rating section)")
         return
-    for ar in ratings:
-        cur = ar["attributes"] or {}
-        patch = {}
-        for k, v in cur.items():
-            if k in ("app", "kidsAgeBand"):
-                continue
-            sv = str(v)
-            if sv in ("INFREQUENT_OR_MILD", "FREQUENT_OR_INTENSE", "INFREQUENT_MILD", "FREQUENT_INTENSE"):
-                patch[k] = "NONE"
-            elif sv in ("TRUE", "true", True):
-                patch[k] = "FALSE"
-        if not patch:
-            print("age rating already clean")
-            return
-        rtype = ar.get("type", "ageRatingDeclarations")
-        st, _ = call("PATCH", f"{rtype}/{ar['id']}",
-                     {"data": {"type": rtype, "id": ar["id"], "attributes": patch}})
-        print("age rating PATCHED" if ok(st) else f"age rating patch FAILED ({st})")
+    cur = decl["attributes"] or {}
+    patch = {}
+    for k, v in cur.items():
+        if k in ("app", "kidsAgeBand"):
+            continue
+        sv = str(v)
+        if sv in ("INFREQUENT_OR_MILD", "FREQUENT_OR_INTENSE", "INFREQUENT_MILD", "FREQUENT_INTENSE"):
+            patch[k] = "NONE"
+        elif sv in ("TRUE", "true", True):
+            patch[k] = "FALSE"
+    if not patch:
+        print("age rating already clean")
+        return
+    st, _ = call("PATCH", f"ageRatingDeclarations/{decl['id']}",
+                 {"data": {"type": "ageRatingDeclarations", "id": decl["id"], "attributes": patch}})
+    print("age rating PATCHED" if ok(st) else f"age rating patch FAILED ({st})")
 
 
 # ------------------------------------------------------------- category ----
@@ -202,58 +198,35 @@ REVIEW_CONTACT = {
 
 
 def step_review_detail():
-    print("--- App Store Review Detail (no GET_COLLECTION allowed — create directly)")
-    body = {"data": {"type": "appStoreReviewDetails", "attributes": REVIEW_CONTACT,
-                     "relationships": {"app": {"data": {"type": "apps", "id": APP_ID}}}}}
-    st, b = call("POST", "appStoreReviewDetails", body)
-    if ok(st):
-        print("review detail CREATED", b["data"]["id"])
+    print("--- App Store Review Detail")
+    # GET via the version relationship path (no GET_COLLECTION on the resource)
+    st, b = call("GET", f"appStoreVersions/{locate_version()[0]}/appStoreReviewDetail")
+    existing = b.get("data") if ok(st) else None
+    if existing:
+        did = existing["id"]
+        st, _ = call("PATCH", f"appStoreReviewDetails/{did}",
+                     {"data": {"type": "appStoreReviewDetails", "id": did, "attributes": REVIEW_CONTACT}})
+        print("review detail PATCHED" if ok(st) else "review detail patch FAILED")
         return
-    # Apple may report it already exists (no collection GET allowed) — probe
-    # the app relationship path; patch the instance when the id surfaces.
-    st2, b2 = call("GET", f"apps/{APP_ID}/appStoreReviewDetails")
-    if ok(st2) and b2.get("data"):
-        did = b2["data"][0]["id"]
-        st3, _ = call("PATCH", f"appStoreReviewDetails/{did}",
-                      {"data": {"type": "appStoreReviewDetails", "id": did, "attributes": REVIEW_CONTACT}})
-        print("review detail PATCHED" if ok(st3) else "review detail patch FAILED")
-    else:
-        print("review detail create failed — check the dump above / ASC UI")
+    # CREATE with the appStoreVersion relationship (NOT app)
+    body = {"data": {"type": "appStoreReviewDetails", "attributes": REVIEW_CONTACT,
+                     "relationships": {"appStoreVersion": {"data": {"type": "appStoreVersions", "id": locate_version()[0]}}}}}
+    st, b = call("POST", "appStoreReviewDetails", body)
+    print("review detail CREATED" if ok(st) else "review detail create FAILED")
 
 
 # --------------------------------------------------------------- pricing ----
 
 def step_pricing():
-    print("--- pricing (FREE)")
-    # appPriceSchedules exists but disallows GET_COLLECTION — go straight to POST.
-    body = {"data": {"type": "appPriceSchedules", "relationships": {
-        "app": {"data": {"type": "apps", "id": APP_ID}},
-        "priceTier": {"data": {"type": "appPriceTiers", "id": "0"}}}}}
-    st, b = call("POST", "appPriceSchedules", body)
-    if ok(st):
-        print("PRICING SET (tier 0)")
-        return
-    # fallback: manual price with a 0.00 point from the app sub-path
-    st, b = call("GET", f"apps/{APP_ID}/appPricePoints", **{"filter[countries]": "USA", "limit": 200})
-    if not ok(st):
-        print("price points listing failed — deliver --price_tier 0 remains as fallback")
-        return
-    points = b.get("data", [])
-    zero = next((p for p in points
-                 if float(p["attributes"].get("customerPrice") or 1) == 0.0), None)
-    if not zero:
-        print("no 0.00 USD price point found; first points:",
-              json.dumps([{"id": p["id"], "price": p["attributes"].get("customerPrice")} for p in points[:5]])[:400])
-        return
-    body = {"data": {"type": "appPriceSchedules", "relationships": {
-        "app": {"data": {"type": "apps", "id": APP_ID}},
-        "manualPrices": {"data": [{
-            "type": "appPrices",
-            "attributes": {"startDate": None},
-            "relationships": {"appPricePoint": {"data": {"type": "appPricePoints", "id": zero["id"]}}},
-        }]}}}}
-    st, b = call("POST", "appPriceSchedules", body)
-    print("PRICING SET (free, 0.00 USD point)" if ok(st) else "pricing create FAILED — see dump above")
+    print("--- pricing (FREE, app compound-document PATCH per spaceship patch_app)")
+    body = {
+        "data": {"type": "apps", "id": APP_ID,
+                 "relationships": {"prices": {"data": [{"type": "appPrices", "id": "${price1}"}]}}},
+        "included": [{"type": "appPrices", "id": "${price1}",
+                      "relationships": {"app": {"data": {"type": "apps", "id": APP_ID}},
+                                        "priceTier": {"data": {"type": "appPriceTiers", "id": "0"}}}}]}
+    st, b = call("PATCH", f"apps/{APP_ID}", body)
+    print("PRICING SET (tier 0)" if ok(st) else "pricing PATCH FAILED — deliver --price_tier 0 fallback at submission")
 
 
 # --------------------------------------------------------------- privacy ----
@@ -270,70 +243,8 @@ PRIVACY_PLAN = [
 
 
 def step_privacy():
-    print("--- app privacy (data usages)")
-    usages = []
-    st, b = call("GET", "dataUsages", **{"filter[app]": APP_ID})
-    if ok(st):
-        usages = b.get("data", [])
-    if not usages:
-        st, b = call("GET", f"apps/{APP_ID}/dataUsages")
-        if ok(st):
-            usages = b.get("data", [])
-    if not usages:
-        st, infos = call("GET", f"apps/{APP_ID}/appInfos")
-        for info in (infos.get("data", []) if ok(st) else []):
-            st, b = call("GET", f"appInfos/{info['id']}/dataUsages")
-            if ok(st) and b.get("data"):
-                usages = b["data"]
-                break
-    if not usages:
-        print("data usages resource not found via any known path - Data Safety must be filled in ASC UI")
-        return
-    existing = {u["attributes"].get("group"): u["id"] for u in usages
-                if (u.get("attributes") or {}).get("group")}
-    for group, uses in PRIVACY_PLAN:
-        if group not in existing:
-            st, b2 = call("POST", "dataUsages",
-                          {"data": {"type": "dataUsages",
-                                    "relationships": {"app": {"data": {"type": "apps", "id": APP_ID}}}}})
-            if not ok(st):
-                st, b2 = call("POST", "dataUsages",
-                              {"data": {"type": "dataUsages", "attributes": {"group": group},
-                                        "relationships": {"app": {"data": {"type": "apps", "id": APP_ID}}}}})
-            if ok(st):
-                existing[group] = b2["data"]["id"]
-                print(f"dataUsage {group} created")
-            else:
-                print(f"dataUsage {group} create failed")
-                continue
-        uid = existing[group]
-        st, b3 = call("GET", "dataUses", **{"filter[dataUsage]": uid})
-        have_purposes = set()
-        if ok(st):
-            for u in b3.get("data", []):
-                have_purposes.add(u["attributes"].get("purpose"))
-        for purpose, protection in uses:
-            if purpose in have_purposes:
-                continue
-            st, b4 = call("POST", "dataUses",
-                          {"data": {"type": "dataUses", "attributes": {"purpose": purpose},
-                                    "relationships": {"dataUsage": {"data": {"type": "dataUsages", "id": uid}}}}})
-            if not ok(st):
-                continue
-            use_id = b4["data"]["id"]
-            call("POST", "dataProtections",
-                 {"data": {"type": "dataProtections", "attributes": {"protection": protection},
-                           "relationships": {"dataUse": {"data": {"type": "dataUses", "id": use_id}}}}})
-            print(f"  {group}: {purpose}/{protection} recorded")
-    # publish
-    st, b = call("GET", "dataUsagePublishings", **{"filter[app]": APP_ID})
-    if ok(st) and b.get("data"):
-        print("privacy answers already published")
-        return
-    st, b = call("POST", "dataUsagePublishings",
-                 {"data": {"type": "dataUsagePublishings",
-                           "relationships": {"app": {"data": {"type": "apps", "id": APP_ID}}}}})
-    print("privacy PUBLISHED" if ok(st) else "privacy publish failed (answers recorded; may need ASC UI publish)")
+    print("--- app privacy: NOT available in ASC REST v1 (no dataUsage resources in spaceship ConnectAPI)")
+    print("    -> fill Data Safety in the ASC UI (App privacy section) once; the submission precheck reads it from there")
 
 
 # ----------------------------------------------------------- screenshots ----
@@ -374,8 +285,8 @@ def make_screenshot(path, w, h, title, subtitle):
 
 
 SCREENSHOT_SET_CANDIDATES = {
-    "iphone": ["APP_IPHONE_69", "APP_IPHONE_67", "IPHONE_DYNAMIC_ISLAND"],
-    "ipad": ["APP_IPAD_PRO_132", "APP_IPAD_PRO_13", "APP_IPAD_PRO_129", "IPAD_13"],
+    "iphone": ["APP_IPHONE_67", "APP_IPHONE_65", "APP_IPHONE_61"],
+    "ipad": ["APP_IPAD_PRO_3GEN_129", "APP_IPAD_105", "APP_IPAD_97"],
 }
 
 SCREENSHOT_SPECS = {
@@ -443,8 +354,8 @@ def step_screenshots(loc_id):
                 upload_ok = True
                 for op in ops:
                     req = urllib.request.Request(op["url"], method=op.get("method", "PUT"))
-                    for hk, hv in (op.get("requestHeaders") or {}).items():
-                        req.add_header(hk, hv)
+                    for h in (op.get("requestHeaders") or []):
+                        req.add_header(h.get("name"), h.get("value"))
                     req.data = data[op.get("offset", 0):op.get("offset", 0) + op.get("length", len(data))]
                     try:
                         with urllib.request.urlopen(req, timeout=180) as resp:
