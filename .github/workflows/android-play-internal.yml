@@ -56,7 +56,7 @@ jobs:
     timeout-minutes: 60
     env:
       TRACK: ${{ github.event.inputs.track || 'production' }}
-      STATUS: ${{ github.event.inputs.status || 'completed' }}
+      STATUS: ${{ github.event.inputs.status || 'draft' }}
       PROD_ACK: ${{ github.event.inputs.production_ack || 'true' }}
 
     steps:
