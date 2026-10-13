@@ -20,7 +20,7 @@ name: Store Production Release
 # complete (screenshots, description, privacy policy) for Apple to accept the
 # submission. Release after approval is automatic.
 #
-# versionCode strategy: UTC epoch minutes — app-wide monotonic (see
+# versionCode strategy: UTC epoch SECONDS — app-wide monotonic (see
 # flutter-build.yml "Compute versionCode").
 
 on:
@@ -83,7 +83,7 @@ jobs:
         run: flutter pub get
 
       - name: Compute versionCode
-        run: echo "VERSION_CODE=$(( $(date -u +%s) / 60 ))" >> "$GITHUB_ENV"
+        run: echo "VERSION_CODE=$(date -u +%s)" >> "$GITHUB_ENV"
 
       - name: Build signed AAB
         working-directory: metroflow_flutter
