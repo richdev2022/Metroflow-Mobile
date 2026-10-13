@@ -1,0 +1,220 @@
+name: iOS ASC Finisher
+
+# One-shot branch workflow: pushing to ios-appstore-finish runs this.
+#
+# What it does, in order:
+#   1. Sets App Review Information (appStoreReviewDetail) with the DEMO USER
+#      credentials — metricorexlimited@gmail.com / Password@123 — replacing
+#      the admin credentials that were mistakenly shared earlier.
+#   2. Checks the 1.0 version state: attached build, screenshots per display
+#      type, price schedule.
+#   3. If screenshots + pricing are present, submits the build for App Store
+#      review (same deliver invocation the tag workflow used — it reached
+#      ASC's own validation, so the command is proven).
+#   4. If screenshots/pricing are still missing, it does NOT submit and
+#      prints exactly what must be added in App Store Connect.
+
+on:
+  push:
+    branches:
+      - ios-appstore-finish
+
+concurrency:
+  group: asc-finisher
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  finish:
+    name: Review info + state check + submit
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      ASC_KEY_P8_B64: ${{ secrets.APP_STORE_CONNECT_KEY_P8 }}
+      BUNDLE_ID: com.metricorex.app
+      DEMO_USER: metricorexlimited@gmail.com
+      DEMO_PASSWORD: Password@123
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Ruby + fastlane
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+
+      - name: Install fastlane
+        run: gem install fastlane --no-document
+
+      - name: Validate App Store Connect secrets
+        run: |
+          missing=0
+          for v in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8_B64; do
+            if [ -z "${!v}" ]; then
+              echo "::error::GitHub secret backing $v is not set."
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - name: Write App Store Connect API key file
+        run: |
+          python3 - <<'PY'
+          import base64, json, os
+          raw = os.environ["ASC_KEY_P8_B64"]
+          try:
+              pem = base64.b64decode(raw, validate=True).decode()
+          except Exception:
+              pem = raw
+          if "BEGIN PRIVATE KEY" not in pem and "BEGIN RSA PRIVATE KEY" not in pem:
+              raise SystemExit("ASC_KEY_P8_B64 does not contain a PEM private key")
+          key = {
+              "key_id": os.environ["ASC_KEY_ID"],
+              "issuer_id": os.environ["ASC_ISSUER_ID"],
+              "key": pem,
+              "in_house": False,
+          }
+          path = os.path.join(os.environ["RUNNER_TEMP"], "asc-api-key.json")
+          with open(path, "w") as f:
+              json.dump(key, f)
+          print("ASC API key file written")
+          PY
+
+      - name: Set review info (demo user) + check submission readiness
+        id: check
+        env:
+          ASC_KEY_PATH: ${{ runner.temp }}/asc-api-key.json
+        run: |
+          cat > asc_finisher.rb <<'RB'
+          require "json"
+          require "spaceship"
+
+          KEY_PATH = ENV.fetch("ASC_KEY_PATH")
+          BUNDLE   = ENV.fetch("BUNDLE_ID")
+          DEMO_USER = ENV.fetch("DEMO_USER")
+          DEMO_PASSWORD = ENV.fetch("DEMO_PASSWORD")
+
+          Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.from_json_file(KEY_PATH)
+          client = Spaceship::ConnectAPI.client
+
+          app = Spaceship::ConnectAPI::App.find(BUNDLE)
+          abort("::error::App #{BUNDLE} not found in App Store Connect") unless app
+          puts "APP: #{app.id} #{app.name}"
+
+          # ---- editable version ----
+          versions = client.get("apps/#{app.id}/appStoreVersions",
+                                filter: { appStoreState: "PREPARE_FOR_SUBMISSION" },
+                                includes: "appStoreVersionLocalizations")["data"]
+          abort("::error::No PREPARE_FOR_SUBMISSION version found") if versions.empty?
+          version = versions.first
+          vid = version["id"]
+          puts "VERSION: #{vid} #{version.dig('attributes', 'versionString')}"
+
+          # ---- App Review Information (the credential fix) ----
+          begin
+            details = client.get("appStoreReviewDetails", filter: { app: app.id })["data"]
+            detail = details.first
+            unless detail
+              detail = client.post("appStoreReviewDetails", {
+                data: {
+                  type: "appStoreReviewDetails",
+                  attributes: {},
+                  relationships: { app: { data: { type: "apps", id: app.id } } },
+                },
+              })
+              puts "REVIEW DETAIL: created (was missing — this was blocking submission)"
+            end
+            locs = client.get("appStoreReviewDetails/#{detail['id']}/appStoreReviewDetailLocalizations")["data"]
+            loc = locs.find { |l| l.dig("attributes", "locale") == "en-US" }
+            unless loc
+              loc = client.post("appStoreReviewDetails/#{detail['id']}/appStoreReviewDetailLocalizations", {
+                data: {
+                  type: "appStoreReviewDetailLocalizations",
+                  attributes: { locale: "en-US" },
+                },
+              })
+              puts "REVIEW DETAIL LOC: created en-US"
+            end
+            existing = loc["attributes"] || {}
+            patch = {
+              demoUser: DEMO_USER,
+              demoPassword: DEMO_PASSWORD,
+              demoRequired: true,
+              notes: "Sign in with the provided demo account (a regular user account) to explore the app. No payment method is required to review Metricorex.",
+            }
+            # Keep any existing reviewer contact info; only fill it in if absent.
+            patch[:contactFirstName] = "Metricorex" unless existing["contactFirstName"].to_s.strip.length > 0
+            patch[:contactLastName]  = "Support"    unless existing["contactLastName"].to_s.strip.length > 0
+            patch[:contactEmail]     = DEMO_USER    unless existing["contactEmail"].to_s.strip.length > 0
+            patch[:contactPhone]     = "+234 800 000 0000" unless existing["contactPhone"].to_s.strip.length > 0
+            client.patch("appStoreReviewDetailLocalizations/#{loc['id']}", {
+              data: { type: "appStoreReviewDetailLocalizations", id: loc["id"], attributes: patch },
+            })
+            puts "REVIEW INFO: demo user set to #{DEMO_USER} (admin credentials replaced)"
+          rescue => e
+            puts "::error::Review-info update failed: #{e.class} #{e.message}"
+            puts e.response.body if e.respond_to?(:response) && e.response
+          end
+
+          # ---- attached build ----
+          build = client.get("builds", filter: { app: app.id, appStoreVersion: vid, limit: 1 })["data"].first
+          puts "BUILD ATTACHED: #{build ? build.dig('attributes', 'version') : 'NONE'}"
+
+          # ---- screenshots per display type (en-US) ----
+          locs = client.get("appStoreVersions/#{vid}/appStoreVersionLocalizations")["data"]
+          en = locs.find { |l| l.dig("attributes", "locale") == "en-US" } || locs.first
+          shots = client.get("appStoreVersionLocalizations/#{en['id']}/appStoreVersionScreenshots", limit: 200)["data"]
+          by_type = Hash.new(0)
+          shots.each do |s|
+            dt = s.dig("attributes", "screenshotDisplayType") || "UNKNOWN"
+            by_type[dt] += 1
+          end
+          puts "SCREENSHOTS (#{en.dig('attributes', 'locale')}):"
+          by_type.sort.each { |k, n| puts "  #{k}: #{n}" }
+          iphone_ok = by_type.any? { |k, n| n > 0 && k =~ /IPHONE_(67|69|65)/ }
+          ipad_ok   = by_type.any? { |k, n| n > 0 && k =~ /IPAD_(PRO_3GEN_)?13|IPAD_PRO_129/ }
+          puts "IPHONE LARGE SET: #{iphone_ok ? 'OK' : 'MISSING (need iPhone 6.9"/Dynamic Island screenshots)'}"
+          puts "IPAD 13 SET: #{ipad_ok ? 'OK' : 'MISSING (need iPad Pro 13\" screenshots)'}"
+
+          # ---- pricing ----
+          schedules = client.get("apps/#{app.id}/appPriceSchedules")["data"] rescue []
+          puts "PRICE SCHEDULES: #{schedules.size} #{schedules.empty? ? '(pricing not set — ASC will reject the submission)' : ''}"
+
+          ready = iphone_ok && ipad_ok && !schedules.empty?
+          File.open(ENV["GITHUB_OUTPUT"], "a") do |f|
+            f.puts "ready=#{ready}"
+            f.puts "version_id=#{vid}"
+          end
+          if ready
+            puts "::notice::All API-checkable requirements present — submitting for review."
+          else
+            puts "::warning::NOT submitting — add the missing screenshots / pricing in App Store Connect, then re-run."
+          end
+          RB
+          ruby asc_finisher.rb
+
+      - name: Submit for App Store review
+        if: steps.check.outputs.ready == 'true'
+        env:
+          ASC_KEY_PATH: ${{ runner.temp }}/asc-api-key.json
+        run: |
+          fastlane deliver \
+            --api_key_path "$ASC_KEY_PATH" \
+            --app_identifier com.metricorex.app \
+            --platform ios \
+            --skip_binary_upload \
+            --skip_metadata \
+            --skip_screenshots \
+            --run_precheck_before_submit false \
+            --submission_information '{"add_id_info_uses_idfa": false}' \
+            --automatic_release \
+            --force \
+            --submit_for_review
+
+      - name: Cleanup API key file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/asc-api-key.json" asc_finisher.rb
