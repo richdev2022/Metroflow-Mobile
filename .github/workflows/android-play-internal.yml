@@ -126,7 +126,7 @@ jobs:
 
       - name: Prepare Play release notes
         env:
-          NOTES: ${{ github.event.inputs.release_notes || 'Metricorex 1.0 — first production release: cross-platform meetings, calls, chat, wallet transfers and task collaboration.' }}
+          NOTES: "${{ github.event.inputs.release_notes || 'Metricorex 1.0 — first production release: cross-platform meetings, calls, chat, wallet transfers and task collaboration.' }}"
         run: |
           mkdir -p fastlane/metadata/android/en-US/changelogs
           # Changelog filename MUST equal the versionCode (fastlane matches it).
