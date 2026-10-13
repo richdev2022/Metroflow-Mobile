@@ -134,7 +134,7 @@ jobs:
 
           # ---- editable version ----
           vers = call("GET", f"apps/{APP_ID}/appStoreVersions",
-                      filter={"appVersionState": "PREPARE_FOR_SUBMISSION"}).get("data", [])
+                      **{"filter[appVersionState]": "PREPARE_FOR_SUBMISSION"}).get("data", [])
           if not vers:
               vers = call("GET", f"apps/{APP_ID}/appStoreVersions", limit=5).get("data", [])
           assert vers, "No editable App Store version found"
@@ -144,7 +144,7 @@ jobs:
 
           # ---- App Review Information (the credential fix) ----
           try:
-              details = call("GET", "appStoreReviewDetails", filter={"app": APP_ID}).get("data", [])
+              details = call("GET", "appStoreReviewDetails", **{"filter[app]": APP_ID}).get("data", [])
               detail = details[0] if details else call("POST", "appStoreReviewDetails", {
                   "data": {"type": "appStoreReviewDetails", "attributes": {},
                            "relationships": {"app": {"data": {"type": "apps", "id": APP_ID}}}}})
