@@ -1,0 +1,110 @@
+name: iOS ASC Debug Dump
+
+# Read-only diagnostic dump of the Metricorex App Store Connect state:
+# app record, editable App Store version, localizations (description /
+# keywords / URLs), attached build, app info (privacy policy). Used to find
+# exactly what blocks "submit for review".
+#
+# Fires on any push that touches fastlane/asc_debug/** (commit a marker file
+# there to run it). Read-only — never mutates anything.
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+    paths:
+      - 'fastlane/asc_debug/**'
+
+permissions:
+  contents: read
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      ASC_KEY_P8_B64: ${{ secrets.APP_STORE_CONNECT_KEY_P8 }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+
+      - name: Install fastlane (spaceship)
+        run: gem install fastlane --no-document
+
+      - name: Write API key file
+        run: |
+          python3 - <<'PY'
+          import base64, json, os
+          raw = os.environ["ASC_KEY_P8_B64"]
+          try:
+              pem = base64.b64decode(raw, validate=True).decode()
+          except Exception:
+              pem = raw
+          key = {"key_id": os.environ["ASC_KEY_ID"], "issuer_id": os.environ["ASC_ISSUER_ID"], "key": pem, "in_house": False}
+          with open(os.path.join(os.environ["RUNNER_TEMP"], "asc-api-key.json"), "w") as f:
+              json.dump(key, f)
+          print("key file written")
+          PY
+
+      - name: Dump App Store Connect state (read-only)
+        env:
+          ASC_KEY_FILE: ${{ runner.temp }}/asc-api-key.json
+        run: |
+          cat > "$RUNNER_TEMP/dump.rb" <<'RUBY'
+          require 'spaceship'
+
+          token = Spaceship::ConnectAPI::Token.from_json_file(ENV['ASC_KEY_FILE'])
+          Spaceship::ConnectAPI.token = token
+
+          app = Spaceship::ConnectAPI::App.find('com.metricorex.app')
+          if app.nil?
+            puts 'APP NOT FOUND on App Store Connect'
+            exit 0
+          end
+          puts "=== APP ==="
+          puts "id=#{app.id} name=#{app.name} bundleId=#{app.bundle_id} primaryLocale=#{app.primary_locale}"
+
+          puts "=== APP INFO (privacy etc.) ==="
+          app.fetch_app_infos.each do |info|
+            puts "appInfo id=#{info.id} state=#{info.state}"
+            info.get_app_info_localizations.each do |l|
+              attrs = l.attributes
+              puts "  locale=#{attrs['locale']} name=#{attrs['name'].inspect} privacyPolicyUrl=#{attrs['privacyPolicyUrl'].inspect} privacyChoicesRequired=#{attrs['privacyChoicesRequired'].inspect} subtitle=#{attrs['subtitle'].inspect}"
+            end
+          end
+
+          puts "=== VERSIONS ==="
+          Spaceship::ConnectAPI.get_app_store_versions(app_id: app.id, limit: 5).each do |v|
+            a = v.attributes
+            puts "version id=#{v.id} versionString=#{a['versionString']} state=#{a['appVersionState']} releaseType=#{a['releaseType']} downloadable=#{a['isDownloadable']}"
+            v.get_app_store_version_localizations.each do |l|
+              la = l.attributes
+              puts "  loc locale=#{la['locale']} whatsNew=#{(la['whatsNew'] || '')[0,60].inspect} description=#{(la['description'] || '')[0,60].inspect} keywords=#{la['keywords'].inspect} supportUrl=#{la['supportUrl'].inspect} marketingUrl=#{la['marketingUrl'].inspect} promoText=#{la['promotionalText'].inspect}"
+            end
+            builds = v.get_builds(limit: 5)
+            if builds.empty?
+              puts '  BUILD ATTACHED: NONE'
+            else
+              builds.each { |b| puts "  BUILD attached id=#{b.id} version=#{b.attributes['version']} state=#{b.attributes['processingState']} OS=#{b.attributes['os']} uploaded=#{b.attributes['uploadedDate']}" }
+            end
+          end
+
+          puts "=== ALL PROCESSED BUILDS (latest 8) ==="
+          Spaceship::ConnectAPI.get_builds(filter: { app: app.id }, limit: 8, sort: '-uploadedDate').each do |b|
+            a = b.attributes
+            puts "build id=#{b.id} v#{a['version']} state=#{a['processingState']} uploaded=#{a['uploadedDate']}"
+          end
+          RUBY
+          ruby "$RUNNER_TEMP/dump.rb"
+
+      - name: Cleanup API key file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/asc-api-key.json"
