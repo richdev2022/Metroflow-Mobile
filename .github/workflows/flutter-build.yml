@@ -12,6 +12,15 @@ on:
         required: false
         default: 'internal'
 
+# Serialize ALL Play uploads (with store-production-release.yml) —
+# concurrent builds of the same commit computed the same epoch-seconds
+# versionCode and raced for it ("Version code X has already been used").
+# With this group, uploads are strictly sequential, so each build computes
+# its versionCode minutes after the previous upload finished.
+concurrency:
+  group: play-publish
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest

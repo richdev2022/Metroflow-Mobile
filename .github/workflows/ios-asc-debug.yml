@@ -64,6 +64,13 @@ jobs:
           token = Spaceship::ConnectAPI::Token.from_json_file(ENV['ASC_KEY_FILE'])
           Spaceship::ConnectAPI.token = token
 
+          def section(name)
+            puts "=== #{name} ==="
+            yield
+          rescue StandardError => e
+            puts "[#{name} ERROR] #{e.class}: #{e.message[0, 200]}"
+          end
+
           app = Spaceship::ConnectAPI::App.find('com.metricorex.app')
           if app.nil?
             puts 'APP NOT FOUND on App Store Connect'
@@ -72,35 +79,46 @@ jobs:
           puts "=== APP ==="
           puts "id=#{app.id} name=#{app.name} bundleId=#{app.bundle_id} primaryLocale=#{app.primary_locale}"
 
-          puts "=== APP INFO (privacy etc.) ==="
-          app.fetch_app_infos.each do |info|
-            puts "appInfo id=#{info.id} state=#{info.state}"
-            info.get_app_info_localizations.each do |l|
-              attrs = l.attributes
-              puts "  locale=#{attrs['locale']} name=#{attrs['name'].inspect} privacyPolicyUrl=#{attrs['privacyPolicyUrl'].inspect} privacyChoicesRequired=#{attrs['privacyChoicesRequired'].inspect} subtitle=#{attrs['subtitle'].inspect}"
+          section('APP INFO (privacy etc.)') do
+            Spaceship::ConnectAPI.get_app_infos(app_id: app.id).each do |info|
+              puts "appInfo id=#{info.id} state=#{info.state}"
+              Spaceship::ConnectAPI.get_app_info_localizations(app_info_id: info.id).each do |l|
+                a = l.attributes
+                puts "  locale=#{a['locale']} name=#{a['name'].inspect} privacyPolicyUrl=#{a['privacyPolicyUrl'].inspect} privacyChoicesRequired=#{a['privacyChoicesRequired'].inspect} subtitle=#{a['subtitle'].inspect}"
+              end
             end
           end
 
-          puts "=== VERSIONS ==="
-          Spaceship::ConnectAPI.get_app_store_versions(app_id: app.id, limit: 5).each do |v|
-            a = v.attributes
-            puts "version id=#{v.id} versionString=#{a['versionString']} state=#{a['appVersionState']} releaseType=#{a['releaseType']} downloadable=#{a['isDownloadable']}"
-            v.get_app_store_version_localizations.each do |l|
-              la = l.attributes
-              puts "  loc locale=#{la['locale']} whatsNew=#{(la['whatsNew'] || '')[0,60].inspect} description=#{(la['description'] || '')[0,60].inspect} keywords=#{la['keywords'].inspect} supportUrl=#{la['supportUrl'].inspect} marketingUrl=#{la['marketingUrl'].inspect} promoText=#{la['promotionalText'].inspect}"
-            end
-            builds = v.get_builds(limit: 5)
-            if builds.empty?
-              puts '  BUILD ATTACHED: NONE'
-            else
-              builds.each { |b| puts "  BUILD attached id=#{b.id} version=#{b.attributes['version']} state=#{b.attributes['processingState']} OS=#{b.attributes['os']} uploaded=#{b.attributes['uploadedDate']}" }
+          section('VERSIONS') do
+            Spaceship::ConnectAPI.get_app_store_versions(app_id: app.id, limit: 5).each do |v|
+              a = v.attributes
+              puts "version id=#{v.id} versionString=#{a['versionString']} state=#{a['appVersionState']} releaseType=#{a['releaseType']} downloadable=#{a['isDownloadable']}"
+              begin
+                Spaceship::ConnectAPI.get_app_store_version_localizations(app_store_version_id: v.id).each do |l|
+                  la = l.attributes
+                  puts "  loc locale=#{la['locale']} whatsNew=#{(la['whatsNew'] || '')[0,60].inspect} description=#{(la['description'] || '')[0,60].inspect} keywords=#{la['keywords'].inspect} supportUrl=#{la['supportUrl'].inspect} marketingUrl=#{la['marketingUrl'].inspect} promoText=#{la['promotionalText'].inspect}"
+                end
+              rescue StandardError => e
+                puts "  [loc ERROR] #{e.message[0, 150]}"
+              end
+              begin
+                builds = Spaceship::ConnectAPI.get_builds(filter: { app: app.id, appStoreVersion: v.id }, limit: 5)
+                if builds.empty?
+                  puts '  BUILD ATTACHED: NONE'
+                else
+                  builds.each { |b| puts "  BUILD attached id=#{b.id} v#{b.attributes['version']} state=#{b.attributes['processingState']} uploaded=#{b.attributes['uploadedDate']}" }
+                end
+              rescue StandardError => e
+                puts "  [builds ERROR] #{e.message[0, 150]}"
+              end
             end
           end
 
-          puts "=== ALL PROCESSED BUILDS (latest 8) ==="
-          Spaceship::ConnectAPI.get_builds(filter: { app: app.id }, limit: 8, sort: '-uploadedDate').each do |b|
-            a = b.attributes
-            puts "build id=#{b.id} v#{a['version']} state=#{a['processingState']} uploaded=#{a['uploadedDate']}"
+          section('ALL BUILDS (latest 8)') do
+            Spaceship::ConnectAPI.get_builds(filter: { app: app.id }, limit: 8, sort: '-uploadedDate').each do |b|
+              a = b.attributes
+              puts "build id=#{b.id} v#{a['version']} state=#{a['processingState']} uploaded=#{a['uploadedDate']}"
+            end
           end
           RUBY
           ruby "$RUNNER_TEMP/dump.rb"
