@@ -144,13 +144,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      # spaceship/fastlane native env-var auth — no fastlane session or
-      # Apple-ID password involved (same secrets the TestFlight workflow
-      # already uses successfully).
-      APP_STORE_CONNECT_API_KEY_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
-      APP_STORE_CONNECT_API_KEY_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-      APP_STORE_CONNECT_API_KEY_KEY: ${{ secrets.APP_STORE_CONNECT_KEY_P8 }}
-      APP_STORE_CONNECT_API_KEY_IS_KEY_CONTENT_BASE64: true
+      # Same secrets the TestFlight workflow already uses successfully.
+      # deliver 2.241.0 does NOT honor the APP_STORE_CONNECT_API_KEY_* env
+      # vars in its option validation (it errors "No value found for
+      # 'username'"), so the key is written to a JSON file and passed via
+      # --api_key_path below.
+      ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      ASC_KEY_P8_B64: ${{ secrets.APP_STORE_CONNECT_KEY_P8 }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -166,13 +167,39 @@ jobs:
       - name: Validate App Store Connect secrets
         run: |
           missing=0
-          for v in APP_STORE_CONNECT_API_KEY_KEY_ID APP_STORE_CONNECT_API_KEY_ISSUER_ID APP_STORE_CONNECT_API_KEY_KEY; do
+          for v in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8_B64; do
             if [ -z "${!v}" ]; then
               echo "::error::GitHub secret backing $v is not set — App Store submission cannot proceed."
               missing=1
             fi
           done
           exit $missing
+
+      # Build the fastlane API-key JSON (key_id + issuer_id + PEM .p8 body).
+      # The secret is the base64-encoded .p8 (see docs/TESTFLIGHT_SETUP.md);
+      # fall back to treating it as raw PEM if it does not decode.
+      - name: Write App Store Connect API key file
+        run: |
+          python3 - <<'PY'
+          import base64, json, os
+          raw = os.environ["ASC_KEY_P8_B64"]
+          try:
+              pem = base64.b64decode(raw, validate=True).decode()
+          except Exception:
+              pem = raw
+          if "BEGIN PRIVATE KEY" not in pem and "BEGIN RSA PRIVATE KEY" not in pem:
+              raise SystemExit("ASC_KEY_P8_B64 does not contain a PEM private key")
+          key = {
+              "key_id": os.environ["ASC_KEY_ID"],
+              "issuer_id": os.environ["ASC_ISSUER_ID"],
+              "key": pem,
+              "in_house": False,
+          }
+          path = os.path.join(os.environ["RUNNER_TEMP"], "asc-api-key.json")
+          with open(path, "w") as f:
+              json.dump(key, f)
+          print("ASC API key file written")
+          PY
 
       # deliver: no binary upload (the TestFlight build is already
       # processed), no metadata or screenshot upload (the App Store Connect
@@ -184,6 +211,7 @@ jobs:
       - name: Submit latest TestFlight build for App Store review
         run: |
           fastlane deliver \
+            --api_key_path "$RUNNER_TEMP/asc-api-key.json" \
             --app_identifier com.metricorex.app \
             --platform ios \
             --skip_binary_upload \
@@ -194,3 +222,7 @@ jobs:
             --automatic_release \
             --force \
             --submit_for_review
+
+      - name: Cleanup API key file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/asc-api-key.json"
