@@ -132,6 +132,13 @@ jobs:
           DEMO_USER = os.environ["DEMO_USER"]
           DEMO_PASSWORD = os.environ["DEMO_PASSWORD"]
 
+          def rel_names(path):
+              try:
+                  doc = call("GET", path)
+                  return list((doc.get("data", {}).get("relationships") or {}).keys())
+              except Exception:
+                  return []
+
           # ---- editable version ----
           vers = call("GET", f"apps/{APP_ID}/appStoreVersions",
                       **{"filter[appVersionState]": "PREPARE_FOR_SUBMISSION"}).get("data", [])
@@ -157,10 +164,14 @@ jobs:
               else:
                   print("REVIEW DETAIL: found", detail["id"])
               did = detail["id"]
-              locs = call("GET", f"appStoreReviewDetails/{did}/appStoreReviewDetailLocalizations").get("data", [])
+              rd_rels = rel_names(f"appStoreReviewDetails/{did}")
+              print("REVIEW DETAIL RELATIONSHIPS:", rd_rels)
+              locs_rel = next((r for r in rd_rels if "ocalization" in r), None)
+              assert locs_rel, f"No localizations relationship on review detail: {rd_rels}"
+              locs = call("GET", f"appStoreReviewDetails/{did}/{locs_rel}").get("data", [])
               loc = next((l for l in locs if l["attributes"].get("locale") == "en-US"), None)
               if not loc:
-                  loc = call("POST", f"appStoreReviewDetails/{did}/appStoreReviewDetailLocalizations",
+                  loc = call("POST", f"appStoreReviewDetails/{did}/{locs_rel}",
                              {"data": {"type": "appStoreReviewDetailLocalizations", "attributes": {"locale": "en-US"}}})
                   print("REVIEW DETAIL LOC: created en-US")
               existing = loc["attributes"] or {}
@@ -204,17 +215,16 @@ jobs:
                   sets = call("GET", f"appStoreVersionLocalizations/{en_id}/{shots_rel}", limit=200).get("data", [])
                   for st in sets:
                       dt = st["attributes"].get("screenshotDisplayType") or "UNKNOWN"
-                      sub_rel = None
-                      try:
-                          st_doc = call("GET", f"appStoreVersionScreenshotSets/{st['id']}")
-                          sub_rel = next((r for r in (st_doc.get("data", {}).get("relationships") or {}).keys() if "creenshot" in r), None)
-                      except Exception:
-                          pass
-                      sub_rel = sub_rel or "appStoreVersionScreenshots"
-                      try:
-                          n = len(call("GET", f"appStoreVersionScreenshotSets/{st['id']}/{sub_rel}", limit=200).get("data", []))
-                      except Exception:
-                          n = 0
+                      st_type = st["type"]
+                      st_id = st["id"]
+                      st_rels = rel_names(f"{st_type}/{st_id}")
+                      sub_rel = next((r for r in st_rels if "creenshot" in r), None)
+                      n = 0
+                      if sub_rel:
+                          try:
+                              n = len(call("GET", f"{st_type}/{st_id}/{sub_rel}", limit=200).get("data", []))
+                          except Exception:
+                              n = 0
                       if n:
                           by_type[dt] = by_type.get(dt, 0) + n
               print("SCREENSHOTS (en-US):", json.dumps(by_type, indent=2))
