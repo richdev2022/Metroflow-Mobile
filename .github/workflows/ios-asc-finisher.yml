@@ -247,11 +247,18 @@ jobs:
           # ---- age rating questionnaire (all declarations must be answered) ----
           age_ok = False
           try:
-              vrels = rel_names(f"appStoreVersions/{vid}")
-              age_rel = next((r for r in vrels if "ating" in r.lower()), None)
-              print("AGE RATING RELATIONSHIP:", age_rel, "(version rels:", vrels, ")")
+              age_rel = None
+              age_base = None
+              app_info_id = call("GET", f"apps/{APP_ID}/appInfos").get("data", [{}])[0].get("id")
+              for base in [f"appStoreVersions/{vid}", f"appInfos/{app_info_id}", f"apps/{APP_ID}"]:
+                  rels = rel_names(base)
+                  cand = next((r for r in rels if "ating" in r.lower()), None)
+                  if cand:
+                      age_rel, age_base = cand, base
+                      print("AGE RATING: found", cand, "on", base)
+                      break
               if age_rel:
-                  decl = call("GET", f"appStoreVersions/{vid}/{age_rel}").get("data")
+                  decl = call("GET", f"{age_base}/{age_rel}").get("data")
                   if decl:
                       answers = {
                           "unrestrictedWebAccess": "NO",
