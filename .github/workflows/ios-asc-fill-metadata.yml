@@ -6,11 +6,25 @@ name: iOS ASC Metadata Fill
 # METADATA block below and adjust copy as needed — everything remains
 # editable in App Store Connect afterwards.
 #
+# ALSO (idempotent):
+#   - sets app pricing to the FREE tier 0 (submission blocker: "App is
+#     missing required pricing")
+#   - creates/updates the App Store Review Detail (contact + demo account +
+#     review notes — blocker: "appStoreReviewDetail ... was not found")
+#
 # NOT touched by design (need human input):
 #   - screenshots (required for review — upload in ASC UI)
 #   - App Privacy nutrition label questionnaire (legal declarations)
 #
-# Fires on any push touching fastlane/asc_debug/** (marker-file trigger).
+# Fires on any push touching fastlane/asc_debug/** or this workflow file.
+#
+# SUBMISSION: when the pushed commit message contains the marker
+#   [submit-appstore]
+# the job additionally runs the same fastlane deliver submission used by
+# store-production-release.yml (skip binary/metadata/screenshots — TestFlight
+# build is already processed and attached). This gives a push-based way to
+# submit for review without pushing a store-release-* tag (which would also
+# rebuild and republish the Android bundle).
 
 on:
   push:
@@ -19,6 +33,7 @@ on:
       - main
     paths:
       - 'fastlane/asc_debug/**'
+      - '.github/workflows/ios-asc-fill-metadata.yml'
 
 permissions:
   contents: read
@@ -189,8 +204,129 @@ jobs:
                   print("   ", sshot["id"], sa.get("snapshotDisplayType"), sa.get("fileName"), sa.get("assetDeliveryState"))
           except Exception as e:
               print("[screenshots read ERROR]", e)
+
+          # --- pricing: FREE tier 0 (submission blocker #1) ---------------------
+          # Skip when a price schedule already exists. Try the priceTier
+          # relationship first, then fall back to a manual USA price point.
+          tier0 = None
+          try:
+              scheds = call("GET", f"apps/{APP_ID}/appPriceSchedules").get("data", [])
+              if scheds:
+                  print(f"PRICING already set: {len(scheds)} schedule(s) — leaving untouched")
+              else:
+                  tiers = call("GET", "appPriceTiers", **{"limit": 200}).get("data", [])
+                  tier0 = next((t for t in tiers if t["attributes"].get("tierNumber") == 0), None)
+                  if not tier0:
+                      raise SystemExit("FREE tier 0 not found in appPriceTiers")
+                  print("tier 0 id:", tier0["id"])
+                  body = {"data": {"type": "appPriceSchedules", "relationships": {
+                      "app": {"data": {"type": "apps", "id": APP_ID}},
+                      "priceTier": {"data": {"type": "appPriceTiers", "id": tier0["id"]}}}}}
+                  call("POST", "appPriceSchedules", body)
+                  print("PRICING SET: free (tier 0) via priceTier relationship")
+          except SystemExit:
+              raise
+          except Exception as e:
+              print("[pricing priceTier ERROR]", str(e)[:600])
+              try:
+                  if not tier0:
+                      tiers = call("GET", "appPriceTiers", **{"limit": 200}).get("data", [])
+                      tier0 = next((t for t in tiers if t["attributes"].get("tierNumber") == 0), None)
+                  points = call("GET", "appPricePoints", **{"filter[appPriceTiers]": tier0["id"], "filter[countries]": "USA", "limit": 50}).get("data", [])
+                  point = points[0]["id"] if points else None
+                  if not point:
+                      raise SystemExit("no USA price point for tier 0")
+                  body = {"data": {"type": "appPriceSchedules", "relationships": {
+                      "app": {"data": {"type": "apps", "id": APP_ID}},
+                      "manualPrices": {"data": [{"type": "appPrices", "attributes": {"startDate": None},
+                          "relationships": {"appPricePoint": {"data": {"type": "appPricePoints", "id": point}}}}]}}}}
+                  call("POST", "appPriceSchedules", body)
+                  print("PRICING SET: free (tier 0) via manual USA price point")
+              except Exception as e2:
+                  print("[pricing manual ERROR]", str(e2)[:600])
+                  print("PRICING: could not set automatically — set Free in ASC UI (Pricing and Availability)")
+
+          # --- App Store Review Detail (submission blocker #2) ------------------
+          # Contact person shown to Apple + demo account they can log into +
+          # review notes. Idempotent: creates once, then keeps it refreshed.
+          REVIEW_CONTACT = {
+              "contactFirstName": "Sunday",
+              "contactLastName": "Metricorex",
+              "contactEmail": "sunday@metricorex.com",
+              "contactPhone": "+2348163349199",
+              "demoAccountName": "sunday@metricorex.com",
+              "demoAccountPassword": "Password@123",
+              "demoAccountRequired": True,
+              "notes": (
+                  "Metricorex is a business collaboration platform (business banking, "
+                  "messaging, meetings, calls). Sign in with the demo account above. "
+                  "A company workspace is pre-provisioned; the Sign Up flow creates a "
+                  "new company. Features to review: Wallet dashboard and transfers, "
+                  "team chat (with the MetricAi assistant), scheduled and instant "
+                  "meetings/calls (allow microphone and camera permissions), payroll "
+                  "and KYC upgrade screens. Calls between two accounts ring natively. "
+                  "No payment is required to use the app; wallet funding uses the "
+                  "Flutterwave test/sandbox gateway and is optional."
+              ),
+          }
+          try:
+              details = call("GET", f"apps/{APP_ID}/appStoreReviewDetails").get("data", [])
+              body_attrs = dict(REVIEW_CONTACT)
+              if details:
+                  did = details[0]["id"]
+                  call("PATCH", f"appStoreReviewDetails/{did}", {"data": {"type": "appStoreReviewDetails", "id": did, "attributes": body_attrs}})
+                  print("APP STORE REVIEW DETAIL: patched existing", did)
+              else:
+                  body = {"data": {"type": "appStoreReviewDetails", "attributes": body_attrs,
+                          "relationships": {"app": {"data": {"type": "apps", "id": APP_ID}}}}}
+                  call("POST", "appStoreReviewDetails", body)
+                  print("APP STORE REVIEW DETAIL: created")
+          except Exception as e:
+              print("[review detail ERROR]", str(e)[:600])
           PY
           python3 "$RUNNER_TEMP/fill.py"
+
+      - name: Check submission flag
+        id: submitflag
+        run: |
+          MSG=$(git log -1 --pretty=%B)
+          echo "commit message: $MSG"
+          if echo "$MSG" | grep -q '\[submit-appstore\]'; then
+            echo "submit=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "submit=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Ruby + fastlane (submission)
+        if: steps.submitflag.outputs.submit == 'true'
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+
+      - name: Install fastlane (submission)
+        if: steps.submitflag.outputs.submit == 'true'
+        run: gem install fastlane --no-document
+
+      # Same deliver invocation as store-production-release.yml: no binary
+      # upload (TestFlight build already processed + attached), no metadata
+      # or screenshot upload, IDFA declared as NOT used.
+      - name: Submit latest TestFlight build for App Store review
+        if: steps.submitflag.outputs.submit == 'true'
+        env:
+          ASC_KEY_FILE: ${{ runner.temp }}/asc-api-key.json
+        run: |
+          fastlane deliver \
+            --api_key_path "$ASC_KEY_FILE" \
+            --app_identifier com.metricorex.app \
+            --platform ios \
+            --skip_binary_upload \
+            --skip_metadata \
+            --skip_screenshots \
+            --run_precheck_before_submit false \
+            --submission_information '{"add_id_info_uses_idfa": false}' \
+            --automatic_release \
+            --force \
+            --submit_for_review
 
       - name: Cleanup API key file
         if: always()
