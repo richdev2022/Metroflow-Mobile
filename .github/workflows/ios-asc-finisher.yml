@@ -167,19 +167,23 @@ jobs:
               ddoc = call("GET", f"appStoreReviewDetails/{did}")
               existing = ddoc.get("data", {}).get("attributes") or {}
               print("REVIEW DETAIL ATTRS:", {k: ("***" if "assword" in k else v) for k, v in existing.items()})
-              patch = {
-                  "demoUser": DEMO_USER,
-                  "demoPassword": DEMO_PASSWORD,
-                  "demoRequired": True,
-                  "notes": "Sign in with the provided demo account (a regular user account) to explore the app. No payment method is required to review Metricorex.",
-              }
-              if not (existing.get("contactFirstName") or "").strip(): patch["contactFirstName"] = "Metricorex"
-              if not (existing.get("contactLastName") or "").strip(): patch["contactLastName"] = "Support"
-              if not (existing.get("contactEmail") or "").strip(): patch["contactEmail"] = DEMO_USER
-              if not (existing.get("contactPhone") or "").strip(): patch["contactPhone"] = "+234 800 000 0000"
-              call("PATCH", f"appStoreReviewDetails/{did}", {
-                  "data": {"type": "appStoreReviewDetails", "id": did, "attributes": patch}})
-              print(f"REVIEW INFO: demo user set to {DEMO_USER} (admin credentials replaced)")
+              if existing.get("demoAccountName") == DEMO_USER:
+                  print("REVIEW INFO: demo account already set to the USER account (metricorexlimited@gmail.com) — no change needed")
+              else:
+                  patch = {
+                      "demoAccountName": DEMO_USER,
+                      "demoAccountPassword": DEMO_PASSWORD,
+                      "demoAccountRequired": True,
+                  }
+                  if not (existing.get("notes") or "").strip():
+                      patch["notes"] = "Sign in with the provided demo account (a regular user account) to explore the app. No payment method is required to review Metricorex."
+                  if not (existing.get("contactFirstName") or "").strip(): patch["contactFirstName"] = "Metricorex"
+                  if not (existing.get("contactLastName") or "").strip(): patch["contactLastName"] = "Support"
+                  if not (existing.get("contactEmail") or "").strip(): patch["contactEmail"] = DEMO_USER
+                  if not (existing.get("contactPhone") or "").strip(): patch["contactPhone"] = "+234 800 000 0000"
+                  call("PATCH", f"appStoreReviewDetails/{did}", {
+                      "data": {"type": "appStoreReviewDetails", "id": did, "attributes": patch}})
+                  print(f"REVIEW INFO: demo account set to {DEMO_USER} (admin credentials replaced)")
           except Exception as e:
               print("::error::Review-info update failed:", e)
 
@@ -223,6 +227,64 @@ jobs:
               ipad_ok = any(n > 0 and ("IPAD_13" in dt or "IPAD_PRO_3GEN_13" in dt or "IPAD_PRO_129" in dt) for dt, n in by_type.items())
               print("IPHONE LARGE SET:", "OK" if iphone_ok else "MISSING (iPhone 6.9\"/Dynamic Island screenshots required)")
               print("IPAD 13 SET:", "OK" if ipad_ok else "MISSING (iPad Pro 13\" screenshots required)")
+
+              # ---- auto-fix: clone the existing 12.9" iPad screenshots into the 13" set ----
+              if not ipad_ok and by_type.get("APP_IPAD_PRO_3GEN_129", 0) > 0:
+                  try:
+                      import hashlib
+                      sets2 = call("GET", f"appStoreVersionLocalizations/{en_id}/{shots_rel}", limit=200).get("data", [])
+                      set_129 = next((st for st in sets2 if st["attributes"].get("screenshotDisplayType") == "APP_IPAD_PRO_3GEN_129"), None)
+                      set_13 = next((st for st in sets2 if st["attributes"].get("screenshotDisplayType") == "APP_IPAD_PRO_3GEN_13"), None)
+                      if not set_13:
+                          set_13 = call("POST", "appScreenshotSets", {"data": {
+                              "type": "appScreenshotSets",
+                              "attributes": {"screenshotDisplayType": "APP_IPAD_PRO_3GEN_13"},
+                              "relationships": {"appStoreVersionLocalization": {"data": {"type": "appStoreVersionLocalizations", "id": en_id}}},
+                          }})["data"]
+                          print("CREATED iPad 13\" SET:", set_13["id"])
+                      s129_rels = rel_names(f"{set_129['type']}/{set_129['id']}")
+                      s129_sub = next((r for r in s129_rels if "creenshot" in r), None)
+                      src_shots = call("GET", f"{set_129['type']}/{set_129['id']}/{s129_sub}", limit=50).get("data", [])
+                      for sh in src_shots:
+                          attrs = sh["attributes"]
+                          dl = (attrs.get("assetDeliveryState") or {}).get("downloadUrl")
+                          fname = attrs.get("fileName") or "ipad13.png"
+                          if not dl:
+                              print("SKIP (no downloadUrl):", fname)
+                              continue
+                          img = urllib.request.urlopen(dl, timeout=120).read()
+                          created = call("POST", "appScreenshots", {"data": {
+                              "type": "appScreenshots",
+                              "attributes": {"fileName": fname, "fileSize": len(img)},
+                              "relationships": {"appScreenshotSet": {"data": {"type": "appScreenshotSets", "id": set_13["id"]}}},
+                          }})["data"]
+                          ops = (created.get("attributes") or {}).get("uploadOperations") or []
+                          for op in ops:
+                              body = img[op.get("offset", 0): op.get("offset", 0) + op.get("length", len(img))]
+                              req = urllib.request.Request(op["url"], data=body, method=op.get("method", "PUT"))
+                              for h, v in (op.get("requestHeaders") or {}).items():
+                                  req.add_header(h, v)
+                              urllib.request.urlopen(req, timeout=180)
+                          md5b64 = base64.b64encode(hashlib.md5(img).digest()).decode()
+                          call("PATCH", f"appScreenshots/{created['id']}", {"data": {
+                              "type": "appScreenshots", "id": created["id"],
+                              "attributes": {"uploaded": True, "sourceFileChecksum": md5b64}}})
+                          print("COPIED 12.9\" -> 13\":", fname, f"({len(img)} bytes)")
+                      # recount
+                      sets3 = call("GET", f"appStoreVersionLocalizations/{en_id}/{shots_rel}", limit=200).get("data", [])
+                      for st in sets3:
+                          dt = st["attributes"].get("screenshotDisplayType") or "UNKNOWN"
+                          if dt == "APP_IPAD_PRO_3GEN_13":
+                              st_rels2 = rel_names(f"{st['type']}/{st['id']}")
+                              sub2 = next((r for r in st_rels2 if "creenshot" in r), None)
+                              if sub2:
+                                  n13 = len(call("GET", f"{st['type']}/{st['id']}/{sub2}", limit=200).get("data", []))
+                                  if n13 > 0:
+                                      by_type[dt] = n13
+                                      ipad_ok = True
+                                      print("IPAD 13 SET NOW:", n13, "screenshot(s) — OK")
+                  except Exception as e:
+                      print("[CLONE ERROR]", e)
           except Exception as e:
               print("[SCREENSHOT ERROR]", e)
 
