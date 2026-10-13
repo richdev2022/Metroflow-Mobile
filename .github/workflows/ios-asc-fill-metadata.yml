@@ -197,94 +197,22 @@ jobs:
 
           # --- report screenshots state (do NOT touch) -------------------------
           try:
-              shots = call("GET", f"appStoreVersionLocalizations/{loc_id}/appScreenshots").get("data", [])
+              shots = call("GET", f"appStoreVersionLocalizations/{loc_id}/appStoreVersionScreenshots").get("data", [])
               print(f"SCREENSHOTS present: {len(shots)}")
-              for sshot in shots:
-                  sa = sshot["attributes"]
-                  print("   ", sshot["id"], sa.get("snapshotDisplayType"), sa.get("fileName"), sa.get("assetDeliveryState"))
           except Exception as e:
-              print("[screenshots read ERROR]", e)
-
-          # --- pricing: FREE tier 0 (submission blocker #1) ---------------------
-          # Skip when a price schedule already exists. Try the priceTier
-          # relationship first, then fall back to a manual USA price point.
-          tier0 = None
-          try:
-              scheds = call("GET", f"apps/{APP_ID}/appPriceSchedules").get("data", [])
-              if scheds:
-                  print(f"PRICING already set: {len(scheds)} schedule(s) — leaving untouched")
-              else:
-                  tiers = call("GET", "appPriceTiers", **{"limit": 200}).get("data", [])
-                  tier0 = next((t for t in tiers if t["attributes"].get("tierNumber") == 0), None)
-                  if not tier0:
-                      raise SystemExit("FREE tier 0 not found in appPriceTiers")
-                  print("tier 0 id:", tier0["id"])
-                  body = {"data": {"type": "appPriceSchedules", "relationships": {
-                      "app": {"data": {"type": "apps", "id": APP_ID}},
-                      "priceTier": {"data": {"type": "appPriceTiers", "id": tier0["id"]}}}}}
-                  call("POST", "appPriceSchedules", body)
-                  print("PRICING SET: free (tier 0) via priceTier relationship")
-          except SystemExit:
-              raise
-          except Exception as e:
-              print("[pricing priceTier ERROR]", str(e)[:600])
-              try:
-                  if not tier0:
-                      tiers = call("GET", "appPriceTiers", **{"limit": 200}).get("data", [])
-                      tier0 = next((t for t in tiers if t["attributes"].get("tierNumber") == 0), None)
-                  points = call("GET", "appPricePoints", **{"filter[appPriceTiers]": tier0["id"], "filter[countries]": "USA", "limit": 50}).get("data", [])
-                  point = points[0]["id"] if points else None
-                  if not point:
-                      raise SystemExit("no USA price point for tier 0")
-                  body = {"data": {"type": "appPriceSchedules", "relationships": {
-                      "app": {"data": {"type": "apps", "id": APP_ID}},
-                      "manualPrices": {"data": [{"type": "appPrices", "attributes": {"startDate": None},
-                          "relationships": {"appPricePoint": {"data": {"type": "appPricePoints", "id": point}}}}]}}}}
-                  call("POST", "appPriceSchedules", body)
-                  print("PRICING SET: free (tier 0) via manual USA price point")
-              except Exception as e2:
-                  print("[pricing manual ERROR]", str(e2)[:600])
-                  print("PRICING: could not set automatically — set Free in ASC UI (Pricing and Availability)")
-
-          # --- App Store Review Detail (submission blocker #2) ------------------
-          # Contact person shown to Apple + demo account they can log into +
-          # review notes. Idempotent: creates once, then keeps it refreshed.
-          REVIEW_CONTACT = {
-              "contactFirstName": "Sunday",
-              "contactLastName": "Metricorex",
-              "contactEmail": "sunday@metricorex.com",
-              "contactPhone": "+2348163349199",
-              "demoAccountName": "sunday@metricorex.com",
-              "demoAccountPassword": "Password@123",
-              "demoAccountRequired": True,
-              "notes": (
-                  "Metricorex is a business collaboration platform (business banking, "
-                  "messaging, meetings, calls). Sign in with the demo account above. "
-                  "A company workspace is pre-provisioned; the Sign Up flow creates a "
-                  "new company. Features to review: Wallet dashboard and transfers, "
-                  "team chat (with the MetricAi assistant), scheduled and instant "
-                  "meetings/calls (allow microphone and camera permissions), payroll "
-                  "and KYC upgrade screens. Calls between two accounts ring natively. "
-                  "No payment is required to use the app; wallet funding uses the "
-                  "Flutterwave test/sandbox gateway and is optional."
-              ),
-          }
-          try:
-              details = call("GET", f"apps/{APP_ID}/appStoreReviewDetails").get("data", [])
-              body_attrs = dict(REVIEW_CONTACT)
-              if details:
-                  did = details[0]["id"]
-                  call("PATCH", f"appStoreReviewDetails/{did}", {"data": {"type": "appStoreReviewDetails", "id": did, "attributes": body_attrs}})
-                  print("APP STORE REVIEW DETAIL: patched existing", did)
-              else:
-                  body = {"data": {"type": "appStoreReviewDetails", "attributes": body_attrs,
-                          "relationships": {"app": {"data": {"type": "apps", "id": APP_ID}}}}}
-                  call("POST", "appStoreReviewDetails", body)
-                  print("APP STORE REVIEW DETAIL: created")
-          except Exception as e:
-              print("[review detail ERROR]", str(e)[:600])
+              print("[screenshots read skipped]", str(e)[:120])
           PY
           python3 "$RUNNER_TEMP/fill.py"
+
+      # Fixes every remaining data blocker Apple reported on the failed
+      # submission (age rating, category, copyright, content rights, review
+      # detail, pricing, privacy answers, screenshots). Idempotent + defensive.
+      - name: Fill submission readiness (pricing, privacy, rating, screenshots)
+        env:
+          ASC_KEY_FILE: ${{ runner.temp }}/asc-api-key.json
+        run: |
+          pip install pillow --quiet
+          python3 scripts/asc_submit_ready.py "$ASC_KEY_FILE"
 
       - name: Check submission flag
         id: submitflag
@@ -322,6 +250,7 @@ jobs:
             --skip_binary_upload \
             --skip_metadata \
             --skip_screenshots \
+            --price_tier 0 \
             --run_precheck_before_submit false \
             --submission_information '{"add_id_info_uses_idfa": false}' \
             --automatic_release \
