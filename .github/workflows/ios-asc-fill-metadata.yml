@@ -1,0 +1,197 @@
+name: iOS ASC Metadata Fill
+
+# One-shot: fills the App Store 1.0 listing TEXT fields via the App Store
+# Connect API (description, keywords, whatsNew, support/marketing URL,
+# privacy policy URL, promotional text). Read the filled values from
+# METADATA block below and adjust copy as needed — everything remains
+# editable in App Store Connect afterwards.
+#
+# NOT touched by design (need human input):
+#   - screenshots (required for review — upload in ASC UI)
+#   - App Privacy nutrition label questionnaire (legal declarations)
+#
+# Fires on any push touching fastlane/asc_debug/** (marker-file trigger).
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+    paths:
+      - 'fastlane/asc_debug/**'
+
+permissions:
+  contents: read
+
+jobs:
+  fill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      ASC_KEY_P8_B64: ${{ secrets.APP_STORE_CONNECT_KEY_P8 }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Write API key file
+        run: |
+          python3 - <<'PY'
+          import base64, json, os
+          raw = os.environ["ASC_KEY_P8_B64"]
+          try:
+              pem = base64.b64decode(raw, validate=True).decode()
+          except Exception:
+              pem = raw
+          key = {"key_id": os.environ["ASC_KEY_ID"], "issuer_id": os.environ["ASC_ISSUER_ID"], "key": pem, "in_house": False}
+          with open(os.path.join(os.environ["RUNNER_TEMP"], "asc-api-key.json"), "w") as f:
+              json.dump(key, f)
+          print("key file written")
+          PY
+
+      - name: Fill listing metadata (idempotent)
+        env:
+          ASC_KEY_FILE: ${{ runner.temp }}/asc-api-key.json
+        run: |
+          pip install cryptography --quiet
+          cat > "$RUNNER_TEMP/fill.py" <<'PY'
+          import base64, json, os, time, urllib.request, urllib.parse
+          from cryptography.hazmat.primitives.serialization import load_pem_private_key
+          from cryptography.hazmat.primitives.asymmetric import ec
+          from cryptography.hazmat.primitives import hashes
+
+          key = json.load(open(os.environ["ASC_KEY_FILE"]))
+          priv = load_pem_private_key(key["key"].encode(), password=None)
+
+          def b64url(b): return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+          now = int(time.time())
+          header = b64url(json.dumps({"alg": "ES256", "kid": key["key_id"]}).encode())
+          payload = b64url(json.dumps({"iss": key["issuer_id"], "iat": now, "exp": now + 1200, "aud": "appstoreconnect-v1"}).encode())
+          der = priv.sign(f"{header}.{payload}".encode(), ec.ECDSA(hashes.SHA256()))
+          r = int.from_bytes(der[4:4 + der[3]], "big"); s_off = 6 + der[3]; s_len = der[s_off - 1]
+          s = int.from_bytes(der[s_off:s_off + s_len], "big")
+          TOKEN = f"{header}.{payload}.{b64url(r.to_bytes(32, 'big') + s.to_bytes(32, 'big'))}"
+
+          def call(method, path, body=None, **params):
+              url = f"https://api.appstoreconnect.apple.com/v1/{path}"
+              if params:
+                  url += "?" + urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
+              data = json.dumps(body).encode() if body else None
+              req = urllib.request.Request(url, data=data, method=method,
+                  headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"})
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      return json.load(resp)
+              except urllib.error.HTTPError as e:
+                  detail = e.read().decode(errors="replace")[:800]
+                  print(f"[{method} {path} -> HTTP {e.code}] {detail}")
+                  raise
+
+          APP_ID = "6818319166"
+          VERSION_STATE_OK = ("PREPARE_FOR_SUBMISSION", "WAITING_FOR_REVIEW", "REJECTED", "DEVELOPER_REJECTED")
+
+          # --- locate editable 1.0 version + its en-US localization -----------
+          vers = call("GET", f"apps/{APP_ID}/appStoreVersions", limit=10).get("data", [])
+          version = next((v for v in vers if v["attributes"].get("appVersionState") in VERSION_STATE_OK), None)
+          if not version:
+              raise SystemExit("No editable App Store version found")
+          vid = version["id"]
+          print("version:", version["attributes"].get("versionString"), vid)
+
+          locs = call("GET", f"appStoreVersions/{vid}/appStoreVersionLocalizations").get("data", [])
+          loc = next((l for l in locs if l["attributes"].get("locale") == "en-US"), locs[0] if locs else None)
+          if not loc:
+              raise SystemExit("No version localization found")
+          loc_id = loc["id"]
+
+          # --- copy ------------------------------------------------------------
+          import textwrap
+          DESCRIPTION = textwrap.dedent("""
+              Metricorex is the all-in-one platform for modern businesses - business banking, meetings, calls, messaging and team collaboration in a single app.
+
+              WALLET & PAYMENTS
+              - Multi-currency business wallet with instant transfers
+              - Send and receive payments, pay vendors and get paid faster
+              - Transaction limits and approvals that match your company policy
+              - Full transaction history with receipts and export
+
+              MEETINGS & CALLS
+              - Schedule and join business meetings with calendar sync
+              - High-quality video and voice calls - one-on-one or group
+              - Native ringing on iPhone, even when the app is in the background
+              - Record meetings and calls and replay them any time
+
+              TEAM COLLABORATION
+              - Real-time team chat with MetricAi assistant
+              - Company directory, roles and permissions
+              - Push notifications that keep everyone in sync
+
+              SECURITY FIRST
+              - Biometric login and secure session handling
+              - Encrypted communication and industry-standard protections
+
+              Refer & Earn: invite your team and network to Metricorex and earn rewards.
+
+              Download Metricorex and run your business from your pocket.
+          """).strip()
+
+          KEYWORDS = "business banking,wallet,payments,money transfer,meetings,team chat,payroll,calls"
+          WHATS_NEW = "First release of Metricorex - business banking, meetings, calls, chat and team collaboration in one app."
+          PROMO = "Run your business - banking, meetings, calls and chat - from one app."
+          SUPPORT_URL = "https://metricorex.com"
+          MARKETING_URL = "https://metricorex.com"
+          PRIVACY_POLICY_URL = "https://metricorex.com/privacy-policy"
+
+          # --- patch version localization (text) -------------------------------
+          # Try the full patch first; on 409/422 fall back to one field at a
+          # time so a single rejected attribute cannot sink the rest.
+          def patch_loc(attrs, label):
+              body = {"data": {"type": "appStoreVersionLocalizations", "id": loc_id, "attributes": attrs}}
+              call("PATCH", f"appStoreVersionLocalizations/{loc_id}", body)
+              print(f"version localization PATCHED ({label})")
+
+          try:
+              patch_loc({"description": DESCRIPTION, "keywords": KEYWORDS,
+                         "whatsNew": WHATS_NEW, "promotionalText": PROMO,
+                         "supportUrl": SUPPORT_URL, "marketingUrl": MARKETING_URL}, "all fields")
+          except Exception:
+              for attrs, label in [
+                  ({"description": DESCRIPTION}, "description"),
+                  ({"keywords": KEYWORDS}, "keywords"),
+                  ({"whatsNew": WHATS_NEW}, "whatsNew"),
+                  ({"promotionalText": PROMO}, "promotionalText"),
+                  ({"supportUrl": SUPPORT_URL}, "supportUrl"),
+                  ({"marketingUrl": MARKETING_URL}, "marketingUrl"),
+              ]:
+                  try:
+                      patch_loc(attrs, label)
+                  except Exception as e:
+                      print(f"[FIELD FAILED: {label}] {e}")
+
+          # --- patch app info localization (privacy policy URL) ----------------
+          infos = call("GET", f"apps/{APP_ID}/appInfos").get("data", [])
+          for info in infos:
+              ilocs = call("GET", f"appInfos/{info['id']}/appInfoLocalizations").get("data", [])
+              for il in ilocs:
+                  if il["attributes"].get("locale") == "en-US":
+                      ibody = {"data": {"type": "appInfoLocalizations", "id": il["id"],
+                               "attributes": {"privacyPolicyUrl": PRIVACY_POLICY_URL}}}
+                      call("PATCH", f"appInfoLocalizations/{il['id']}", ibody)
+                      print("appInfo localization PATCHED:", il["id"])
+
+          # --- report screenshots state (do NOT touch) -------------------------
+          try:
+              shots = call("GET", f"appStoreVersionLocalizations/{loc_id}/appScreenshots").get("data", [])
+              print(f"SCREENSHOTS present: {len(shots)}")
+              for sshot in shots:
+                  sa = sshot["attributes"]
+                  print("   ", sshot["id"], sa.get("snapshotDisplayType"), sa.get("fileName"), sa.get("assetDeliveryState"))
+          except Exception as e:
+              print("[screenshots read ERROR]", e)
+          PY
+          python3 "$RUNNER_TEMP/fill.py"
+
+      - name: Cleanup API key file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/asc-api-key.json"
