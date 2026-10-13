@@ -66,18 +66,18 @@ jobs:
             echo "ANDROID_KEY_PASSWORD=$ANDROID_KEY_PASSWORD"
           } >> "$GITHUB_ENV"
 
-      # versionCode = UTC epoch minutes — ONE app-wide monotonic counter for
+      # versionCode = UTC epoch SECONDS — ONE app-wide monotonic counter for
       # every Play publishing workflow (flutter-build / android-play-internal
       # / store-production-release). No cross-workflow coordination needed and
       # no upload can ever fall below the app-wide maximum (the old
       # run_number+offset schemes broke the moment a higher-offset build hit
       # production: every later +1000 upload would be rejected). Play's
-      # 2,100,000,000 cap is safe: ~2.98e7, growing 1/minute. Computed ONCE
+      # 2,100,000,000 cap is safe until ~2036 (headroom 3e8 s).. Computed ONCE
       # here so the APK and AAB always share the same versionCode. Two uploads
       # within the same minute would collide — Play rejects the duplicate with
       # a clear error and a retry succeeds a minute later.
       - name: Compute versionCode
-        run: echo "VERSION_CODE=$(( $(date -u +%s) / 60 ))" >> "$GITHUB_ENV"
+        run: echo "VERSION_CODE=$(date -u +%s)" >> "$GITHUB_ENV"
 
       - name: Build APK
         working-directory: metroflow_flutter
