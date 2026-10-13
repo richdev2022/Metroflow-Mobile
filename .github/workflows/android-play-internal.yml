@@ -39,6 +39,12 @@ on:
         description: "Type true to allow publishing to the PRODUCTION track"
         required: false
         default: "false"
+  # ONE-SHOT release channel: pushing to this branch publishes the branch's
+  # code (main HEAD) to the PRODUCTION track with the defaults below.
+  # Empty inputs on push fall back to production+completed+ack'd.
+  push:
+    branches:
+      - release/android-production-1.0
 
 concurrency:
   group: play-publish
@@ -49,9 +55,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      TRACK: ${{ github.event.inputs.track }}
-      STATUS: ${{ github.event.inputs.status }}
-      PROD_ACK: ${{ github.event.inputs.production_ack }}
+      TRACK: ${{ github.event.inputs.track || 'production' }}
+      STATUS: ${{ github.event.inputs.status || 'completed' }}
+      PROD_ACK: ${{ github.event.inputs.production_ack || 'true' }}
 
     steps:
       - name: Checkout repository
@@ -120,7 +126,7 @@ jobs:
 
       - name: Prepare Play release notes
         env:
-          NOTES: ${{ github.event.inputs.release_notes }}
+          NOTES: ${{ github.event.inputs.release_notes || 'Metricorex 1.0 — first production release: cross-platform meetings, calls, chat, wallet transfers and task collaboration.' }}
         run: |
           mkdir -p fastlane/metadata/android/en-US/changelogs
           # Changelog filename MUST equal the versionCode (fastlane matches it).
