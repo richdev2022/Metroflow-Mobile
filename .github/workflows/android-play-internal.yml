@@ -13,10 +13,10 @@ name: Android Play Release
 #                                 flutter-build.yml; publishing REQUIRES them —
 #                                 Play rejects debug-signed bundles).
 #
-# versionCode strategy: run_number + 50000 — strictly increasing per run and
-# always above the historical uploads (internal track currently holds vc=1).
-# The +50000 offset keeps this range disjoint from flutter-build.yml's auto
-# Play uploads (+1000) so the two publishing workflows never collide.
+# versionCode strategy: UTC epoch minutes — ONE app-wide monotonic counter
+# shared by every Play publishing workflow (see flutter-build.yml
+# "Compute versionCode"). Computed once and reused for both the AAB build
+# and the changelog filename.
 
 on:
   workflow_dispatch:
@@ -104,12 +104,12 @@ jobs:
         working-directory: metroflow_flutter
         run: flutter pub get
 
+      - name: Compute versionCode
+        run: echo "VERSION_CODE=$(( $(date -u +%s) / 60 ))" >> "$GITHUB_ENV"
+
       - name: Build signed AAB
         working-directory: metroflow_flutter
-        run: |
-          VER=$(( ${{ github.run_number }} + 50000 ))
-          echo "VERSION_CODE=$VER" >> "$GITHUB_ENV"
-          flutter build appbundle --release --build-number=$VER
+        run: flutter build appbundle --release --build-number=$VERSION_CODE
 
       - name: Upload AAB artifact (backup copy)
         uses: actions/upload-artifact@v4

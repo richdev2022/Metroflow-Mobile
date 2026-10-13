@@ -1,0 +1,196 @@
+name: Store Production Release
+
+# Tag-driven PRODUCTION release for BOTH stores.
+#
+# Trigger — push an annotated tag named store-release-<version>:
+#   git tag -a store-release-1.0.0 -m "Metricorex 1.0.0"
+#   git push origin store-release-1.0.0
+#
+# Android job: builds a signed AAB from the tagged commit and publishes it to
+# the Google Play PRODUCTION track (status completed, 100% rollout) via
+# fastlane supply + PLAY_SERVICE_ACCOUNT_JSON. Google review gates the live
+# release; Play Console app-content declarations (data safety, content
+# rating, privacy policy, target audience) must be complete or the release
+# stays blocked in the console.
+#
+# iOS job: submits the latest PROCESSED TestFlight build for App Store review
+# via fastlane deliver using the App Store Connect API key (no build step —
+# TestFlight already holds the binary). No metadata or screenshots are
+# uploaded; the App Store Connect listing is the source of truth and must be
+# complete (screenshots, description, privacy policy) for Apple to accept the
+# submission. Release after approval is automatic.
+#
+# versionCode strategy: UTC epoch minutes — app-wide monotonic (see
+# flutter-build.yml "Compute versionCode").
+
+on:
+  push:
+    tags:
+      - 'store-release-*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: store-production-release
+  cancel-in-progress: false
+
+jobs:
+  android-production:
+    name: Play Store production publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.1'
+          cache: true
+
+      # Publishing REQUIRES the pinned release keystore — a debug-signed AAB
+      # would be rejected by Play (and would burn a versionCode), so fail
+      # hard instead of falling back like flutter-build.yml does.
+      - name: Restore release keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is not set — a release AAB cannot be signed without it."
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/metricorex-release.keystore"
+          {
+            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/metricorex-release.keystore"
+            echo "ANDROID_KEYSTORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD"
+            echo "ANDROID_KEY_ALIAS=$ANDROID_KEY_ALIAS"
+            echo "ANDROID_KEY_PASSWORD=$ANDROID_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+
+      - name: Install Flutter dependencies
+        working-directory: metroflow_flutter
+        run: flutter pub get
+
+      - name: Compute versionCode
+        run: echo "VERSION_CODE=$(( $(date -u +%s) / 60 ))" >> "$GITHUB_ENV"
+
+      - name: Build signed AAB
+        working-directory: metroflow_flutter
+        run: flutter build appbundle --release --build-number=$VERSION_CODE
+
+      - name: Prepare Play release notes
+        run: |
+          mkdir -p fastlane/metadata/android/en-US/changelogs
+          # Play changelogs are capped at 500 characters.
+          head -c 500 RELEASE_NOTES.md > "fastlane/metadata/android/en-US/changelogs/${VERSION_CODE}.txt"
+
+      - name: Write service-account key
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -z "$PLAY_SERVICE_ACCOUNT_JSON" ]; then
+            echo "::error::PLAY_SERVICE_ACCOUNT_JSON secret is not set — paste the service-account JSON in repo Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          printf '%s' "$PLAY_SERVICE_ACCOUNT_JSON" > "$RUNNER_TEMP/play-service-account.json"
+
+      - name: Setup Ruby + fastlane
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+
+      - name: Install fastlane
+        run: gem install fastlane --no-document
+
+      - name: Upload AAB artifact (backup copy)
+        uses: actions/upload-artifact@v4
+        with:
+          name: metricorex-production-aab-${{ github.run_number }}
+          path: metroflow_flutter/build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+
+      # fastlane supply: creates an edit, uploads the AAB to the production
+      # track, attaches the release notes, commits the edit. Google review
+      # then gates the live rollout.
+      - name: Publish to Play production track
+        run: |
+          fastlane supply \
+            --json_key "$RUNNER_TEMP/play-service-account.json" \
+            --package_name com.metricorex.app \
+            --track production \
+            --release_status completed \
+            --aab "metroflow_flutter/build/app/outputs/bundle/release/app-release.aab" \
+            --metadata_path fastlane/metadata \
+            --skip_upload_images true \
+            --skip_upload_screenshots true
+
+      - name: Cleanup key material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/play-service-account.json" "$RUNNER_TEMP/metricorex-release.keystore"
+
+  ios-appstore-submit:
+    name: App Store review submission
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # spaceship/fastlane native env-var auth — no fastlane session or
+      # Apple-ID password involved (same secrets the TestFlight workflow
+      # already uses successfully).
+      APP_STORE_CONNECT_API_KEY_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      APP_STORE_CONNECT_API_KEY_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      APP_STORE_CONNECT_API_KEY_KEY: ${{ secrets.APP_STORE_CONNECT_KEY_P8 }}
+      APP_STORE_CONNECT_API_KEY_IS_KEY_CONTENT_BASE64: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Ruby + fastlane
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+
+      - name: Install fastlane
+        run: gem install fastlane --no-document
+
+      - name: Validate App Store Connect secrets
+        run: |
+          missing=0
+          for v in APP_STORE_CONNECT_API_KEY_KEY_ID APP_STORE_CONNECT_API_KEY_ISSUER_ID APP_STORE_CONNECT_API_KEY_KEY; do
+            if [ -z "${!v}" ]; then
+              echo "::error::GitHub secret backing $v is not set — App Store submission cannot proceed."
+              missing=1
+            fi
+          done
+          exit $missing
+
+      # deliver: no binary upload (the TestFlight build is already
+      # processed), no metadata or screenshot upload (the App Store Connect
+      # listing is the source of truth) — attach the latest build to the
+      # editable version and submit for Apple review. --force skips the
+      # interactive HTML-report prompt so the job never hangs on CI.
+      # IDFA declared as NOT used: the app ships no ad SDK (no AdSupport /
+      # admob / analytics-with-ads), so false is the correct declaration.
+      - name: Submit latest TestFlight build for App Store review
+        run: |
+          fastlane deliver \
+            --app_identifier com.metricorex.app \
+            --platform ios \
+            --skip_binary_upload \
+            --skip_metadata \
+            --skip_screenshots \
+            --run_precheck_before_submit false \
+            --submission_information '{"add_id_info_uses_idfa": false}' \
+            --automatic_release \
+            --force \
+            --submit_for_review
