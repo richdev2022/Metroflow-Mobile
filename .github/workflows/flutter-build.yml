@@ -66,18 +66,26 @@ jobs:
             echo "ANDROID_KEY_PASSWORD=$ANDROID_KEY_PASSWORD"
           } >> "$GITHUB_ENV"
 
+      # versionCode = UTC epoch minutes — ONE app-wide monotonic counter for
+      # every Play publishing workflow (flutter-build / android-play-internal
+      # / store-production-release). No cross-workflow coordination needed and
+      # no upload can ever fall below the app-wide maximum (the old
+      # run_number+offset schemes broke the moment a higher-offset build hit
+      # production: every later +1000 upload would be rejected). Play's
+      # 2,100,000,000 cap is safe: ~2.98e7, growing 1/minute. Computed ONCE
+      # here so the APK and AAB always share the same versionCode. Two uploads
+      # within the same minute would collide — Play rejects the duplicate with
+      # a clear error and a retry succeeds a minute later.
+      - name: Compute versionCode
+        run: echo "VERSION_CODE=$(( $(date -u +%s) / 60 ))" >> "$GITHUB_ENV"
+
       - name: Build APK
         working-directory: metroflow_flutter
-        # versionCode = run_number + 1000 — strictly increasing per run and
-        # always above the historical uploads (Play already consumed vc=1).
-        # The +1000 offset keeps this range disjoint from the manual
-        # android-play-internal.yml workflow (+50000) so the two Play
-        # publishing workflows can never produce a duplicate versionCode.
-        run: flutter build apk --release --build-number=$(( ${{ github.run_number }} + 1000 ))
+        run: flutter build apk --release --build-number=$VERSION_CODE
 
       - name: Build AAB
         working-directory: metroflow_flutter
-        run: flutter build appbundle --release --build-number=$(( ${{ github.run_number }} + 1000 ))
+        run: flutter build appbundle --release --build-number=$VERSION_CODE
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
