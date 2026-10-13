@@ -80,8 +80,13 @@ jobs:
               data = json.dumps(body).encode() if body else None
               req = urllib.request.Request(url, data=data, method=method,
                   headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"})
-              with urllib.request.urlopen(req, timeout=30) as resp:
-                  return json.load(resp) if resp.status != 200 or data else json.load(resp)
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as resp:
+                      return json.load(resp)
+              except urllib.error.HTTPError as e:
+                  detail = e.read().decode(errors="replace")[:800]
+                  print(f"[{method} {path} -> HTTP {e.code}] {detail}")
+                  raise
 
           APP_ID = "6818319166"
           VERSION_STATE_OK = ("PREPARE_FOR_SUBMISSION", "WAITING_FOR_REVIEW", "REJECTED", "DEVELOPER_REJECTED")
@@ -139,12 +144,30 @@ jobs:
           PRIVACY_POLICY_URL = "https://metricorex.com/privacy-policy"
 
           # --- patch version localization (text) -------------------------------
-          body = {"data": {"type": "appStoreVersionLocalizations", "id": loc_id,
-                  "attributes": {"description": DESCRIPTION, "keywords": KEYWORDS,
-                                 "whatsNew": WHATS_NEW, "promotionalText": PROMO,
-                                 "supportUrl": SUPPORT_URL, "marketingUrl": MARKETING_URL}}}
-          call("PATCH", f"appStoreVersionLocalizations/{loc_id}", body)
-          print("version localization PATCHED:", loc_id)
+          # Try the full patch first; on 409/422 fall back to one field at a
+          # time so a single rejected attribute cannot sink the rest.
+          def patch_loc(attrs, label):
+              body = {"data": {"type": "appStoreVersionLocalizations", "id": loc_id, "attributes": attrs}}
+              call("PATCH", f"appStoreVersionLocalizations/{loc_id}", body)
+              print(f"version localization PATCHED ({label})")
+
+          try:
+              patch_loc({"description": DESCRIPTION, "keywords": KEYWORDS,
+                         "whatsNew": WHATS_NEW, "promotionalText": PROMO,
+                         "supportUrl": SUPPORT_URL, "marketingUrl": MARKETING_URL}, "all fields")
+          except Exception:
+              for attrs, label in [
+                  ({"description": DESCRIPTION}, "description"),
+                  ({"keywords": KEYWORDS}, "keywords"),
+                  ({"whatsNew": WHATS_NEW}, "whatsNew"),
+                  ({"promotionalText": PROMO}, "promotionalText"),
+                  ({"supportUrl": SUPPORT_URL}, "supportUrl"),
+                  ({"marketingUrl": MARKETING_URL}, "marketingUrl"),
+              ]:
+                  try:
+                      patch_loc(attrs, label)
+                  except Exception as e:
+                      print(f"[FIELD FAILED: {label}] {e}")
 
           # --- patch app info localization (privacy policy URL) ----------------
           infos = call("GET", f"apps/{APP_ID}/appInfos").get("data", [])
