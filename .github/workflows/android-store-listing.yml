@@ -48,7 +48,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install google-auth
-        run: pip install google-auth --quiet
+        run: pip install google-auth requests --quiet
 
       # Direct Play Developer API upload (no fastlane): listing text,
       # icon, feature graphic, phone screenshots, contact details.
