@@ -302,11 +302,12 @@ jobs:
 
           # ---- App Privacy / data usage discovery (read-only this run) ----
           try:
-              arels = rel_names(f"apps/{APP_ID}")
-              du_rel = next((r for r in arels if "ataUsage" in r or "rivacy" in r.lower()), None)
-              print("APP RELATIONSHIPS (privacy-related):", [r for r in arels if "ata" in r.lower() or "rivacy" in r.lower()])
+              app_info_id = call("GET", f"apps/{APP_ID}/appInfos").get("data", [{}])[0].get("id")
+              irels = rel_names(f"appInfos/{app_info_id}")
+              print("APPINFO RELATIONSHIPS:", irels)
+              du_rel = next((r for r in irels if "ataUsage" in r), None)
               if du_rel:
-                  du = call("GET", f"apps/{APP_ID}/{du_rel}", limit=50).get("data", [])
+                  du = call("GET", f"appInfos/{app_info_id}/{du_rel}", limit=50).get("data", [])
                   print("DATA USAGES:", len(du))
                   for u in du[:20]:
                       print("  ", u["type"], u["id"], json.dumps(u.get("attributes") or {}))
@@ -314,9 +315,20 @@ jobs:
                       print("    rels:", urels)
                       for ur in [r for r in urels if "urpose" in r.lower()]:
                           ups = call("GET", f"{u['type']}/{u['id']}/{ur}", limit=50).get("data", [])
-                          print("    purposes:", [p.get("attributes") for p in ups])
+                          print("    purposes:", json.dumps([p.get("attributes") for p in ups]))
               else:
-                  print("DATA USAGES: no direct relationship on app")
+                  print("DATA USAGES: no relationship on appInfo")
+              # per-screenshot asset states (find stuck uploads)
+              sets_now = call("GET", f"appStoreVersionLocalizations/{en_id}/{shots_rel}", limit=200).get("data", [])
+              for st in sets_now:
+                  st_rels2 = rel_names(f"{st['type']}/{st['id']}")
+                  sub2 = next((r for r in st_rels2 if "creenshot" in r), None)
+                  if not sub2:
+                      continue
+                  for sh in call("GET", f"{st['type']}/{st['id']}/{sub2}", limit=50).get("data", []):
+                      a = sh.get("attributes") or {}
+                      ads = a.get("assetDeliveryState") or {}
+                      print("ASSET", a.get("fileName"), "state=", ads.get("state"), "type=", st["attributes"].get("screenshotDisplayType"))
           except Exception as e:
               print("[DATA USAGE ERROR]", e)
 
