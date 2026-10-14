@@ -20,8 +20,11 @@ name: Store Production Release
 # complete (screenshots, description, privacy policy) for Apple to accept the
 # submission. Release after approval is automatic.
 #
-# versionCode strategy: UTC epoch SECONDS — app-wide monotonic (see
-# flutter-build.yml "Compute versionCode").
+# versionCode strategy: run_number + 90000 — small, strictly increasing and
+# far below Play's 2,100,000,000 cap. NEVER use date/epoch codes (date +%s ≈
+# 1.79e9): Play flags them with "version code is significantly higher than
+# your previous version code". Disjoint from flutter-build.yml (+1000) and
+# android-play-internal.yml (+50000) so the publishers never collide.
 
 on:
   push:
@@ -83,7 +86,7 @@ jobs:
         run: flutter pub get
 
       - name: Compute versionCode
-        run: echo "VERSION_CODE=$(date -u +%s)" >> "$GITHUB_ENV"
+        run: echo "VERSION_CODE=$(( ${{ github.run_number }} + 90000 ))" >> "$GITHUB_ENV"
 
       - name: Build signed AAB
         working-directory: metroflow_flutter

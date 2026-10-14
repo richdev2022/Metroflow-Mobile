@@ -13,10 +13,13 @@ name: Android Play Release
 #                                 flutter-build.yml; publishing REQUIRES them —
 #                                 Play rejects debug-signed bundles).
 #
-# versionCode strategy: UTC epoch SECONDS — ONE app-wide monotonic counter
-# shared by every Play publishing workflow (see flutter-build.yml
-# "Compute versionCode"). Computed once and reused for both the AAB build
-# and the changelog filename.
+# versionCode strategy: run_number + 50000 — small, strictly increasing per
+# run and far below Play's 2,100,000,000 cap. NEVER use date/epoch codes
+# (date +%s ≈ 1.79e9): Play flags them with "version code is significantly
+# higher than your previous version code" and the space would be exhausted
+# by ~2036. Computed once and reused for both the AAB build and the
+# changelog filename. Offset is disjoint from flutter-build.yml (+1000) and
+# store-production-release.yml (+90000) so the publishers never collide.
 
 on:
   workflow_dispatch:
@@ -118,7 +121,7 @@ jobs:
         run: flutter pub get
 
       - name: Compute versionCode
-        run: echo "VERSION_CODE=$(date -u +%s)" >> "$GITHUB_ENV"
+        run: echo "VERSION_CODE=$(( ${{ github.run_number }} + 50000 ))" >> "$GITHUB_ENV"
 
       - name: Build signed AAB
         working-directory: metroflow_flutter
