@@ -48,16 +48,17 @@ jobs:
           python-version: '3.12'
 
       - name: Install google-auth
-        run: pip install google-auth requests --quiet
+        run: pip install google-api-python-client --quiet
 
-      # Direct Play Developer API upload (no fastlane): listing text,
-      # icon, feature graphic, phone screenshots, contact details.
+      # Direct Play Developer API upload via the official client: listing
+      # text, icon, feature graphic, phone screenshots, contact details.
       - name: Upload store listing via Play API
         run: |
           python3 - <<'PY'
-          import json, os
+          import os
           from google.oauth2 import service_account
-          from google.auth.transport.requests import AuthorizedSession
+          from googleapiclient.discovery import build
+          from googleapiclient.http import MediaFileUpload
 
           KEY = os.path.join(os.environ["RUNNER_TEMP"], "play-sa.json")
           META = "fastlane/metadata/android/en-US"
@@ -65,64 +66,50 @@ jobs:
 
           creds = service_account.Credentials.from_service_account_file(
               KEY, scopes=["https://www.googleapis.com/auth/androidpublisher"])
-          s = AuthorizedSession(creds)
-          base = f"https://androidpublisher.googleapis.com/androidpublisher/v3/applications/{PKG}"
+          svc = build("androidpublisher", "v3", credentials=creds, cache_discovery=False)
 
-          eid = s.post(f"{base}/edits").json()["id"]
+          eid = svc.edits().insert(packageName=PKG, body={}).execute()["id"]
           print("edit:", eid)
 
-          def must(resp, what):
-              if resp.status_code >= 300:
-                  raise SystemExit(f"FAIL {what}: {resp.status_code} {resp.text[:500]}")
-              print("OK", what)
+          svc.edits().listings().update(
+              packageName=PKG, editId=eid, language="en-US",
+              body={"title": open(f"{META}/title.txt").read().strip(),
+                    "shortDescription": open(f"{META}/short_description.txt").read().strip(),
+                    "fullDescription": open(f"{META}/full_description.txt").read().strip()}
+          ).execute()
+          print("OK listing text")
 
-          # 1. listing text
-          must(s.patch(f"{base}/edits/{eid}/listings/en-US", json={
-              "title": open(f"{META}/title.txt").read().strip(),
-              "shortDescription": open(f"{META}/short_description.txt").read().strip(),
-              "fullDescription": open(f"{META}/full_description.txt").read().strip(),
-          }), "listing text")
+          def upload(image_type, path):
+              media = MediaFileUpload(path, mimetype="image/png")
+              res = svc.edits().images().upload(
+                  packageName=PKG, editId=eid, language="en-US",
+                  imageType=image_type, media_body=media).execute()
+              print("OK image", image_type, os.path.basename(path), "id=", res.get("image", {}).get("id"))
 
-          # 2. images (replace all of each type, in order)
-          # NOTE: binary media uploads go under Google's /upload/ path prefix.
-          UP = "https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications/com.metricorex.app"
-
-          def upload_image(image_type, path):
-              with open(path, "rb") as fh:
-                  r = s.post(f"{UP}/edits/{eid}/images/en-US",
-                             params={"imageType": image_type, "uploadType": "media"},
-                             data=fh.read(),
-                             headers={"Content-Type": "image/png"})
-              if r.status_code >= 300:
-                  raise SystemExit(f"FAIL image {image_type} {os.path.basename(path)}: {r.status_code} {r.text[:400]}")
+          for t in ("icon", "featureGraphic", "phoneScreenshots"):
               try:
-                  iid = r.json().get("id")
-              except Exception:
-                  iid = "?"
-              print(f"OK image {image_type} {os.path.basename(path)} id={iid}")
+                  svc.edits().images().deleteall(
+                      packageName=PKG, editId=eid, language="en-US", imageType=t).execute()
+                  print("cleared", t)
+              except Exception as e:
+                  print("clear", t, "(nothing to clear)")
 
-          for image_type in ("icon", "featureGraphic", "phoneScreenshots"):
-              # drop any existing images of this type first (404 = none yet, fine)
-              d = s.delete(f"{base}/edits/{eid}/images/en-US", params={"imageType": image_type})
-              print("clear", image_type, "->", d.status_code)
-              if image_type == "icon":
-                  upload_image(image_type, f"{META}/images/icon.png")
-              elif image_type == "featureGraphic":
-                  upload_image(image_type, f"{META}/images/featureGraphic.png")
-              else:
-                  for name in sorted(os.listdir(f"{META}/images/phoneScreenshots")):
-                      if name.lower().endswith(".png"):
-                          upload_image(image_type, f"{META}/images/phoneScreenshots/{name}")
+          upload("icon", f"{META}/images/icon.png")
+          upload("featureGraphic", f"{META}/images/featureGraphic.png")
+          for name in sorted(os.listdir(f"{META}/images/phoneScreenshots")):
+              if name.lower().endswith(".png"):
+                  upload("phoneScreenshots", f"{META}/images/phoneScreenshots/{name}")
 
-          # 3. contact details
-          must(s.patch(f"{base}/edits/{eid}/details", json={
-              "defaultLanguage": "en-US",
-              "contactEmail": "sunday@metricorex.com",
-              "contactPhone": "+234 816 334 9199",
-              "contactWebsite": "https://metricorex.com",
-          }), "contact details")
+          svc.edits().details().update(
+              packageName=PKG, editId=eid,
+              body={"defaultLanguage": "en-US",
+                    "contactEmail": "sunday@metricorex.com",
+                    "contactPhone": "+234 816 334 9199",
+                    "contactWebsite": "https://metricorex.com"}
+          ).execute()
+          print("OK contact details")
 
-          must(s.post(f"{base}/edits/{eid}:commit"), "commit")
+          svc.edits().commit(packageName=PKG, editId=eid).execute()
           print("STORE LISTING UPLOADED")
           PY
 
