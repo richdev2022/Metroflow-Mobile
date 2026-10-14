@@ -88,13 +88,18 @@ jobs:
               with open(path, "rb") as fh:
                   r = s.post(f"{base}/edits/{eid}/images/en-US",
                              params={"imageType": image_type},
-                             files={"image": (os.path.basename(path), fh, "image/png")})
-              must(r, f"image {image_type} {os.path.basename(path)} -> {r.json().get('id')}")
+                             data=fh.read(),
+                             headers={"Content-Type": "image/png"})
+              if r.status_code >= 300:
+                  raise SystemExit(f"FAIL image {image_type} {os.path.basename(path)}: {r.status_code} {r.text[:400]}")
+              try:
+                  iid = r.json().get("id")
+              except Exception:
+                  iid = "?"
+              print(f"OK image {image_type} {os.path.basename(path)} id={iid}")
 
-          for image_type, directory in [("icon", "images"),
-                                        ("featureGraphic", "images"),
-                                        ("phoneScreenshots", "images/phoneScreenshots")]:
-              # drop any existing images of this type first
+          for image_type in ("icon", "featureGraphic", "phoneScreenshots"):
+              # drop any existing images of this type first (404 = none yet, fine)
               d = s.delete(f"{base}/edits/{eid}/images/en-US", params={"imageType": image_type})
               print("clear", image_type, "->", d.status_code)
               if image_type == "icon":
@@ -102,9 +107,9 @@ jobs:
               elif image_type == "featureGraphic":
                   upload_image(image_type, f"{META}/images/featureGraphic.png")
               else:
-                  for name in sorted(os.listdir(f"{META}/{directory}")):
+                  for name in sorted(os.listdir(f"{META}/images/phoneScreenshots")):
                       if name.lower().endswith(".png"):
-                          upload_image(image_type, f"{META}/{directory}/{name}")
+                          upload_image(image_type, f"{META}/images/phoneScreenshots/{name}")
 
           # 3. contact details
           must(s.patch(f"{base}/edits/{eid}/details", json={
