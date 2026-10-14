@@ -18,6 +18,7 @@ on:
   push:
     branches:
       - ios-appstore-finish
+  workflow_dispatch:
 
 concurrency:
   group: asc-finisher
@@ -147,7 +148,13 @@ jobs:
           assert vers, "No editable App Store version found"
           version = vers[0]
           vid = version["id"]
-          print("VERSION:", vid, version["attributes"].get("versionString"), version["attributes"].get("appVersionState"))
+          vstate = version["attributes"].get("appVersionState")
+          print("VERSION:", vid, version["attributes"].get("versionString"), vstate)
+          if vstate and vstate not in ("PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "DEVELOPER_REMOVED_FROM_SALE"):
+              print(f"VERSION STATE {vstate} — submission already in review or past it. Nothing to do.")
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write("ready=false\nversion_id=" + vid + "\n")
+              raise SystemExit(0)
 
           # ---- App Review Information (the credential fix) ----
           try:
@@ -302,29 +309,6 @@ jobs:
 
           # ---- App Privacy / data usage discovery (read-only this run) ----
           try:
-              print("FULL APP RELATIONSHIPS:", rel_names(f"apps/{APP_ID}"))
-              for cand in ["appDataUsageGroupings", "dataCollectionAnswers", "appPrivacyAnswerDetails", "privacyDetails", "appDataUsagePublishStates"]:
-                  try:
-                      r = call("GET", cand, **{"filter[app]": APP_ID, "limit": 50})
-                      print("PROBE", cand, "->", json.dumps(r)[:800])
-                  except Exception as e:
-                      msg = str(e)
-                      print("PROBE", cand, "->", msg[:100].replace("\n", " "))
-              try:
-                  rs = call("GET", f"apps/{APP_ID}/reviewSubmissions", **{"filter[state]": "IN_PROGRESS"}).get("data", [])
-                  if not rs:
-                      rs = call("GET", f"apps/{APP_ID}/reviewSubmissions", limit=5).get("data", [])
-                  for r in rs:
-                      print("REVIEW SUBMISSION", r["id"], json.dumps(r.get("attributes") or {}))
-                      rrels = rel_names(f"reviewSubmissions/{r['id']}")
-                      print("  rels:", rrels)
-                      items_rel = next((x for x in rrels if "item" in x.lower()), None)
-                      if items_rel:
-                          items = call("GET", f"reviewSubmissions/{r['id']}/{items_rel}", limit=50).get("data", [])
-                          for it in items:
-                              print("  ITEM", it["type"], it["id"], json.dumps(it.get("attributes") or {}))
-              except Exception as e:
-                  print("[REVIEW SUBMISSION ERROR]", str(e)[:300])
               app_info_id = call("GET", f"apps/{APP_ID}/appInfos").get("data", [{}])[0].get("id")
               irels = rel_names(f"appInfos/{app_info_id}")
               print("APPINFO RELATIONSHIPS:", irels)
