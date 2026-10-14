@@ -41,10 +41,14 @@ on:
         default: "false"
   # ONE-SHOT release channel: pushing to this branch publishes the branch's
   # code (main HEAD) to the track selected in the fallback below.
-  # Currently: CLOSED TESTING (alpha) — production access is not granted yet
-  # (Play requires a closed test with 12 opted-in testers for 14 days first).
-  # Once production access is granted, flip the TRACK fallback back to
-  # 'production' (workflow_dispatch with production_ack=true also works).
+  # Currently: CLOSED TESTING (alpha), status DRAFT — the app is a DRAFT app
+  # on Play (no approved release yet), and the Play API only allows DRAFT
+  # releases on draft apps ("Only releases with status draft may be created
+  # on draft app"). After the upload, send the release for review from the
+  # Play Console (Closed testing → Releases → Send to Google for review).
+  # Once the app exits draft state: flip TRACK fallback to 'production' and
+  # STATUS fallback to 'completed' (workflow_dispatch with production_ack=true
+  # also works).
   push:
     branches:
       - release/android-production-1.0
@@ -59,7 +63,7 @@ jobs:
     timeout-minutes: 60
     env:
       TRACK: ${{ github.event.inputs.track || 'alpha' }}
-      STATUS: ${{ github.event.inputs.status || 'completed' }}
+      STATUS: ${{ github.event.inputs.status || 'draft' }}
       PROD_ACK: ${{ github.event.inputs.production_ack || 'true' }}
 
     steps:
