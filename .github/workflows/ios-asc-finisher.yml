@@ -2,6 +2,10 @@ name: iOS ASC Finisher
 
 # One-shot branch workflow: pushing to ios-appstore-finish runs this.
 #
+# Re-run 2026-10-14: App Privacy (data usage) answers were completed in the
+# console by the developer — the previous submit failed with
+# "appStoreVersions ... is not in valid state" solely because of that.
+#
 # What it does, in order:
 #   1. Sets App Review Information (appStoreReviewDetail) with the DEMO USER
 #      credentials — metricorexlimited@gmail.com / Password@123 — replacing
