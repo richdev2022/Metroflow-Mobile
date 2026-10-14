@@ -1,0 +1,98 @@
+name: Android Play Store Listing
+
+# One-shot branch workflow: pushing to android-store-listing uploads the
+# COMPLETE store listing — title, descriptions, app icon, feature graphic
+# and phone screenshots — via fastlane supply (metadata-only: NO binary,
+# the staged closed-testing draft release is not touched). Also sets the
+# store contact details (email / phone / website) via edits.details.
+#
+# NOTE (console-only items the API cannot set):
+#   App content (privacy policy URL, ads, content rating questionnaire,
+#   target audience, data safety form, financial features declaration),
+#   App access (review credentials), closed-track countries and testers.
+#
+on:
+  push:
+    branches:
+      - android-store-listing
+  workflow_dispatch:
+
+concurrency:
+  group: play-listing
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  listing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Write service-account key
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -z "$PLAY_SERVICE_ACCOUNT_JSON" ]; then
+            echo "::error::PLAY_SERVICE_ACCOUNT_JSON secret is not set."
+            exit 1
+          fi
+          printf '%s' "$PLAY_SERVICE_ACCOUNT_JSON" > "$RUNNER_TEMP/play-sa.json"
+
+      - name: Setup Ruby + fastlane
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+
+      - name: Install fastlane
+        run: gem install fastlane --no-document
+
+      # Metadata-only supply run: uploads listing text + images.
+      # No --track / --aab here on purpose (binary already staged as the
+      # closed-testing draft; listing updates are independent of tracks).
+      - name: Upload store listing (text, icon, feature graphic, screenshots)
+        run: |
+          fastlane supply \
+            --json_key "$RUNNER_TEMP/play-sa.json" \
+            --package_name com.metricorex.app \
+            --metadata_path fastlane/metadata/android \
+            --skip_upload_changelogs true
+
+      - name: Set store contact details (edits.details)
+        run: |
+          pip install google-auth --quiet
+          python3 - <<'PY'
+          import json, os
+          from google.oauth2 import service_account
+          from google.auth.transport.requests import AuthorizedSession
+
+          creds = service_account.Credentials.from_service_account_file(
+              os.path.join(os.environ["RUNNER_TEMP"], "play-sa.json"),
+              scopes=["https://www.googleapis.com/auth/androidpublisher"])
+          s = AuthorizedSession(creds)
+          base = "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/com.metricorex.app"
+
+          edit = s.post(f"{base}/edits").json()
+          eid = edit["id"]
+          print("edit:", eid)
+
+          r = s.patch(f"{base}/edits/{eid}/details", json={
+              "defaultLanguage": "en-US",
+              "contactEmail": "sunday@metricorex.com",
+              "contactPhone": "+234 816 334 9199",
+              "contactWebsite": "https://metricorex.com",
+          })
+          print("details:", r.status_code, r.text[:300])
+
+          c = s.post(f"{base}/edits/{eid}:commit")
+          print("commit:", c.status_code, c.text[:200])
+          if c.status_code >= 300:
+              raise SystemExit(1)
+          PY
+
+      - name: Cleanup key material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/play-sa.json"
