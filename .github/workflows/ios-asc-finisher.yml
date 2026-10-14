@@ -302,6 +302,19 @@ jobs:
 
           # ---- App Privacy / data usage discovery (read-only this run) ----
           try:
+              try:
+                  du_top = call("GET", "appDataUsages", **{"filter[app]": APP_ID, "limit": 50})
+                  du_list = du_top.get("data", [])
+                  print("TOP-LEVEL appDataUsages:", len(du_list))
+                  for u in du_list[:25]:
+                      print("  ", u["type"], u["id"], json.dumps(u.get("attributes") or {}))
+                      urels = rel_names(f"{u['type']}/{u['id']}")
+                      print("    rels:", urels)
+                      for ur in [r for r in urels if "urpose" in r.lower()]:
+                          ups = call("GET", f"{u['type']}/{u['id']}/{ur}", limit=50).get("data", [])
+                          print("    purposes:", json.dumps([p.get("attributes") for p in ups]))
+              except Exception as e:
+                  print("[APPDATAUSAGES ERROR]", e)
               app_info_id = call("GET", f"apps/{APP_ID}/appInfos").get("data", [{}])[0].get("id")
               irels = rel_names(f"appInfos/{app_info_id}")
               print("APPINFO RELATIONSHIPS:", irels)
@@ -318,7 +331,7 @@ jobs:
                           print("    purposes:", json.dumps([p.get("attributes") for p in ups]))
               else:
                   print("DATA USAGES: no relationship on appInfo")
-              # per-screenshot asset states (find stuck uploads)
+              # per-screenshot asset states; DELETE stuck placeholders (they block submission forever)
               sets_now = call("GET", f"appStoreVersionLocalizations/{en_id}/{shots_rel}", limit=200).get("data", [])
               for st in sets_now:
                   st_rels2 = rel_names(f"{st['type']}/{st['id']}")
@@ -328,7 +341,14 @@ jobs:
                   for sh in call("GET", f"{st['type']}/{st['id']}/{sub2}", limit=50).get("data", []):
                       a = sh.get("attributes") or {}
                       ads = a.get("assetDeliveryState") or {}
-                      print("ASSET", a.get("fileName"), "state=", ads.get("state"), "type=", st["attributes"].get("screenshotDisplayType"))
+                      state = ads.get("state")
+                      print("ASSET", a.get("fileName"), "state=", state, "type=", st["attributes"].get("screenshotDisplayType"))
+                      if state and state not in ("COMPLETE",):
+                          try:
+                              call("DELETE", f"appScreenshots/{sh['id']}")
+                              print("DELETED stuck placeholder:", a.get("fileName"), state)
+                          except Exception as de:
+                              print("[DELETE ERROR]", de)
           except Exception as e:
               print("[DATA USAGE ERROR]", e)
 
