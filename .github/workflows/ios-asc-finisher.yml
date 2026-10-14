@@ -302,19 +302,14 @@ jobs:
 
           # ---- App Privacy / data usage discovery (read-only this run) ----
           try:
-              try:
-                  du_top = call("GET", "appDataUsages", **{"filter[app]": APP_ID, "limit": 50})
-                  du_list = du_top.get("data", [])
-                  print("TOP-LEVEL appDataUsages:", len(du_list))
-                  for u in du_list[:25]:
-                      print("  ", u["type"], u["id"], json.dumps(u.get("attributes") or {}))
-                      urels = rel_names(f"{u['type']}/{u['id']}")
-                      print("    rels:", urels)
-                      for ur in [r for r in urels if "urpose" in r.lower()]:
-                          ups = call("GET", f"{u['type']}/{u['id']}/{ur}", limit=50).get("data", [])
-                          print("    purposes:", json.dumps([p.get("attributes") for p in ups]))
-              except Exception as e:
-                  print("[APPDATAUSAGES ERROR]", e)
+              print("FULL APP RELATIONSHIPS:", rel_names(f"apps/{APP_ID}"))
+              for cand in ["appDataUsageDeclarations", "appDataCollections", "appPrivacyAnswers", "dataUsages", "appDataUsageDetails", "appDataUsages"]:
+                  try:
+                      r = call("GET", cand, **{"filter[app]": APP_ID, "limit": 50})
+                      print("PROBE", cand, "->", json.dumps(r)[:800])
+                  except Exception as e:
+                      msg = str(e)
+                      print("PROBE", cand, "->", msg[:120].replace("\n", " "))
               app_info_id = call("GET", f"apps/{APP_ID}/appInfos").get("data", [{}])[0].get("id")
               irels = rel_names(f"appInfos/{app_info_id}")
               print("APPINFO RELATIONSHIPS:", irels)
