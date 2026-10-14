@@ -84,10 +84,13 @@ jobs:
           }), "listing text")
 
           # 2. images (replace all of each type, in order)
+          # NOTE: binary media uploads go under Google's /upload/ path prefix.
+          UP = "https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications/com.metricorex.app"
+
           def upload_image(image_type, path):
               with open(path, "rb") as fh:
-                  r = s.post(f"{base}/edits/{eid}/images/en-US",
-                             params={"imageType": image_type},
+                  r = s.post(f"{UP}/edits/{eid}/images/en-US",
+                             params={"imageType": image_type, "uploadType": "media"},
                              data=fh.read(),
                              headers={"Content-Type": "image/png"})
               if r.status_code >= 300:
