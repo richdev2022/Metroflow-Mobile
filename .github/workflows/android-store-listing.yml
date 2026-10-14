@@ -42,55 +42,80 @@ jobs:
           fi
           printf '%s' "$PLAY_SERVICE_ACCOUNT_JSON" > "$RUNNER_TEMP/play-sa.json"
 
-      - name: Setup Ruby + fastlane
-        uses: ruby/setup-ruby@v1
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          ruby-version: '3.3'
+          python-version: '3.12'
 
-      - name: Install fastlane
-        run: gem install fastlane --no-document
+      - name: Install google-auth
+        run: pip install google-auth --quiet
 
-      # Metadata-only supply run: uploads listing text + images.
-      # No --track / --aab here on purpose (binary already staged as the
-      # closed-testing draft; listing updates are independent of tracks).
-      - name: Upload store listing (text, icon, feature graphic, screenshots)
+      # Direct Play Developer API upload (no fastlane): listing text,
+      # icon, feature graphic, phone screenshots, contact details.
+      - name: Upload store listing via Play API
         run: |
-          fastlane supply \
-            --json_key "$RUNNER_TEMP/play-sa.json" \
-            --package_name com.metricorex.app \
-            --metadata_path fastlane/metadata/android \
-            --skip_upload_changelogs true
-
-      - name: Set store contact details (edits.details)
-        run: |
-          pip install google-auth --quiet
           python3 - <<'PY'
           import json, os
           from google.oauth2 import service_account
           from google.auth.transport.requests import AuthorizedSession
 
-          creds = service_account.Credentials.from_service_account_file(
-              os.path.join(os.environ["RUNNER_TEMP"], "play-sa.json"),
-              scopes=["https://www.googleapis.com/auth/androidpublisher"])
-          s = AuthorizedSession(creds)
-          base = "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/com.metricorex.app"
+          KEY = os.path.join(os.environ["RUNNER_TEMP"], "play-sa.json")
+          META = "fastlane/metadata/android/en-US"
+          PKG = "com.metricorex.app"
 
-          edit = s.post(f"{base}/edits").json()
-          eid = edit["id"]
+          creds = service_account.Credentials.from_service_account_file(
+              KEY, scopes=["https://www.googleapis.com/auth/androidpublisher"])
+          s = AuthorizedSession(creds)
+          base = f"https://androidpublisher.googleapis.com/androidpublisher/v3/applications/{PKG}"
+
+          eid = s.post(f"{base}/edits").json()["id"]
           print("edit:", eid)
 
-          r = s.patch(f"{base}/edits/{eid}/details", json={
+          def must(resp, what):
+              if resp.status_code >= 300:
+                  raise SystemExit(f"FAIL {what}: {resp.status_code} {resp.text[:500]}")
+              print("OK", what)
+
+          # 1. listing text
+          must(s.patch(f"{base}/edits/{eid}/listings/en-US", json={
+              "title": open(f"{META}/title.txt").read().strip(),
+              "shortDescription": open(f"{META}/short_description.txt").read().strip(),
+              "fullDescription": open(f"{META}/full_description.txt").read().strip(),
+          }), "listing text")
+
+          # 2. images (replace all of each type, in order)
+          def upload_image(image_type, path):
+              with open(path, "rb") as fh:
+                  r = s.post(f"{base}/edits/{eid}/images/en-US",
+                             params={"imageType": image_type},
+                             files={"image": (os.path.basename(path), fh, "image/png")})
+              must(r, f"image {image_type} {os.path.basename(path)} -> {r.json().get('id')}")
+
+          for image_type, directory in [("icon", "images"),
+                                        ("featureGraphic", "images"),
+                                        ("phoneScreenshots", "images/phoneScreenshots")]:
+              # drop any existing images of this type first
+              d = s.delete(f"{base}/edits/{eid}/images/en-US", params={"imageType": image_type})
+              print("clear", image_type, "->", d.status_code)
+              if image_type == "icon":
+                  upload_image(image_type, f"{META}/images/icon.png")
+              elif image_type == "featureGraphic":
+                  upload_image(image_type, f"{META}/images/featureGraphic.png")
+              else:
+                  for name in sorted(os.listdir(f"{META}/{directory}")):
+                      if name.lower().endswith(".png"):
+                          upload_image(image_type, f"{META}/{directory}/{name}")
+
+          # 3. contact details
+          must(s.patch(f"{base}/edits/{eid}/details", json={
               "defaultLanguage": "en-US",
               "contactEmail": "sunday@metricorex.com",
               "contactPhone": "+234 816 334 9199",
               "contactWebsite": "https://metricorex.com",
-          })
-          print("details:", r.status_code, r.text[:300])
+          }), "contact details")
 
-          c = s.post(f"{base}/edits/{eid}:commit")
-          print("commit:", c.status_code, c.text[:200])
-          if c.status_code >= 300:
-              raise SystemExit(1)
+          must(s.post(f"{base}/edits/{eid}:commit"), "commit")
+          print("STORE LISTING UPLOADED")
           PY
 
       - name: Cleanup key material
