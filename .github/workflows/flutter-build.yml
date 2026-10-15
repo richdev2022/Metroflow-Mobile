@@ -86,7 +86,7 @@ jobs:
       # within the same minute would collide — Play rejects the duplicate with
       # a clear error and a retry succeeds a minute later.
       - name: Compute versionCode
-        run: echo "VERSION_CODE=$(date -u +%s)" >> "$GITHUB_ENV"
+        run: echo "VERSION_CODE=$(( ${{ github.run_number }} + 1000 ))" >> "$GITHUB_ENV"
 
       - name: Build APK
         working-directory: metroflow_flutter
@@ -118,7 +118,10 @@ jobs:
       # (first upload is manual, Google requires it).
       # ---------------------------------------------------------------------
       - name: Upload to Google Play (internal testing)
-        if: env.PLAY_SERVICE_ACCOUNT_JSON != ''
+        if: false # auto-upload DISABLED — publishing is centralized in
+        # android-play-internal.yml (manual dispatch). Auto-uploads from
+        # epoch-seconds builds previously bled huge versionCodes onto the
+        # internal track and consumed Play's versionCode space.
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
