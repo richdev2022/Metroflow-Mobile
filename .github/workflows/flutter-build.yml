@@ -75,18 +75,16 @@ jobs:
             echo "ANDROID_KEY_PASSWORD=$ANDROID_KEY_PASSWORD"
           } >> "$GITHUB_ENV"
 
-      # versionCode = UTC epoch SECONDS — ONE app-wide monotonic counter for
-      # every Play publishing workflow (flutter-build / android-play-internal
-      # / store-production-release). No cross-workflow coordination needed and
-      # no upload can ever fall below the app-wide maximum (the old
-      # run_number+offset schemes broke the moment a higher-offset build hit
-      # production: every later +1000 upload would be rejected). Play's
-      # 2,100,000,000 cap is safe until ~2036 (headroom 3e8 s).. Computed ONCE
-      # here so the APK and AAB always share the same versionCode. Two uploads
-      # within the same minute would collide — Play rejects the duplicate with
-      # a clear error and a retry succeeds a minute later.
+      # versionCode = run_number + 1000 — small, strictly increasing, far
+      # below Play's 2,100,000,000 cap. NEVER use date/epoch codes again:
+      # date +%s (~1.79e9) burned five codes on the internal track
+      # (1791920059..1791923832) and tripped Play's "version code
+      # significantly higher than previous" warning; the space would be
+      # exhausted by ~2036. Publishing is CENTRALIZED in
+      # android-play-internal.yml (+50000) and store-production-release.yml
+      # (+90000) — this workflow only builds artifacts.
       - name: Compute versionCode
-        run: echo "VERSION_CODE=$(date -u +%s)" >> "$GITHUB_ENV"
+        run: echo "VERSION_CODE=$(( ${{ github.run_number }} + 1000 ))" >> "$GITHUB_ENV"
 
       - name: Build APK
         working-directory: metroflow_flutter
@@ -117,8 +115,13 @@ jobs:
       # upload. Requirement: the app must already EXIST in Play Console
       # (first upload is manual, Google requires it).
       # ---------------------------------------------------------------------
+      # DISABLED (2026-10-14): internal track holds epoch-based versionCode
+      # 1791923832 which run_number+1000 can never exceed — every upload
+      # would be rejected by Play. Publishing is centralized in
+      # android-play-internal.yml (alpha) and store-production-release.yml
+      # (production tags).
       - name: Upload to Google Play (internal testing)
-        if: env.PLAY_SERVICE_ACCOUNT_JSON != ''
+        if: false # was: env.PLAY_SERVICE_ACCOUNT_JSON != ''
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
