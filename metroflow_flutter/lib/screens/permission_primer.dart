@@ -113,7 +113,8 @@ class _PermissionPrimerSheet extends StatefulWidget {
   State<_PermissionPrimerSheet> createState() => _PermissionPrimerSheetState();
 }
 
-class _PermissionPrimerSheetState extends State<_PermissionPrimerSheet> {
+class _PermissionPrimerSheetState extends State<_PermissionPrimerSheet>
+    with WidgetsBindingObserver {
   _PrimerStatus _notifications = _PrimerStatus.waiting;
   _PrimerStatus _camera = _PrimerStatus.waiting;
   _PrimerStatus _microphone = _PrimerStatus.waiting;
@@ -121,10 +122,59 @@ class _PermissionPrimerSheetState extends State<_PermissionPrimerSheet> {
   bool _notifPermanentlyDenied = false;
   bool _busy = false;
 
+  /// USER REQUIREMENT ("click to allow isn't opening the permission on the
+  /// settings, it just works the same as skipped"): once the OS has stopped
+  /// showing its own prompt for a permission (asked at least once before and
+  /// still denied), tapping Allow must deep-link to THIS app's system
+  /// settings page — never silently do nothing.
+  static const String _askedPrefix = 'permission_primer_asked_';
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _readCurrentStatuses();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Returning from the system settings page (or an OS dialog): re-read the
+    // live permission statuses so the tiles reflect what the user granted.
+    if (state == AppLifecycleState.resumed) {
+      _readCurrentStatuses();
+    }
+  }
+
+  Future<bool> _wasAskedBefore(_PrimerRow row) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool('$_askedPrefix${row.name}') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _markAsked(_PrimerRow row) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('$_askedPrefix${row.name}', true);
+    } catch (_) {}
+  }
+
+  /// True when the OS will never show its own prompt again for [permission].
+  Future<bool> _osPromptUnavailable(Permission permission) async {
+    try {
+      final status = await permission.status;
+      return status.isPermanentlyDenied || status.isRestricted;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> _readCurrentStatuses() async {
@@ -154,35 +204,76 @@ class _PermissionPrimerSheetState extends State<_PermissionPrimerSheet> {
         case _PrimerRow.notifications:
           // Permanently denied: the OS will never show the prompt again —
           // deep-link to the app settings page instead.
-          if (_notifPermanentlyDenied) {
+          if (await _osPromptUnavailable(Permission.notification)) {
+            await _markAsked(row);
             await openAppSettings();
-            if (mounted) setState(() => _notifications = _PrimerStatus.denied);
-            break;
+            return;
           }
+          final asked = await _wasAskedBefore(row);
           final result = await Permission.notification.request();
+          await _markAsked(row);
           if (!mounted) return;
           setState(() {
             _notifications =
                 result.isGranted ? _PrimerStatus.granted : _PrimerStatus.denied;
             _notifPermanentlyDenied = result.isPermanentlyDenied;
           });
+          // Still denied after a request and the OS is no longer showing its
+          // dialog (permanently denied now, or we already asked once before):
+          // take the user to system settings instead of doing nothing.
+          if (!result.isGranted &&
+              (result.isPermanentlyDenied || asked) &&
+              mounted) {
+            await openAppSettings();
+          }
           break;
         case _PrimerRow.camera:
+          if (await _osPromptUnavailable(Permission.camera)) {
+            await _markAsked(row);
+            await openAppSettings();
+            return;
+          }
+          final asked = await _wasAskedBefore(row);
           final result = await Permission.camera.request();
+          await _markAsked(row);
           if (!mounted) return;
           setState(() => _camera = result.isGranted ? _PrimerStatus.granted : _PrimerStatus.denied);
+          if (!result.isGranted &&
+              (result.isPermanentlyDenied || asked) &&
+              mounted) {
+            await openAppSettings();
+          }
           break;
         case _PrimerRow.microphone:
+          if (await _osPromptUnavailable(Permission.microphone)) {
+            await _markAsked(row);
+            await openAppSettings();
+            return;
+          }
+          final asked = await _wasAskedBefore(row);
           final result = await Permission.microphone.request();
+          await _markAsked(row);
           if (!mounted) return;
           setState(() =>
               _microphone = result.isGranted ? _PrimerStatus.granted : _PrimerStatus.denied);
+          if (!result.isGranted &&
+              (result.isPermanentlyDenied || asked) &&
+              mounted) {
+            await openAppSettings();
+          }
           break;
         case _PrimerRow.photos:
           // Photos (Android 13+/iOS 14+) with the legacy storage fallback —
           // at least one granted counts.
+          if (await _osPromptUnavailable(Permission.photos)) {
+            await _markAsked(row);
+            await openAppSettings();
+            return;
+          }
+          final asked = await _wasAskedBefore(row);
           final photos = await Permission.photos.request();
-          var granted = photos.isGranted;
+          await _markAsked(row);
+          var granted = photos.isGranted || photos.isLimited;
           if (!granted) {
             try {
               final storage = await Permission.storage.request();
@@ -191,6 +282,9 @@ class _PermissionPrimerSheetState extends State<_PermissionPrimerSheet> {
           }
           if (!mounted) return;
           setState(() => _photos = granted ? _PrimerStatus.granted : _PrimerStatus.denied);
+          if (!granted && (photos.isPermanentlyDenied || asked) && mounted) {
+            await openAppSettings();
+          }
           break;
       }
     } catch (e) {

@@ -1,11 +1,13 @@
 import 'dart:io';
 
 import 'package:dio/dio.dart' show Response;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/business_profile.dart';
 import '../models/kyc_status.dart';
 import '../models/subscription.dart';
@@ -112,7 +114,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _hasBiometricHardware = false;
   bool _deviceCredentialSupported = false;
   String _editIndustry = '';
-  String _editCurrency = 'NGN';
   String _otpPreference = 'email';
   bool _otpEnabled = true;
   bool _pinCreated = false;
@@ -213,7 +214,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         _settings = profile;
         _nameController.text = profile.name;
         _editIndustry = profile.industry;
-        _editCurrency = profile.currency.isEmpty ? 'NGN' : profile.currency;
+        // Currency is intentionally NOT part of the business profile editor
+        // any more: the transfer flow lets the user pick a currency per
+        // transaction, so a workspace-wide default here only confused things.
         // The server copy of the business timezone is authoritative — adopt it
         // whenever the settings screen loads, so mobile stays in sync with web.
         final serverTz = (settingsData['settings'] as Map<String, dynamic>)['timezone'];
@@ -276,7 +279,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       await ApiService().updateSettings({
         'name': _nameController.text.trim(),
         'industry': _editIndustry,
-        'currency': _editCurrency,
       });
       AppToast.show('Profile updated successfully', type: AppToastType.success);
       if (mounted) Navigator.of(context).pop();
@@ -294,9 +296,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   /// PERSONAL profile editor for invited team members (non-admins):
-  /// name + phone number. EMAIL IS READ-ONLY — it identifies the account and
-  /// cannot be changed. Phone numbers saved here are unverified until the
-  /// user confirms an OTP (verification lives in the profile flows).
+  /// name + phone number + THEIR OWN email. The email change is OTP-gated
+  /// (a code goes to the new address; /settings/profile/email/* stages it in
+  /// users.temp_email and commits only after verification) — the same flow
+  /// the phone change uses. Business-level details stay owner/admin-only.
   Future<void> _showPersonalProfileModal() async {
     String email = ref.read(userProfileProvider).email;
     String phone = '';
@@ -316,7 +319,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     final nameController = TextEditingController(text: ref.read(userProfileProvider).name);
     final phoneController = TextEditingController(text: phone);
+    final emailController = TextEditingController(text: email);
+    final emailOtpController = TextEditingController();
     bool saving = false;
+    bool emailCodeSent = false;
+    bool verifyingEmail = false;
 
     await showModalBottomSheet<void>(
       context: context,
@@ -325,78 +332,151 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       builder: (sheetContext) => StatefulBuilder(
         builder: (sheetContext, setModalState) => _modalShell(
           title: 'My Profile',
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _fieldLabel('Full Name'),
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(hintText: 'Your name'),
-              ),
-              const SizedBox(height: 16),
-              _fieldLabel('Email'),
-              TextField(
-                controller: TextEditingController(text: email),
-                enabled: false,
-                decoration: InputDecoration(
-                  hintText: email,
-                  helperText: 'Email can\'t be changed — it identifies your account',
-                  helperStyle: const TextStyle(fontSize: 11),
-                  suffixIcon: Icon(Icons.lock_outline,
-                      size: 18, color: AppTheme.colors.textSecondary),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _fieldLabel('Full Name'),
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(hintText: 'Your name'),
                 ),
-              ),
-              const SizedBox(height: 16),
-              _fieldLabel('Phone Number'),
-              TextField(
-                controller: phoneController,
-                keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(hintText: 'Phone Number'),
-              ),
-              const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: saving
-                    ? null
-                    : () async {
-                        final name = nameController.text.trim();
-                        if (name.isEmpty) {
-                          AppToast.show('Your name is required',
-                              type: AppToastType.error);
-                          return;
-                        }
-                        setModalState(() => saving = true);
-                        try {
-                          await ApiService().saveMyProfile(
-                            name: name,
-                            phoneNumber: phoneController.text.trim(),
-                          );
-                          ref
-                              .read(userProfileProvider.notifier)
-                              .setName(name);
-                          AppToast.show('Profile updated successfully',
-                              type: AppToastType.success);
-                          if (sheetContext.mounted) {
-                            Navigator.of(sheetContext).pop();
+                const SizedBox(height: 16),
+                _fieldLabel('Email'),
+                TextField(
+                  controller: emailController,
+                  keyboardType: TextInputType.emailAddress,
+                  textCapitalization: TextCapitalization.none,
+                  decoration: InputDecoration(
+                    hintText: 'Your email address',
+                    helperText: emailCodeSent
+                        ? 'Enter the code sent to your new email to finish'
+                        : 'Changed email? We send a verification code first',
+                    helperStyle: const TextStyle(fontSize: 11),
+                  ),
+                ),
+                if (emailCodeSent) ...[
+                  const SizedBox(height: 12),
+                  _fieldLabel('Email Verification Code'),
+                  TextField(
+                    controller: emailOtpController,
+                    keyboardType: TextInputType.number,
+                    maxLength: 6,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 20, letterSpacing: 4),
+                    decoration: const InputDecoration(hintText: '6-digit code'),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton(
+                    onPressed: verifyingEmail
+                        ? null
+                        : () async {
+                            final otp = emailOtpController.text.trim();
+                            if (otp.length != 6) {
+                              AppToast.show('Enter the 6-digit code emailed to you',
+                                  type: AppToastType.error);
+                              return;
+                            }
+                            setModalState(() => verifyingEmail = true);
+                            try {
+                              await ApiService().verifyProfileEmailOtp(otp);
+                              emailOtpController.clear();
+                              emailCodeSent = false;
+                              if (sheetContext.mounted) setModalState(() {});
+                              AppToast.show('Email updated successfully',
+                                  type: AppToastType.success);
+                              await _fetchData();
+                            } catch (e) {
+                              debugPrint('Personal email verify failed: $e');
+                              AppToast.show(ApiService.extractErrorMessage(e),
+                                  type: AppToastType.error);
+                            } finally {
+                              setModalState(() => verifyingEmail = false);
+                            }
+                          },
+                    child: verifyingEmail
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Verify & Update Email'),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                _fieldLabel('Phone Number'),
+                TextField(
+                  controller: phoneController,
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(hintText: 'Phone Number'),
+                ),
+                const SizedBox(height: 24),
+                ElevatedButton(
+                  onPressed: saving
+                      ? null
+                      : () async {
+                          final name = nameController.text.trim();
+                          if (name.isEmpty) {
+                            AppToast.show('Your name is required',
+                                type: AppToastType.error);
+                            return;
                           }
-                        } catch (e) {
-                          debugPrint('Personal profile save failed: $e');
-                          AppToast.show(ApiService.extractErrorMessage(e),
-                              type: AppToastType.error);
-                        } finally {
-                          setModalState(() => saving = false);
-                        }
-                      },
-                child: saving
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child:
-                            CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                      )
-                    : const Text('Save Changes'),
-              ),
-            ],
+                          setModalState(() => saving = true);
+                          try {
+                            await ApiService().saveMyProfile(
+                              name: name,
+                              phoneNumber: phoneController.text.trim(),
+                            );
+                            ref
+                                .read(userProfileProvider.notifier)
+                                .setName(name);
+                            AppToast.show('Profile updated successfully',
+                                type: AppToastType.success);
+
+                            // EMAIL CHANGE — OTP-gated. Only when the address
+                            // actually changed: a code is emailed to the NEW
+                            // address and the inline code field appears.
+                            final newEmail = emailController.text.trim().toLowerCase();
+                            final currentEmail =
+                                ref.read(userProfileProvider).email.toLowerCase();
+                            if (!emailCodeSent &&
+                                newEmail.isNotEmpty &&
+                                newEmail != currentEmail) {
+                              try {
+                                await ApiService().requestProfileEmailOtp(newEmail);
+                                emailCodeSent = true;
+                                if (sheetContext.mounted) setModalState(() {});
+                                AppToast.show(
+                                    'Verification code sent to $newEmail — enter it above to finish',
+                                    type: AppToastType.success);
+                              } catch (e) {
+                                debugPrint('Personal email OTP failed: $e');
+                                AppToast.show(ApiService.extractErrorMessage(e),
+                                    type: AppToastType.error);
+                              }
+                            } else if (sheetContext.mounted && !emailCodeSent) {
+                              Navigator.of(sheetContext).pop();
+                            }
+                          } catch (e) {
+                            debugPrint('Personal profile save failed: $e');
+                            AppToast.show(ApiService.extractErrorMessage(e),
+                                type: AppToastType.error);
+                          } finally {
+                            setModalState(() => saving = false);
+                          }
+                        },
+                  child: saving
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child:
+                              CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Text('Save Changes'),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1260,6 +1340,27 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  /// ACCOUNT DELETION (Apple Guideline 5.1.1(v) / Google Play policy):
+  /// opens the official deletion page — https://metricorex.com/delete-account —
+  /// inside the app (web view on mobile; a new tab on Flutter web, where
+  /// webview_flutter has no implementation). The page emails a confirmation
+  /// link so the request is owner-verified before anything is erased.
+  void _openDeleteAccount() {
+    const url = 'https://metricorex.com/delete-account';
+    if (kIsWeb) {
+      launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => const InAppWebViewScreen(
+          title: 'Delete Account',
+          url: url,
+        ),
+      ),
+    );
+  }
+
   void _showInfo(String title, String message) {
     showDialog<void>(
       context: context,
@@ -1340,14 +1441,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     _settingItem(
                       icon: Icons.mail_outline,
                       title: 'Update Email',
-                      subtitle: _settings?.email,
-                      onTap: () => _showContactModal('email'),
+                      // ADMINS edit the BUSINESS email; invited members edit
+                      // their OWN (personal) contact details instead — the
+                      // backend enforces the same split (owner/admin only for
+                      // /settings/update-contact).
+                      subtitle: _isBusinessAdmin
+                          ? (_settings?.email ?? '')
+                          : (ref.watch(userProfileProvider).email.isNotEmpty
+                              ? ref.watch(userProfileProvider).email
+                              : 'Your personal email address'),
+                      onTap: () => _isBusinessAdmin
+                          ? _showContactModal('email')
+                          : _showPersonalProfileModal(),
                     ),
                     _settingItem(
                       icon: Icons.call_outlined,
                       title: 'Update Phone',
-                      subtitle: _settings?.phoneNumber,
-                      onTap: () => _showContactModal('phone'),
+                      subtitle: _isBusinessAdmin
+                          ? (_settings?.phoneNumber ?? '')
+                          : 'Your personal phone number',
+                      onTap: () => _isBusinessAdmin
+                          ? _showContactModal('phone')
+                          : _showPersonalProfileModal(),
                     ),
                     _settingItem(
                       icon: Icons.verified_user_outlined,
@@ -1490,6 +1605,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       subtitle: _appVersionLabel ??
                           'See if a newer version of MetriCorex is available',
                       onTap: () => AppUpdateService.instance.checkManually(),
+                    ),
+                    _settingItem(
+                      icon: Icons.delete_outline,
+                      title: 'Delete Account',
+                      subtitle:
+                          'Request account deletion — we email you a confirmation link',
+                      onTap: _openDeleteAccount,
                     ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
@@ -2052,64 +2174,49 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) => _modalShell(
           title: 'Edit Profile',
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _fieldLabel('Business Name'),
-              TextField(
-                controller: _nameController,
-                decoration: const InputDecoration(hintText: 'Business Name'),
-              ),
-              const SizedBox(height: 16),
-              _fieldLabel('Industry'),
-              InkWell(
-                borderRadius: BorderRadius.circular(12),
-                onTap: () => _showIndustryPicker(onSelected: () => setModalState(() {})),
-                child: InputDecorator(
-                  decoration: const InputDecoration(),
-                  child: Text(
-                    _editIndustry.isEmpty ? 'Select Industry' : _editIndustry,
-                    style: TextStyle(
-                      color: _editIndustry.isEmpty
-                          ? AppTheme.colors.textSecondary
-                          : AppTheme.colors.text,
+          // Scrollable so Industry is always reachable on small screens / with
+          // the keyboard up (the fixed Column used to push it off-screen,
+          // which read as "the industry section never loads").
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _fieldLabel('Business Name'),
+                TextField(
+                  controller: _nameController,
+                  decoration: const InputDecoration(hintText: 'Business Name'),
+                ),
+                const SizedBox(height: 16),
+                _fieldLabel('Industry'),
+                InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () => _showIndustryPicker(onSelected: () => setModalState(() {})),
+                  child: InputDecorator(
+                    decoration: const InputDecoration(),
+                    child: Text(
+                      _editIndustry.isEmpty ? 'Select Industry' : _editIndustry,
+                      style: TextStyle(
+                        color: _editIndustry.isEmpty
+                            ? AppTheme.colors.textSecondary
+                            : AppTheme.colors.text,
+                      ),
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              _fieldLabel('Currency'),
-              Row(
-                children: ['NGN', 'USD'].map((currency) {
-                  final selected = _editCurrency == currency;
-                  return Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: ChoiceChip(
-                        label: Text(currency),
-                        selected: selected,
-                        onSelected: (_) {
-                          setState(() => _editCurrency = currency);
-                          setModalState(() {});
-                        },
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ),
-              const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: _isSaving ? null : _handleUpdateProfile,
-                child: _isSaving
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                      )
-                    : const Text('Save Changes'),
-              ),
-            ],
+                const SizedBox(height: 24),
+                ElevatedButton(
+                  onPressed: _isSaving ? null : _handleUpdateProfile,
+                  child: _isSaving
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Text('Save Changes'),
+                ),
+              ],
+            ),
           ),
         ),
       ),

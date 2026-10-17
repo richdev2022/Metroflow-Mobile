@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:dio/dio.dart';
+import 'dart:async';
 import '../components/google_sign_in_button.dart';
 import '../theme/app_theme.dart';
 import '../providers/auth_provider.dart';
@@ -27,6 +28,24 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _biometricLoading = false;
   bool _biometricsAvailable = false;
   bool _showBiometricsSetupModal = false;
+
+  /// FIRST-LOGIN ORDERING FIX: the biometric activation offer and the
+  /// permissions primer both fire right after a successful login. The primer
+  /// used to present 900ms later and COVER the biometric dialog — on a fresh
+  /// device the user only ever saw the permission sheet, so the biometric
+  /// activation appeared to never come up. The gate completes when the user
+  /// enables/skips biometrics; the primer waits for it.
+  Completer<void>? _biometricGate;
+
+  void _openBiometricGate() {
+    _biometricGate = Completer<void>();
+  }
+
+  void _closeBiometricGate() {
+    if (_biometricGate != null && !_biometricGate!.isCompleted) {
+      _biometricGate!.complete();
+    }
+  }
 
   /// ANDROID MULTI-TRIGGER FIX: one shared in-flight guard for BOTH biometric
   /// call sites ("Sign in with Biometrics" + the setup-modal "Enable
@@ -117,14 +136,20 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       }
 
       final userId = ref.read(authProvider).userId ?? await StorageService().getUserId();
-      final isEnabled = await BiometricService.isEnabled(userId);
-      final promptShown = await BiometricService.hasPromptBeenShown(userId);
+      // PER-ACCOUNT flags are only meaningful with a real account id. A
+      // missing id (fresh install, race before persistence) must behave like
+      // a BRAND-NEW account: offer activation, never inherit a stale
+      // device-wide flag that would silence the prompt on first login.
+      final hasAccount = userId != null && userId.isNotEmpty;
+      final isEnabled = hasAccount ? await BiometricService.isEnabled(userId) : false;
+      final promptShown = hasAccount ? await BiometricService.hasPromptBeenShown(userId) : false;
       final canAuth = await BiometricService.canAuthenticate();
 
       if (canAuth && !isEnabled && !promptShown) {
         if (mounted) {
           setState(() {
             _showBiometricsSetupModal = true;
+            _openBiometricGate();
           });
         }
       } else {
@@ -190,16 +215,19 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           setState(() {
             _showBiometricsSetupModal = false;
           });
+          _closeBiometricGate();
           await _showAlert(
               'Success', 'Biometric login enabled successfully!',
               onExtra: () => context.go('/main'));
         }
       } else {
+        _closeBiometricGate();
         if (mounted) {
           await _showAlert('Error', result.error ?? 'Failed to enable biometric login');
         }
       }
     } catch (e) {
+      _closeBiometricGate();
       if (mounted) {
         await _showAlert('Error', 'An error occurred');
       }
@@ -223,6 +251,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     setState(() {
       _showBiometricsSetupModal = false;
     });
+    _closeBiometricGate();
     if (mounted) context.go('/main');
   }
 
@@ -275,6 +304,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           );
 
       await _checkKycAndNavigate();
+      // Wait for the biometric activation decision first (if the offer is
+      // up) so the permissions primer cannot bury it — first-login order:
+      // biometric offer → permissions primer → dashboard.
+      final gate = _biometricGate;
+      if (gate != null && !gate.isCompleted) {
+        await gate.future;
+      }
       // One-time permissions primer (never blocks — flag-gated inside).
       await PermissionPrimer.maybeShow();
       // In-app update prompt: checked shortly after landing so the target
@@ -348,6 +384,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       }
 
       await _checkKycAndNavigate();
+      // Same first-login ordering as password login: the biometric activation
+      // offer (when shown) must be answered before the permissions primer
+      // stacks on top of it.
+      final gate = _biometricGate;
+      if (gate != null && !gate.isCompleted) {
+        await gate.future;
+      }
       // One-time permissions primer (never blocks — flag-gated inside).
       await PermissionPrimer.maybeShow();
       // Same post-login update prompt as password login (de-duped inside
