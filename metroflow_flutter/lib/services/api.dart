@@ -2266,6 +2266,22 @@ class ApiService {
         data: {'phone': phone, 'otp': otp});
   }
 
+  /// Send the email verification code for changing the CALLER'S OWN email
+  /// (any role — personal contact detail; the BUSINESS email stays
+  /// owner/admin-only via /settings/update-contact). The code goes to the
+  /// NEW address; /settings/profile/email/verify-otp commits it.
+  Future<Response> requestProfileEmailOtp(String email) async {
+    return await _dio.post('/settings/profile/email/send-otp',
+        data: {'email': email});
+  }
+
+  /// Verify the email code and commit the address change (OTP-gated because
+  /// users.email is the login identity).
+  Future<Response> verifyProfileEmailOtp(String otp) async {
+    return await _dio.post('/settings/profile/email/verify-otp',
+        data: {'otp': otp});
+  }
+
   /// Skip CTA for the first-login profile completion prompt (server-persisted
   /// so the prompt does not reappear on other devices).
   Future<Response> dismissProfilePrompt() async {
