@@ -49,6 +49,8 @@ jobs:
       # Probe: does com.metricorex.app still exist on the account linked to
       # this SA? (edits().insert succeeds only if the app record exists)
       - name: Probe app record existence
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
         run: |
           printf '%s' "$PLAY_SERVICE_ACCOUNT_JSON" > "$RUNNER_TEMP/play-sa.json"
           python3 - <<'PY'
