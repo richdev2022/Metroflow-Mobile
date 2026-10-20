@@ -66,6 +66,14 @@ jobs:
           try:
               e = svc.edits().insert(packageName=PKG, body={}).execute()
               print("APP_RECORD=EXISTS (edit created then discarded)")
+              try:
+                  tracks = svc.edits().tracks().list(packageName=PKG, editId=e["id"]).execute()
+                  for t in tracks.get("tracks", []):
+                      for r in t.get("releases", []):
+                          print("TRACK_STATE=%s status=%s versionCodes=%s" % (
+                              t.get("track"), r.get("status"), r.get("versionCodes")))
+              except Exception as e2:
+                  print("TRACKS_READ_ERROR=", str(e2)[:200])
               svc.edits().delete(packageName=PKG, editId=e["id"]).execute()
           except Exception as ex:
               msg = str(ex)
