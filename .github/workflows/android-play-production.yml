@@ -1,0 +1,223 @@
+name: Android Play Production (new account)
+
+# One-shot push-triggered publish for the NEW Google Play developer account
+# (metricorexlimited@gmail.com — business account). STAGED on branch
+# ci/play-new-account-staged (non-triggering name). To arm it, push this
+# content to the branch name ci/play-new-account-publish:
+#   git push origin ci/play-new-account-staged:ci/play-new-account-publish
+# Requires, BEFORE arming:
+#   1. Old (rejected) account: com.metricorex.app app record deleted
+#   2. New account: app entry created (package com.metricorex.app)
+#   3. New account: Setup → API access → GCP project metricorex-play-deploy linked
+#   4. New account: play-publisher@metricorex-play-deploy.iam.gserviceaccount.com
+#      invited in Users and permissions (Admin)
+#
+# Does, via the Play Developer API:
+#   - builds the signed release AAB (versionCode = run_number + 50000)
+#   - uploads it to the PRODUCTION track as a DRAFT release + release notes
+#   - uploads the full store listing TEXTS (title, short + full description)
+#   - uploads icon, feature graphic and 8 phone screenshots
+#   - sets store contact details (email / phone / website)
+#   - sets production country availability (all supported + rest of world)
+#
+# Console-only residue (user, with prepared cheat-sheet): App content forms
+# (privacy policy, ads, content rating, target audience, data safety,
+# financial features), App access credentials, then Production → Send for review.
+
+on:
+  push:
+    branches:
+      - ci/play-new-account-publish
+
+concurrency:
+  group: play-publish-new
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.1'
+          cache: true
+
+      - name: Restore release keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is not set — a release AAB cannot be signed without it."
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/metricorex-release.keystore"
+          {
+            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/metricorex-release.keystore"
+            echo "ANDROID_KEYSTORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD"
+            echo "ANDROID_KEY_ALIAS=$ANDROID_KEY_ALIAS"
+            echo "ANDROID_KEY_PASSWORD=$ANDROID_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+
+      - name: Install Flutter dependencies
+        working-directory: metroflow_flutter
+        run: flutter pub get
+
+      - name: Build signed AAB
+        working-directory: metroflow_flutter
+        run: |
+          VER=$(( ${{ github.run_number }} + 50000 ))
+          echo "VERSION_CODE=$VER" >> "$GITHUB_ENV"
+          flutter build appbundle --release --build-number=$VER
+
+      - name: Upload AAB artifact (backup copy)
+        uses: actions/upload-artifact@v4
+        with:
+          name: metricorex-aab-${{ github.run_number }}
+          path: metroflow_flutter/build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+
+      - name: Write service-account key
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -z "$PLAY_SERVICE_ACCOUNT_JSON" ]; then
+            echo "::error::PLAY_SERVICE_ACCOUNT_JSON secret is not set."
+            exit 1
+          fi
+          printf '%s' "$PLAY_SERVICE_ACCOUNT_JSON" > "$RUNNER_TEMP/play-service-account.json"
+
+      - name: Pre-flight — verify app record exists on the new account
+        run: |
+          python3 - <<'PY'
+          import os, sys
+          from google.oauth2 import service_account
+          from googleapiclient.discovery import build
+
+          KEY = os.path.join(os.environ["RUNNER_TEMP"], "play-service-account.json")
+          PKG = "com.metricorex.app"
+          creds = service_account.Credentials.from_service_account_file(
+              KEY, scopes=["https://www.googleapis.com/auth/androidpublisher"])
+          svc = build("androidpublisher", "v3", credentials=creds, cache_discovery=False)
+          try:
+              e = svc.edits().insert(packageName=PKG, body={}).execute()
+              svc.edits().delete(packageName=PKG, editId=e["id"]).execute()
+              print("APP_RECORD=OK")
+          except Exception as ex:
+              print("PRE-FLIGHT FAIL:", str(ex)[:400])
+              sys.exit("::error::com.metricorex.app not reachable via the service account. Confirm: old account app deleted, new account app entry created, GCP project linked, SA invited as Admin.")
+          PY
+
+      - name: Prepare Play release notes
+        run: |
+          printf '%s' "Meetings, calls, chat, wallet transfers, invoices, payroll & tasks — one app." > "fastlane/metadata/android/en-US/changelogs/${VERSION_CODE}.txt"
+
+      - name: Setup Ruby + fastlane
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+
+      - name: Install fastlane
+        run: gem install fastlane --no-document
+
+      # supply: uploads the AAB to the production track as DRAFT, attaches the
+      # versionCode-named changelog, and pushes the listing TEXTS from
+      # fastlane/metadata/android (title / short_description / full_description).
+      # NOTE: metadata_path MUST be fastlane/metadata/android — passing the
+      # parent dir makes supply treat 'android' as a locale ("Invalid request").
+      - name: Upload AAB to Production track (draft) + listing texts
+        run: |
+          fastlane supply \
+            --json_key "$RUNNER_TEMP/play-service-account.json" \
+            --package_name com.metricorex.app \
+            --track production \
+            --release_status draft \
+            --aab "metroflow_flutter/build/app/outputs/bundle/release/app-release.aab" \
+            --metadata_path fastlane/metadata/android \
+            --skip_upload_images true \
+            --skip_upload_screenshots true
+
+      - name: Upload images + contact details + country availability
+        run: |
+          python3 - <<'PY'
+          import os
+          from google.oauth2 import service_account
+          from googleapiclient.discovery import build
+          from googleapiclient.http import MediaFileUpload
+
+          KEY = os.path.join(os.environ["RUNNER_TEMP"], "play-service-account.json")
+          PKG = "com.metricorex.app"
+          META = "fastlane/metadata/android/en-US"
+
+          creds = service_account.Credentials.from_service_account_file(
+              KEY, scopes=["https://www.googleapis.com/auth/androidpublisher"])
+          svc = build("androidpublisher", "v3", credentials=creds, cache_discovery=False)
+
+          eid = svc.edits().insert(packageName=PKG, body={}).execute()["id"]
+          print("edit:", eid)
+
+          def upload(image_type, path):
+              media = MediaFileUpload(path, mimetype="image/png")
+              res = svc.edits().images().upload(
+                  packageName=PKG, editId=eid, language="en-US",
+                  imageType=image_type, media_body=media).execute()
+              print("OK image", image_type, os.path.basename(path))
+
+          for t in ("icon", "featureGraphic", "phoneScreenshots"):
+              try:
+                  svc.edits().images().deleteall(
+                      packageName=PKG, editId=eid, language="en-US", imageType=t).execute()
+              except Exception:
+                  pass
+
+          upload("icon", f"{META}/images/icon.png")
+          upload("featureGraphic", f"{META}/images/featureGraphic.png")
+          for name in sorted(os.listdir(f"{META}/images/phoneScreenshots")):
+              if name.lower().endswith(".png"):
+                  upload("phoneScreenshots", f"{META}/images/phoneScreenshots/{name}")
+
+          svc.edits().details().update(
+              packageName=PKG, editId=eid,
+              body={"defaultLanguage": "en-US",
+                    "contactEmail": "sunday@metricorex.com",
+                    "contactPhone": "+234 816 334 9199",
+                    "contactWebsite": "https://metricorex.com"}
+          ).execute()
+          print("OK contact details")
+
+          # Country availability: all supported countries + rest of world
+          try:
+              avail = svc.edits().countryavailability().get(
+                  packageName=PKG, editId=eid, track="production").execute()
+              codes = [c for c in avail.get("supportedCountries", [])]
+              svc.edits().countryavailability().update(
+                  packageName=PKG, editId=eid, track="production",
+                  body={"countries": codes, "includeRestOfWorld": True}).execute()
+              print("OK countries:", len(codes), "+ rest of world")
+          except Exception as ex:
+              print("countryavailability skipped:", str(ex)[:200])
+
+          svc.edits().commit(packageName=PKG, editId=eid).execute()
+          print("IMAGES + DETAILS + COUNTRIES COMMITTED")
+          PY
+
+      - name: Cleanup key material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/play-service-account.json" "$RUNNER_TEMP/metricorex-release.keystore"
