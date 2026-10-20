@@ -1,0 +1,39 @@
+name: SA Identity Probe
+
+# Prints ONLY non-secret service-account identifiers (client_email /
+# project_id) — the exact values needed when inviting the service account
+# into a new Play Console account (Users and permissions). The private key
+# material is NEVER printed.
+
+on:
+  push:
+    branches:
+      - ci/play-new-account-probe
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Print SA identifiers
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -z "$PLAY_SERVICE_ACCOUNT_JSON" ]; then
+            echo "::error::PLAY_SERVICE_ACCOUNT_JSON secret is not set."
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json, os
+          d = json.loads(os.environ["PLAY_SERVICE_ACCOUNT_JSON"])
+          print("SA_CLIENT_EMAIL=" + str(d.get("client_email", "?")))
+          print("SA_PROJECT_ID=" + str(d.get("project_id", "?")))
+          print("SA_TYPE=" + str(d.get("type", "?")))
+          print("SA_KEY_ALGO=" + str(d.get("private_key", "")[:30].count("KEY") and "present(not printed)"))
+          print("HAS_PRIVATE_KEY=" + str(bool(d.get("private_key"))))
+          print("HAS_TOKEN_URI=" + str(d.get("token_uri", "?")))
+          PY
