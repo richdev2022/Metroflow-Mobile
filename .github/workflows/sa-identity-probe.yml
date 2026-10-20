@@ -37,3 +37,40 @@ jobs:
           print("HAS_PRIVATE_KEY=" + str(bool(d.get("private_key"))))
           print("HAS_TOKEN_URI=" + str(d.get("token_uri", "?")))
           PY
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install google-api-python-client
+        run: pip install google-api-python-client --quiet
+
+      # Probe: does com.metricorex.app still exist on the account linked to
+      # this SA? (edits().insert succeeds only if the app record exists)
+      - name: Probe app record existence
+        run: |
+          printf '%s' "$PLAY_SERVICE_ACCOUNT_JSON" > "$RUNNER_TEMP/play-sa.json"
+          python3 - <<'PY'
+          import os
+          from google.oauth2 import service_account
+          from googleapiclient.discovery import build
+
+          KEY = os.path.join(os.environ["RUNNER_TEMP"], "play-sa.json")
+          PKG = "com.metricorex.app"
+          creds = service_account.Credentials.from_service_account_file(
+              KEY, scopes=["https://www.googleapis.com/auth/androidpublisher"])
+          svc = build("androidpublisher", "v3", credentials=creds, cache_discovery=False)
+          try:
+              e = svc.edits().insert(packageName=PKG, body={}).execute()
+              print("APP_RECORD=EXISTS (edit created then discarded)")
+              svc.edits().delete(packageName=PKG, editId=e["id"]).execute()
+          except Exception as ex:
+              msg = str(ex)
+              if "applicationNotFound" in msg or "not found" in msg.lower() or "404" in msg:
+                  print("APP_RECORD=NOT_FOUND (package name appears free)")
+              elif "401" in msg or "403" in msg or "permission" in msg.lower():
+                  print("SA_ACCESS=DENIED (SA not yet invited / not linked to any account)")
+              else:
+                  print("PROBE_ERROR=", msg[:300])
+          PY
