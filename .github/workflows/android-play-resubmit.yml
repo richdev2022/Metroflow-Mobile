@@ -1,0 +1,146 @@
+name: Android Play Re-Submit (old account, latest build)
+
+# Push-triggered one-shot for the OLD Play account after the Policy Issue
+# rejection (app category corrected Finance → Business console-side).
+# Builds the LATEST main code as a fresh signed AAB and replaces the live
+# closed-testing (alpha) release, so the re-review evaluates the newest app.
+#
+# versionCode = run_number + 60000 (first run 60001 — above the alpha's
+# current 50009, disjoint from flutter-build.yml's +1000 and
+# android-play-internal.yml's +50000 ranges).
+#
+# SEQUENCE EXPECTED: appeal + App content alignment happen console-side;
+# this workflow only refreshes the artifact on the closed-testing track.
+
+on:
+  push:
+    branches:
+      - ci/play-old-resubmit
+
+concurrency:
+  group: play-resubmit
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  resubmit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.1'
+          cache: true
+
+      - name: Restore release keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is not set."
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/metricorex-release.keystore"
+          {
+            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/metricorex-release.keystore"
+            echo "ANDROID_KEYSTORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD"
+            echo "ANDROID_KEY_ALIAS=$ANDROID_KEY_ALIAS"
+            echo "ANDROID_KEY_PASSWORD=$ANDROID_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+
+      - name: Install Flutter dependencies
+        working-directory: metroflow_flutter
+        run: flutter pub get
+
+      - name: Build signed AAB (latest main)
+        working-directory: metroflow_flutter
+        run: |
+          VER=$(( ${{ github.run_number }} + 60000 ))
+          echo "VERSION_CODE=$VER" >> "$GITHUB_ENV"
+          flutter build appbundle --release --build-number=$VER
+
+      - name: Upload AAB artifact (backup copy)
+        uses: actions/upload-artifact@v4
+        with:
+          name: metricorex-aab-${{ github.run_number }}
+          path: metroflow_flutter/build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+
+      - name: Write service-account key
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -z "$PLAY_SERVICE_ACCOUNT_JSON" ]; then
+            echo "::error::PLAY_SERVICE_ACCOUNT_JSON secret is not set."
+            exit 1
+          fi
+          printf '%s' "$PLAY_SERVICE_ACCOUNT_JSON" > "$RUNNER_TEMP/play-service-account.json"
+
+      - name: Prepare release notes
+        run: |
+          mkdir -p fastlane/metadata/android/en-US/changelogs
+          printf '%s' "Bug fixes and improvements." > "fastlane/metadata/android/en-US/changelogs/${VERSION_CODE}.txt"
+
+      - name: Setup Ruby + fastlane
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+
+      - name: Install fastlane
+        run: gem install fastlane --no-document
+
+      # Upload the NEW AAB to the closed-testing track, live (completed),
+      # with listing texts re-asserted from fastlane/metadata.
+      - name: Upload new AAB to closed-testing track
+        run: |
+          fastlane supply \
+            --json_key "$RUNNER_TEMP/play-service-account.json" \
+            --package_name com.metricorex.app \
+            --track alpha \
+            --release_status completed \
+            --aab "metroflow_flutter/build/app/outputs/bundle/release/app-release.aab" \
+            --metadata_path fastlane/metadata \
+            --skip_upload_images true \
+            --skip_upload_screenshots true
+
+      - name: Verify track states after upload
+        run: |
+          python3 - <<'PY'
+          import os
+          from google.oauth2 import service_account
+          from googleapiclient.discovery import build
+
+          KEY = os.path.join(os.environ["RUNNER_TEMP"], "play-service-account.json")
+          PKG = "com.metricorex.app"
+          creds = service_account.Credentials.from_service_account_file(
+              KEY, scopes=["https://www.googleapis.com/auth/androidpublisher"])
+          svc = build("androidpublisher", "v3", credentials=creds, cache_discovery=False)
+          e = svc.edits().insert(packageName=PKG, body={}).execute()["id"]
+          tracks = svc.edits().tracks().list(packageName=PKG, editId=e).execute()
+          for t in tracks.get("tracks", []):
+              for r in t.get("releases", []):
+                  print("TRACK_STATE=%s status=%s versionCodes=%s" % (
+                      t.get("track"), r.get("status"), r.get("versionCodes")))
+          svc.edits().delete(packageName=PKG, editId=e).execute()
+          print("VERIFY DONE")
+          PY
+
+      - name: Cleanup key material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/play-service-account.json" "$RUNNER_TEMP/metricorex-release.keystore"
