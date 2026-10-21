@@ -116,7 +116,11 @@ jobs:
       # store-production-release.yml (store-release-* tags).
       # ---------------------------------------------------------------------
       - name: Upload to Google Play (internal testing)
-        if: false # was: env.PLAY_SERVICE_ACCOUNT_JSON != '' — see comment above
+        if: false # was: env.PLAY_SERVICE_ACCOUNT_JSON != '' — see comment above.
+        # Publishing is centralized in android-play-internal.yml (manual
+        # dispatch). Auto-uploads from epoch-seconds builds previously bled
+        # huge versionCodes onto the internal track and consumed Play's
+        # versionCode space.
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
