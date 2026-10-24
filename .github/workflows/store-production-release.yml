@@ -86,6 +86,12 @@ jobs:
         working-directory: metroflow_flutter
         run: flutter pub get
 
+      # Legacy pub plugins (video_thumbnail 0.5.6, ...) declare jcenter(),
+      # which was REMOVED in Gradle 9 — this rewrite is a no-op while no
+      # legacy plugin is present and cheap insurance if one gets added.
+      - name: Patch legacy pub plugin repos (jcenter -> mavenCentral)
+        run: find "$HOME/.pub-cache/hosted" -type f -path '*/android/build.gradle' -exec sed -i 's/jcenter()/mavenCentral()/g' {} +
+
       - name: Compute versionCode
         run: echo "VERSION_CODE=$(( ${{ github.run_number }} + 90000 ))" >> "$GITHUB_ENV"
 
