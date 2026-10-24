@@ -1431,19 +1431,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     _signInSecurityCard(),
                     _sectionTitle('Verification & KYC'),
                     _kycCard(),
-                    _sectionTitle('Business'),
-                    _settingItem(
-                      icon: Icons.business_outlined,
-                      title: 'Business Profile',
-                      subtitle: _settings?.industry,
-                      onTap: _showEditProfileModal,
-                    ),
+                    // BUSINESS IDENTITY — owner only. Invited members and
+                    // invited admins never see (or edit) business profile
+                    // rows; their contact details live in their OWN profile.
+                    if (_isBusinessAdmin) ...[
+                      _sectionTitle('Business'),
+                      _settingItem(
+                        icon: Icons.business_outlined,
+                        title: 'Business Profile',
+                        subtitle: _settings?.industry,
+                        onTap: _showEditProfileModal,
+                      ),
+                    ],
                     _settingItem(
                       icon: Icons.mail_outline,
                       title: 'Update Email',
-                      // ADMINS edit the BUSINESS email; invited members edit
-                      // their OWN (personal) contact details instead — the
-                      // backend enforces the same split (owner/admin only for
+                      // The OWNER edits the BUSINESS email; invited members
+                      // edit their OWN (personal) contact details instead —
+                      // the backend enforces the same split (owner-only for
                       // /settings/update-contact).
                       subtitle: _isBusinessAdmin
                           ? (_settings?.email ?? '')
@@ -1459,7 +1464,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       title: 'Update Phone',
                       subtitle: _isBusinessAdmin
                           ? (_settings?.phoneNumber ?? '')
-                          : 'Your personal phone number',
+                          : (ref.watch(userProfileProvider).phoneNumber?.isNotEmpty ?? false
+                              ? ref.watch(userProfileProvider).phoneNumber
+                              : 'Your personal phone number'),
                       onTap: () => _isBusinessAdmin
                           ? _showContactModal('phone')
                           : _showPersonalProfileModal(),
@@ -1640,7 +1647,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Widget _profileSection() {
     final colors = AppTheme.colors;
     final profile = ref.watch(userProfileProvider);
-    final name = (profile.name.isNotEmpty ? profile.name : (_settings?.name ?? 'Business'));
+    // IDENTITY SEPARATION: the profile header shows ONLY the signed-in user's
+    // own identity. NEVER fall back to the business name/email here — invited
+    // members must not see the company's contact details on their profile.
+    // (Business identity lives in the Business Profile row for the owner.)
+    final name = profile.name.isNotEmpty ? profile.name : 'My Profile';
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Row(
@@ -1697,7 +1708,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  profile.email.isNotEmpty ? profile.email : (_settings?.email ?? ''),
+                  // OWN identity only — no business email fallback.
+                  profile.email.isNotEmpty ? profile.email : '',
                   style: TextStyle(color: colors.textSecondary, fontSize: 14),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -2154,10 +2166,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  /// Only business admins (owner/admin) may edit the BUSINESS profile.
+  /// Only the business OWNER (the admin who registered the account —
+  /// businesses.owner_id) may edit the BUSINESS profile. The registrant's
+  /// role string is 'admin', the SAME role invited admins get, so the
+  /// role string alone cannot be trusted: the server-computed
+  /// profile.isOwner flag (adopted from GET /settings → profile) is the
+  /// authoritative signal, with a role=='owner' fallback for older backends.
   bool get _isBusinessAdmin {
-    final role = (ref.read(userProfileProvider).role ?? '').toLowerCase();
-    return role == 'owner' || role == 'admin';
+    final profile = ref.read(userProfileProvider);
+    if (profile.isOwner) return true;
+    final role = (profile.role ?? '').toLowerCase();
+    return role == 'owner';
   }
 
   void _showEditProfileModal() {

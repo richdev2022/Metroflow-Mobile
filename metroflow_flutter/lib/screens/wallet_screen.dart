@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../providers/balance_visibility_provider.dart';
 import '../theme/app_theme.dart';
 import '../services/api.dart';
 import '../widgets/pin_setup_sheet.dart';
@@ -161,6 +162,10 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   }
 
   String _formatCurrency(dynamic wallet) {
+    // BALANCE HIDE/SHOW: mask every wallet balance while privacy mode is on.
+    if (ref.watch(balanceVisibilityProvider)) {
+      return BalanceVisibilityNotifier.mask();
+    }
     if (wallet == null) return '₦0.00';
     final currency = (wallet['currency']?.toString() ?? 'NGN').toUpperCase();
     final balance = double.tryParse(wallet['balance']?.toString() ?? '0') ?? 0.0;
@@ -200,6 +205,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Row 1: wallet label + Active badge.
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -222,9 +228,34 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
             ],
           ),
           const SizedBox(height: 12),
-          Text(
-            _formatCurrency(wallet),
-            style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: colors.text),
+          // Row 2: big balance + BALANCE HIDE/SHOW eye toggle.
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Text(
+                  _formatCurrency(wallet),
+                  style: TextStyle(fontSize: 36, fontWeight: FontWeight.bold, color: colors.text),
+                ),
+              ),
+              IconButton(
+                tooltip: ref.watch(balanceVisibilityProvider)
+                    ? 'Show balance'
+                    : 'Hide balance',
+                visualDensity: VisualDensity.compact,
+                icon: Icon(
+                  ref.watch(balanceVisibilityProvider)
+                      ? Icons.visibility_off_rounded
+                      : Icons.visibility_rounded,
+                  size: 22,
+                  color: colors.textSecondary,
+                ),
+                onPressed: () => ref
+                    .read(balanceVisibilityProvider.notifier)
+                    .toggle(),
+              ),
+            ],
           ),
           if (hasVirtualAccounts) ...[
             const SizedBox(height: 24),

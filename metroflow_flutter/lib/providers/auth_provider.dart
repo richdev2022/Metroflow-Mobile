@@ -8,6 +8,7 @@ import '../services/biometrics.dart';
 import '../services/google_auth_service.dart';
 import '../services/push_notification_service.dart';
 import '../services/socket_service.dart';
+import '../providers/user_profile_provider.dart';
 import '../widgets/transaction_limits_card.dart' show TransactionLimitsSession;
 
 class AuthState {
@@ -791,6 +792,15 @@ class AuthNotifier extends Notifier<AuthState> {
     try {
       _idleTimer?.cancel();
       clearMeCache();
+
+      // IDENTITY SEPARATION: wipe the cached per-user profile (name/email/
+      // phone/avatar/owner flag) so the next sign-in on this device starts
+      // clean and can never inherit the previous user's identity.
+      try {
+        await ref.read(userProfileProvider.notifier).reset();
+      } catch (e) {
+        debugPrint('UserProfile reset skipped: $e');
+      }
 
       if (unregisterDevice) {
         // Best-effort: remove this device's FCM token from the backend so push

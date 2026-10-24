@@ -5,6 +5,7 @@ import '../theme/app_theme.dart';
 import '../services/api.dart';
 import '../models/task.dart';
 import '../providers/auth_provider.dart';
+import '../providers/balance_visibility_provider.dart';
 import '../providers/user_profile_provider.dart';
 import '../utils/app_timezone.dart';
 import '../utils/kyc_gate.dart';
@@ -310,6 +311,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   }
 
   String _walletBalanceLabel() {
+    // BALANCE HIDE/SHOW: when privacy mode is on, every balance on the
+    // dashboard is masked behind dots until the eye toggle is tapped.
+    if (ref.watch(balanceVisibilityProvider)) {
+      return BalanceVisibilityNotifier.mask();
+    }
     final w = _primaryWallet;
     if (w == null) return '—';
     final currency = (w['currency']?.toString() ?? 'NGN').toUpperCase();
@@ -604,6 +610,30 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                           ),
                         ],
                       ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              // BALANCE HIDE/SHOW eye toggle — masks every balance on the
+              // dashboard (hero strip + cards) behind dots.
+              Material(
+                color: Colors.white.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(14),
+                child: InkWell(
+                  onTap: () => ref
+                      .read(balanceVisibilityProvider.notifier)
+                      .toggle(),
+                  borderRadius: BorderRadius.circular(14),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 12),
+                    child: Icon(
+                      ref.watch(balanceVisibilityProvider)
+                          ? Icons.visibility_off_rounded
+                          : Icons.visibility_rounded,
+                      size: 18,
+                      color: Colors.white,
                     ),
                   ),
                 ),
