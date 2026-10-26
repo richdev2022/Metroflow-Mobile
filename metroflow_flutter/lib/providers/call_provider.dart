@@ -47,19 +47,13 @@ class CallNotifier extends Notifier<IncomingCallState> {
 
   @override
   IncomingCallState build() {
-    // Set up socket listeners
-    _socketService.onCallInvite = _handleIncomingCall;
-    _socketService.onCallAccepted = _handleCallAccepted;
-    _socketService.onCallRejected = _handleCallRejected;
-    _socketService.onCallEnded = _handleCallEnded;
-    // Belt-and-braces for "they joined but it keeps ringing": the moment ANY
-    // participant is confirmed joined (socket truth, independent of the
-    // call:accepted broadcast), every ring must die.
-    _socketService.onCallParticipantJoined = _handleParticipantJoined;
-    // Multi-device stop-ring: another device of THIS account answered (or a
-    // co-callee answered a group call) — the server broadcasts
-    // call:ring-stopped so every still-ringing device silences instantly.
-    _socketService.onCallRingStopped = _handleRingStopped;
+    // Set up socket listeners — REDIAL FIX: registration is now idempotent and
+    // re-asserted from startOutboundRing()/presentIncomingCall() too, because
+    // other screens (calls_screen, video_call_screen) temporarily overwrite the
+    // same SocketService callback slots and previously restored them to null —
+    // which permanently killed the ring lifecycle for the rest of the app
+    // session (build() runs ONCE per Notifier lifetime).
+    _registerSocketHandlers();
 
     ref.onDispose(() {
       _ringTimeout?.cancel();
@@ -73,6 +67,37 @@ class CallNotifier extends Notifier<IncomingCallState> {
     return IncomingCallState();
   }
 
+  /// (Re)attach the ring-lifecycle socket handlers. Safe to call any number of
+  /// times — it only re-assigns this notifier's own handlers.
+  void _registerSocketHandlers() {
+    _socketService.onCallInvite = _handleIncomingCall;
+    _socketService.onCallAccepted = _handleCallAccepted;
+    _socketService.onCallRejected = _handleCallRejected;
+    _socketService.onCallEnded = _handleCallEnded;
+    // Belt-and-braces for "they joined but it keeps ringing": the moment ANY
+    // participant is confirmed joined (socket truth, independent of the
+    // call:accepted broadcast), every ring must die.
+    _socketService.onCallParticipantJoined = _handleParticipantJoined;
+    // Multi-device stop-ring: another device of THIS account answered (or a
+    // co-callee answered a group call) — the server broadcasts
+    // call:ring-stopped so every still-ringing device silences instantly.
+    _socketService.onCallRingStopped = _handleRingStopped;
+  }
+
+  /// REDIAL FIX: full ring-session reset. Called by the call screen's hangup
+  /// path so a dial that fails or is cancelled can never leave a stale
+  /// outbound ringback id + 90s timer behind (the old leak: the ringback id
+  /// lingered and suppressed/mis-matched the NEXT dial's stop events).
+  void resetSession() {
+    stopOutboundRing();
+    _ringTimeout?.cancel();
+    _ringTimeout = null;
+    AppFeedback.stopRingtone();
+    if (state.call != null || state.isRinging) {
+      state = IncomingCallState();
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Outbound ringback (dialing screen calls this right after creating a call)
   // -------------------------------------------------------------------------
@@ -82,6 +107,9 @@ class CallNotifier extends Notifier<IncomingCallState> {
   /// rejected or ended (see the socket handlers below), and by
   /// [stopOutboundRing] when the dialer closes the call screen.
   void startOutboundRing(String callId) {
+    // REDIAL FIX: re-assert our handlers — a previous call screen may have
+    // overwritten the SocketService slots (or restored them to null).
+    _registerSocketHandlers();
     _outboundCallId = callId;
     AppFeedback.startRingback();
     // Safety: never ring back forever — auto-silence after 90s.
@@ -182,6 +210,9 @@ class CallNotifier extends Notifier<IncomingCallState> {
   /// PushNotificationService so tapping the full-screen call notification
   /// shows the Accept/Decline overlay.
   void presentIncomingCall(Map<String, dynamic> payload) {
+    // REDIAL FIX: re-assert our handlers for the same reason as
+    // startOutboundRing — the ring UI must survive earlier screen teardowns.
+    _registerSocketHandlers();
     final data = Map<String, dynamic>.from(payload);
     // Normalize the FCM payload keys onto the socket payload names.
     data['callId'] ??= data['call_id'];

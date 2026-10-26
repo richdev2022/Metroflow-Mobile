@@ -33,6 +33,18 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
   late final void Function(dynamic) _callUpdatedHandler;
   late final void Function(dynamic) _callDeletedHandler;
   late final void Function(dynamic) _callParticipantChangedHandler;
+  // REDIAL FIX: remember the handlers that were attached BEFORE this screen
+  // (CallNotifier's ring-lifecycle handlers). On dispose we restore those
+  // instead of writing null — writing null permanently killed the incoming/
+  // outgoing ring lifecycle for the rest of the app session (CallNotifier
+  // only registers in build(), which runs once), so the NEXT call after
+  // hanging up never rang / never stopped ringing.
+  void Function(dynamic)? _prevOnCallCreated;
+  void Function(dynamic)? _prevOnCallUpdated;
+  void Function(dynamic)? _prevOnCallDeleted;
+  void Function(dynamic)? _prevOnCallParticipantJoined;
+  void Function(dynamic)? _prevOnCallParticipantLeft;
+  bool _savedPrevHandlers = false;
 
   @override
   void initState() {
@@ -66,6 +78,15 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
       if (!mounted) return;
       _loadCalls();
     };
+    // REDIAL FIX: capture the pre-existing handlers before overwriting them.
+    if (!_savedPrevHandlers) {
+      _prevOnCallCreated = _socket.onCallCreated;
+      _prevOnCallUpdated = _socket.onCallUpdated;
+      _prevOnCallDeleted = _socket.onCallDeleted;
+      _prevOnCallParticipantJoined = _socket.onCallParticipantJoined;
+      _prevOnCallParticipantLeft = _socket.onCallParticipantLeft;
+      _savedPrevHandlers = true;
+    }
     _socket.onCallCreated = _callCreatedHandler;
     _socket.onCallUpdated = _callUpdatedHandler;
     _socket.onCallDeleted = _callDeletedHandler;
@@ -91,20 +112,24 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
   void dispose() {
     _durationTicker?.cancel();
     _durationTicker = null;
+    // REDIAL FIX: restore the handlers that were attached before this screen
+    // (CallNotifier's ring lifecycle) instead of nulling the slots. Nulling
+    // killed ringing for every later call in the session — the core
+    // "cannot pick another call after hangup" defect.
     if (_socket.onCallCreated == _callCreatedHandler) {
-      _socket.onCallCreated = null;
+      _socket.onCallCreated = _prevOnCallCreated;
     }
     if (_socket.onCallUpdated == _callUpdatedHandler) {
-      _socket.onCallUpdated = null;
+      _socket.onCallUpdated = _prevOnCallUpdated;
     }
     if (_socket.onCallDeleted == _callDeletedHandler) {
-      _socket.onCallDeleted = null;
+      _socket.onCallDeleted = _prevOnCallDeleted;
     }
     if (_socket.onCallParticipantJoined == _callParticipantChangedHandler) {
-      _socket.onCallParticipantJoined = null;
+      _socket.onCallParticipantJoined = _prevOnCallParticipantJoined;
     }
     if (_socket.onCallParticipantLeft == _callParticipantChangedHandler) {
-      _socket.onCallParticipantLeft = null;
+      _socket.onCallParticipantLeft = _prevOnCallParticipantLeft;
     }
     super.dispose();
   }

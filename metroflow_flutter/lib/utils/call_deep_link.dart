@@ -57,6 +57,14 @@ class CallDeepLinkHelper {
         userName: userName,
         isHost: false,
         isGroupCall: isGroupCall,
+        // REDIAL FIX: REST leave fallback — deep-link entry points had no
+        // onLeave, so a hangup with the socket down left the call 'ongoing'
+        // forever (phantom Join card, "cannot call again").
+        onLeave: () async {
+          try {
+            await ApiService().leaveCall(callId);
+          } catch (_) {}
+        },
         calling: callingRaw,
       );
     } catch (e) {

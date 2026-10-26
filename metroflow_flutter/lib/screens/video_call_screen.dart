@@ -257,6 +257,12 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   bool _showChat = false;
   bool _hasLeft = false;
   bool _cleanupDone = false;
+  // REDIAL FIX: true once _wireRoomEvents() has saved the previous socket
+  // handlers. _cleanup() must only restore slots it actually saved — restoring
+  // from a screen that never wired (popped mid-init) wrote null over
+  // CallNotifier's ring-lifecycle handlers and permanently killed ringing for
+  // the rest of the session (the "cannot call again after hangup" defect).
+  bool _eventsWired = false;
   bool _isConnecting = true;
   bool _isSwitchingScreenShare = false;
   String _connectionLabel = 'Connecting...';
@@ -398,6 +404,10 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     // accept) may already have taken the slot.
     if (VideoCallScreen.activeCallRoomId == widget.roomId) {
       VideoCallScreen.activeCallRoomId = null;
+      // REDIAL FIX: drop the leaver closure that belongs to THIS screen. The
+      // old code left a stale closure pointing at a disposed state object in
+      // the static slot — the next "end active call" invoked a dead screen.
+      VideoCallScreen._activeLeaver = null;
     }
     // The room screen is gone (real leave) — drop the minimize→rejoin
     // context so a dead call never offers a "Return to call" pill.
@@ -510,6 +520,12 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       setState(() => _connectionLabel = 'Reconnecting…');
       await _socket.waitForConnection(timeout: const Duration(seconds: 8));
     }
+
+    // REDIAL FIX: the screen may have been torn down while we awaited (user
+    // hung up during "Reconnecting…"). Never re-join a room we already left —
+    // the post-dispose re-join resurrected a ghost room and wedged the next
+    // dial.
+    if (!mounted || _hasLeft) return;
 
     dynamic ack;
     var ackFailed = false;
@@ -1018,6 +1034,9 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         return;
       }
     }
+    // REDIAL FIX: guard the await above — the screen may have been left while
+    // waiting for the signaling socket; do not start a session for a dead room.
+    if (!mounted || _hasLeft) return;
     try {
       final room = MediasoupRoomService(
         roomId: widget.roomId,
@@ -1241,6 +1260,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   }
 
   void _wireRoomEvents() {
+    _eventsWired = true; // REDIAL FIX: mark slots as saved BEFORE saving them.
     _previousChatHandler = _socket.onMeetingChatMessage;
     _previousScreenStartHandler = _socket.onScreenShareStarted;
     _previousScreenStopHandler = _socket.onScreenShareStopped;
@@ -1591,34 +1611,39 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   Future<void> _cleanup() async {
     _captions.detach();
     _captions.dispose();
-    _socket.onMeetingChatMessage = _previousChatHandler;
-    _socket.onCallParticipantsList = _previousParticipantsListHandler;
-    _socket.onCallParticipantJoined = _previousParticipantJoinedHandler;
-    _socket.onScreenShareStarted = _previousScreenStartHandler;
-    _socket.onScreenShareStopped = _previousScreenStopHandler;
-    _socket.onRecordingStarted = _previousRecordingStartHandler;
-    _socket.onRecordingStopped = _previousRecordingStopHandler;
-    _socket.onRecordingPaused = _previousRecordingPauseHandler;
-    _socket.onCallEnded = _previousCallEndedHandler;
-    _socket.onMeetingEnded = _previousMeetingEndedHandler;
-    _socket.onCallDurationStarted = _previousDurationStartHandler;
-    _socket.onCallDurationActive = _previousDurationActiveHandler;
-    _socket.onCallMultiDevice = _previousMultiDeviceHandler;
-    _socket.onCallCountdownWarning = _previousCountdownWarnHandler;
-    _socket.onMeetingNotesUpdated = _previousNotesHandler;
-    _socket.onWaitingRoomAdmitted = _previousWaitingAdmittedHandler;
-    _socket.onWaitingRoomDenied = _previousWaitingDeniedHandler;
-    _socket.onCallReactionReceived = _previousReactionHandler;
-    _socket.onCallHandUpdated = _previousHandHandler;
+    if (_cleanupDone) return;
+    _cleanupDone = true;
+    // REDIAL FIX: only restore the socket slots this screen actually saved.
+    // The old unconditional restore ran even when _wireRoomEvents() never did
+    // (screen popped mid-init) — writing null over CallNotifier's ring
+    // handlers, so no later call in the session ever rang again.
+    if (_eventsWired) {
+      _socket.onMeetingChatMessage = _previousChatHandler;
+      _socket.onCallParticipantsList = _previousParticipantsListHandler;
+      _socket.onCallParticipantJoined = _previousParticipantJoinedHandler;
+      _socket.onScreenShareStarted = _previousScreenStartHandler;
+      _socket.onScreenShareStopped = _previousScreenStopHandler;
+      _socket.onRecordingStarted = _previousRecordingStartHandler;
+      _socket.onRecordingStopped = _previousRecordingStopHandler;
+      _socket.onRecordingPaused = _previousRecordingPauseHandler;
+      _socket.onCallEnded = _previousCallEndedHandler;
+      _socket.onMeetingEnded = _previousMeetingEndedHandler;
+      _socket.onCallDurationStarted = _previousDurationStartHandler;
+      _socket.onCallDurationActive = _previousDurationActiveHandler;
+      _socket.onCallMultiDevice = _previousMultiDeviceHandler;
+      _socket.onCallCountdownWarning = _previousCountdownWarnHandler;
+      _socket.onMeetingNotesUpdated = _previousNotesHandler;
+      _socket.onWaitingRoomAdmitted = _previousWaitingAdmittedHandler;
+      _socket.onWaitingRoomDenied = _previousWaitingDeniedHandler;
+      _socket.onCallReactionReceived = _previousReactionHandler;
+      _socket.onCallHandUpdated = _previousHandHandler;
+    }
     _waitingHintTimer?.cancel();
     _waitingHintTimer = null;
     _joinWatchdog?.cancel();
     _joinWatchdog = null;
     _elapsedTicker?.cancel();
     _elapsedTicker = null;
-
-    if (_cleanupDone) return;
-    _cleanupDone = true;
     // A screen closed mid-client-recording: stop the native recorder (best
     // effort) and DISCARD the file — uploading from dispose() is unreliable
     // and the user gets a clean "recording stopped" state instead of a
@@ -2232,6 +2257,14 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     if (!kIsWeb) {
       const MethodChannel('metricorex/audio').invokeMethod<void>('clearRoute').catchError((_) => null);
     }
+
+    // REDIAL FIX: full ring-session reset — a hangup must clear any outbound
+    // ringback id/timer and ringing state so the NEXT dial starts clean. Runs
+    // BEFORE the pop so the context is still valid.
+    try {
+      final container = ProviderScope.containerOf(context, listen: false);
+      container.read(callProvider.notifier).resetSession();
+    } catch (_) {}
 
     // POP FIRST: previously we awaited onLeave (a REST call that could throw,
     // e.g. joining with an empty id) before popping, which trapped the user on
