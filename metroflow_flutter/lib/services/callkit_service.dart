@@ -228,6 +228,15 @@ class CallKitService {
         isMeeting: false,
         enableVideo: call.type == 'video',
         isHost: false,
+        // REDIAL FIX: REST leave fallback — CallKit-answer entry points had no
+        // onLeave, so when the socket is down at hangup the call:leave emit is
+        // silently dropped and the call row stays 'ongoing' forever (phantom
+        // Join card + "cannot call again" until the server reaper runs).
+        onLeave: () async {
+          try {
+            await ApiService().leaveCall(call.id);
+          } catch (_) {}
+        },
         calling: calling,
       );
     } catch (e) {

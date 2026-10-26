@@ -119,6 +119,17 @@ class MediasoupRoomService {
     }
     await _sendTransport?.close();
     await _recvTransport?.close();
+    // REDIAL FIX: hard-stop the local mic/camera tracks before disposing the
+    // stream. dispose() alone does NOT stop the underlying capture — the
+    // camera/mic could stay held after hangup, and the NEXT call's
+    // getUserMedia then failed with "unable to connect media" (the second
+    // half of the cannot-call-again symptom). Mirrors the screen-share
+    // teardown below.
+    for (final track in localStream?.getTracks() ?? <MediaStreamTrack>[]) {
+      try {
+        await track.stop();
+      } catch (_) {}
+    }
     await localStream?.dispose();
     await _screenStream?.dispose();
 
