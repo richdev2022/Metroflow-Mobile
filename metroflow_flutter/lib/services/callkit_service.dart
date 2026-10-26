@@ -220,6 +220,10 @@ class CallKitService {
 
     final navCtx = navigatorKey.currentContext;
     if (navCtx == null || !navCtx.mounted) return;
+    // Hoist while `call` is flow-promoted: closures capture the DECLARED
+    // (nullable) type of a reassigned local, so `call.id` inside onLeave
+    // below would be a compile error (Call? has no `id`).
+    final callId = call.id;
     try {
       await VideoCallScreen.showModal(
         context: navCtx,
@@ -234,7 +238,7 @@ class CallKitService {
         // Join card + "cannot call again" until the server reaper runs).
         onLeave: () async {
           try {
-            await ApiService().leaveCall(call.id);
+            await ApiService().leaveCall(callId);
           } catch (_) {}
         },
         calling: calling,
