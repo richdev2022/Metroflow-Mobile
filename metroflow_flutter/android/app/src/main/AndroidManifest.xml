@@ -78,6 +78,16 @@
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="metricorex"/>
             </intent-filter>
+            <!-- Dedicated app-to-app scheme used by the Personal app's
+                 "Open the Business app" CTA (metricorexbiz://home). A
+                 distinct scheme avoids the OS chooser when BOTH apps claim
+                 the shared "metricorex" scheme. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="metricorexbiz"/>
+            </intent-filter>
             <!-- HTTPS App Links (https://app.metricorex.com/meetings/<code>).
                  WHY: WebView-based browsers (WhatsApp/Telegram/Instagram in-app
                  browsers, some OEM browsers) BLOCK intent:// and custom-scheme
