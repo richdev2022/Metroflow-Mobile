@@ -46,6 +46,10 @@
                                 <!-- metricorex:// deep links (meeting link
                                      interstitial "Open in the app" button) -->
                                 <string>metricorex</string>
+                                <!-- Dedicated app-to-app scheme used by the
+                                     Personal app's "Open the Business app"
+                                     CTA (metricorexbiz://home). -->
+                                <string>metricorexbiz</string>
                         </array>
                 </dict>
         </array>
