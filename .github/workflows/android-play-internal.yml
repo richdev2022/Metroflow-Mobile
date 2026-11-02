@@ -112,6 +112,47 @@ jobs:
       - name: Patch legacy pub plugin repos (jcenter -> mavenCentral)
         run: find "$HOME/.pub-cache/hosted" -type f -path '*/android/build.gradle' -exec sed -i 's/jcenter()/mavenCentral()/g' {} +
 
+      # The app pins ndkVersion 28.2.13676358 (android/app/build.gradle.kts);
+      # r28c is not preinstalled on the runner, so AGP downloads it via
+      # sdkmanager DURING Gradle configuration — and that inline download is
+      # flaky on CI ("Error on ZipFile unknown archive" when the zip lands
+      # truncated). Install it HERE instead: sdkmanager with retries, then a
+      # direct download of Google's official r28c zip as a last resort.
+      # Idempotent — skips when the NDK is already present.
+      - name: Install pinned NDK 28.2.13676358 (retry + fallback)
+        run: |
+          NDK_REV="28.2.13676358"
+          NDK_DIR="/usr/local/lib/android/sdk/ndk/$NDK_REV"
+          SDK_ROOT="/usr/local/lib/android/sdk"
+          SDKM="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ -f "$NDK_DIR/source.properties" ]; then
+            echo "NDK $NDK_REV already installed — skipping."
+            exit 0
+          fi
+          for attempt in 1 2 3; do
+            echo "--- sdkmanager attempt $attempt ---"
+            if yes | "$SDKM" "ndk;$NDK_REV" > /tmp/ndk-sdkmanager.log 2>&1 \
+               && [ -f "$NDK_DIR/source.properties" ]; then
+              echo "NDK $NDK_REV installed via sdkmanager."
+              exit 0
+            fi
+            echo "Attempt $attempt failed (tail of sdkmanager log):"
+            tail -5 /tmp/ndk-sdkmanager.log || true
+            # Clear partial download/extract state before retrying.
+            sudo rm -rf "$NDK_DIR" "$SDK_ROOT/.temp" 2>/dev/null || true
+            sleep 20
+          done
+          echo "--- sdkmanager failed 3x — direct download fallback ---"
+          curl -fL --retry 5 --retry-delay 10 --retry-all-errors \
+            -o /tmp/android-ndk-r28c.zip \
+            https://dl.google.com/android/repository/android-ndk-r28c-linux.zip
+          unzip -tq /tmp/android-ndk-r28c.zip > /dev/null || { echo "::error::Downloaded NDK zip failed the integrity check"; exit 1; }
+          unzip -q /tmp/android-ndk-r28c.zip -d /tmp/ndk-extract
+          mkdir -p "$SDK_ROOT/ndk"
+          sudo mv /tmp/ndk-extract/android-ndk-r28c "$NDK_DIR"
+          [ -f "$NDK_DIR/source.properties" ] || { echo "::error::Fallback NDK install is incomplete"; exit 1; }
+          echo "NDK $NDK_REV installed via direct download."
+
       - name: Compute versionCode
         run: echo "VERSION_CODE=$(( ${{ github.run_number }} + 50000 ))" >> "$GITHUB_ENV"
 
