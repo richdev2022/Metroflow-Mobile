@@ -1,10 +1,10 @@
 name: metricorex_flutter
 description: Metricorex business management app
-publish_to: 'none'
+publish_to: "none"
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.0.0 <4.0.0'
+  sdk: ">=3.0.0 <4.0.0"
 
 dependencies:
   flutter:
@@ -47,7 +47,11 @@ dependencies:
   # works on every platform without a native plugin. See payload_crypto.dart.
   cryptography: ^2.7.0
   timezone: ^0.9.4
-  flutter_webrtc: ^1.5.2
+  # App Store rejection fix: flutter_webrtc 1.5.2 referenced the private
+  # `RPSystemBroadcastPickerView buttonPressed:` selector (Guideline 2.5.1),
+  # which Apple rejects. Upstream replaced it with public UIKit APIs in
+  # 1.6.0 (flutter-webrtc/flutter-webrtc#2121), so pin >=1.6.0.
+  flutter_webrtc: ^1.6.0
   # On-device speech recognition so mobile can BROADCAST live captions
   # (web↔web and web↔mobile) instead of only receiving them.
   speech_to_text: ^7.0.0
@@ -73,11 +77,11 @@ dependencies:
   mediasoup_client_flutter:
     path: third_party/mediasoup_client_flutter
   # Second calling provider (server decides via the join response's `calling`
-  # object). livekit_client 2.x pins flutter_webrtc exactly — 2.9.0 pins
-  # flutter_webrtc 1.5.2 (the version this app + the vendored mediasoup client
-  # are locked on); 2.10+ force flutter_webrtc 1.6.0, so the range is capped
-  # until the mediasoup stack is regression-tested on the newer webrtc.
-  livekit_client: ">=2.9.0 <2.10.0"
+  # object). livekit_client 2.13.x depends on flutter_webrtc 1.6.x — the
+  # version that removed the private RPSystemBroadcastPickerView selector
+  # (App Store 2.5.1 rejection). It requires Dart >=3.10 / Flutter >=3.38,
+  # matching the CI toolchain (3.44.x).
+  livekit_client: "^2.13.2"
 
 # livekit_client needs meta ^1.17.0 while some Flutter SDKs pin flutter_test
 # to an older meta. meta is a pure-Dart annotations package and 1.17+ is
