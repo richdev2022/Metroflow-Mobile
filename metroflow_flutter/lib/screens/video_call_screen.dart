@@ -212,6 +212,23 @@ class _ParticipantTileData {
   });
 }
 
+/// One "add people" lookup result. A REGISTERED candidate carries the real
+/// user id (invited as a participant); a GUEST candidate only carries an
+/// email (invited by email — the backend emails them a join link).
+class _InviteCandidate {
+  final String id;
+  final String name;
+  final String? email;
+  final bool isRegistered;
+
+  const _InviteCandidate({
+    required this.id,
+    required this.name,
+    this.email,
+    required this.isRegistered,
+  });
+}
+
 class _VideoCallScreenState extends State<VideoCallScreen> {
   final SocketService _socket = SocketService();
   final RTCVideoRenderer _localRenderer = RTCVideoRenderer();
@@ -3446,9 +3463,20 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     return _inviteLink;
   }
 
-  /// "Add people" bottom sheet: the FULL invite link with a copy button, the
-  /// team roster (multi-select) and guest emails — submits to
-  /// POST /meetings|calls/:id/participants, which emails everyone added.
+  /// "Add people" bottom sheet.
+  ///
+  /// Google-Meet-style flow: the sheet opens with the PLATFORM-WIDE roster
+  /// (searchUsers('') discover mode) as its candidate list, and the search
+  /// field LOOKS UP whatever is typed against the backend to determine
+  /// whether the person exists —
+  ///  * a registered Metricorex user resolves to a real participant (invited
+  ///    by userId → roster row + incoming-call ring + push);
+  ///  * an email with no account is offered as a GUEST (invited by email).
+  /// Selected people + guest emails are submitted to
+  /// POST /meetings|calls/:id/participants, which emails everyone added. The
+  /// full shareable invite link is kept at the top, and the business team
+  /// roster (when present) stays as its own labeled one-tap quick-add
+  /// section.
   Future<void> _showInviteSheet() async {
     final colors = AppTheme.colors;
     final link = await _resolvedInviteLink();
@@ -3472,10 +3500,45 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     } catch (_) {}
 
     if (!mounted) return;
-    final selectedIds = <String>{};
+
+    // Platform-wide roster — GET /social/search/users with an EMPTY query
+    // runs the endpoint in discover mode (every active Metricorex user
+    // except the caller, NOT team members). Best-effort: a failure just
+    // surfaces as an error row inside the sheet.
+    var results = <_InviteCandidate>[];
+    String? searchError;
+    try {
+      final res = await ApiService().searchUsers('', limit: 20);
+      final data = res.data is Map ? res.data['data'] : null;
+      final list = (data is Map && data['users'] is List)
+          ? data['users'] as List
+          : (data is List ? data : <dynamic>[]);
+      results = list
+          .whereType<Map>()
+          .map((e) => _InviteCandidate(
+                id: (e['id'] ?? '').toString(),
+                name: (e['name'] ?? e['username'] ?? '').toString(),
+                email: e['email']?.toString(),
+                isRegistered: (e['id']?.toString() ?? '').isNotEmpty,
+              ))
+          .where((c) => c.id.isNotEmpty && c.name.trim().isNotEmpty)
+          .toList();
+    } catch (e) {
+      searchError = ApiService.extractErrorMessage(e);
+    }
+
+    if (!mounted) return;
+    final emailPattern = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
+    final selectedUsers = <String, String>{}; // userId -> display name
     final guestEmails = <String>{};
-    final emailController = TextEditingController();
+    final searchController = TextEditingController();
     var submitting = false;
+    // Lookup state — declared in the SHEET scope (not inside the
+    // StatefulBuilder builder, whose locals are recreated on every rebuild).
+    var searching = false;
+    var searched = true; // the roster pre-load above already ran a lookup
+    var query = '';
+    Timer? debounce;
 
     await showModalBottomSheet<void>(
       context: context,
@@ -3485,20 +3548,126 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (sheetContext) {
-        void addEmailFromInput() {
-          final value = emailController.text.trim().toLowerCase();
-          if (value.isEmpty) return;
-          final valid = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(value);
-          if (valid && !guestEmails.contains(value)) {
-            guestEmails.add(value);
-          }
-          emailController.clear();
-        }
-
         return StatefulBuilder(
           builder: (sheetContext, setSheetState) {
+            // Guard every async UI mutation — the sheet may be dismissed while
+            // a lookup is in flight.
+            void safeSet(void Function() fn) {
+              if (sheetContext.mounted) setSheetState(fn);
+            }
+
+            /// Debounced lookup: an EMPTY query re-loads the platform roster,
+            /// a FULL email runs the exact contact lookup (registered user row
+            /// or invite-by-email row), anything else (name / partial email)
+            /// runs the user search.
+            Future<void> runLookup(String raw) async {
+              final q = raw.trim();
+              safeSet(() {
+                query = q;
+                searching = true;
+                searchError = null;
+              });
+              try {
+                if (q.isNotEmpty && emailPattern.hasMatch(q.toLowerCase())) {
+                  // Exact EMAIL lookup — does an account exist for it?
+                  final res =
+                      await ApiService().lookupChatContact(q.toLowerCase());
+                  final data = res.data is Map ? res.data['data'] : null;
+                  final registered = data is Map && data['registered'] == true;
+                  final uid =
+                      data is Map ? (data['userId']?.toString() ?? '') : '';
+                  final name =
+                      data is Map ? (data['name']?.toString() ?? '') : '';
+                  safeSet(() {
+                    results = (registered && uid.isNotEmpty)
+                        ? <_InviteCandidate>[
+                            _InviteCandidate(
+                              id: uid,
+                              name: name.isEmpty ? q : name,
+                              email: q.toLowerCase(),
+                              isRegistered: true,
+                            ),
+                          ]
+                        : <_InviteCandidate>[
+                            // Not on Metricorex yet → invite-by-email row.
+                            _InviteCandidate(
+                              id: '',
+                              name: q.toLowerCase(),
+                              email: q.toLowerCase(),
+                              isRegistered: false,
+                            ),
+                          ];
+                  });
+                } else {
+                  // NAME (or partial email) search across registered users.
+                  final res = await ApiService().searchUsers(q, limit: 20);
+                  final data = res.data is Map ? res.data['data'] : null;
+                  final list = (data is Map && data['users'] is List)
+                      ? data['users'] as List
+                      : (data is List ? data : <dynamic>[]);
+                  final mapped = list
+                      .whereType<Map>()
+                      .map((e) => _InviteCandidate(
+                            id: (e['id'] ?? '').toString(),
+                            name: (e['name'] ?? e['username'] ?? '').toString(),
+                            email: e['email']?.toString(),
+                            isRegistered: (e['id']?.toString() ?? '').isNotEmpty,
+                          ))
+                      .where((c) =>
+                          c.id.isNotEmpty && c.name.trim().isNotEmpty)
+                      .toList();
+                  safeSet(() => results = mapped);
+                }
+              } catch (e) {
+                safeSet(() {
+                  results = const [];
+                  searchError = ApiService.extractErrorMessage(e);
+                });
+              } finally {
+                safeSet(() {
+                  searching = false;
+                  searched = true;
+                });
+              }
+            }
+
+            void onQueryChanged(String value) {
+              debounce?.cancel();
+              safeSet(() => query = value);
+              debounce = Timer(
+                const Duration(milliseconds: 350),
+                () => runLookup(value),
+              );
+            }
+
+            void selectCandidate(_InviteCandidate candidate) {
+              debounce?.cancel();
+              setSheetState(() {
+                if (candidate.isRegistered && candidate.id.isNotEmpty) {
+                  selectedUsers[candidate.id] = candidate.name;
+                } else if ((candidate.email ?? '').isNotEmpty) {
+                  guestEmails.add(candidate.email!);
+                }
+                searchController.clear();
+                query = '';
+                searchError = null;
+              });
+              // Back to the platform roster so the next pick is one tap away.
+              runLookup('');
+            }
+
+            void toggleTeamMember(User member) {
+              setSheetState(() {
+                if (selectedUsers.containsKey(member.id)) {
+                  selectedUsers.remove(member.id);
+                } else if (member.id.isNotEmpty) {
+                  selectedUsers[member.id] = member.name;
+                }
+              });
+            }
+
             Future<void> submit() async {
-              if (selectedIds.isEmpty && guestEmails.isEmpty) {
+              if (selectedUsers.isEmpty && guestEmails.isEmpty) {
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                     content: Text('Pick a teammate or add a guest email first')));
                 return;
@@ -3508,12 +3677,12 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                 final response = widget.isMeeting
                     ? await ApiService().addMeetingParticipants(
                         widget.roomId,
-                        participantIds: selectedIds.toList(),
+                        participantIds: selectedUsers.keys.toList(),
                         emails: guestEmails.toList(),
                       )
                     : await ApiService().addCallParticipants(
                         widget.roomId,
-                        participantIds: selectedIds.toList(),
+                        participantIds: selectedUsers.keys.toList(),
                         emails: guestEmails.toList(),
                       );
                 final ok = response.data is Map && response.data['success'] == true;
@@ -3534,6 +3703,158 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
               }
             }
 
+            final totalSelected = selectedUsers.length + guestEmails.length;
+
+            // ---- Search result area --------------------------------------
+            Widget searchArea() {
+              if (searching) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: colors.primary),
+                      ),
+                      const SizedBox(width: 10),
+                      Text('Looking up…',
+                          style: TextStyle(
+                              fontSize: 12.5, color: colors.textSecondary)),
+                    ],
+                  ),
+                );
+              }
+              if (searchError != null) {
+                return Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.error_outline,
+                          size: 16, color: Color(0xFFEF4444)),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(searchError!,
+                            style: const TextStyle(
+                                fontSize: 12.5, color: Color(0xFFEF4444))),
+                      ),
+                    ],
+                  ),
+                );
+              }
+              if (results.isEmpty) {
+                if (searched && searchError == null) {
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Row(
+                      children: [
+                        Icon(Icons.person_off_outlined,
+                            size: 16, color: colors.textSecondary),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            query.trim().isNotEmpty
+                                ? 'No user found. Check the spelling, or enter their full email to invite them as a guest.'
+                                : 'No Metricorex users found yet.',
+                            style: TextStyle(
+                                fontSize: 12.5, color: colors.textSecondary),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+                return const SizedBox.shrink();
+              }
+              return Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 240),
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: results.length,
+                    itemBuilder: (context, index) {
+                      final candidate = results[index];
+                      final alreadyAdded = candidate.isRegistered
+                          ? selectedUsers.containsKey(candidate.id)
+                          : guestEmails.contains(candidate.email);
+                      if (!candidate.isRegistered) {
+                        // Not on Metricorex yet → invite-by-email CTA row
+                        // (adds the email to the guest-invite chips).
+                        final email = candidate.email ?? candidate.name;
+                        return ListTile(
+                          dense: true,
+                          visualDensity: VisualDensity.compact,
+                          leading: CircleAvatar(
+                            radius: 16,
+                            backgroundColor: const Color(0xFFFEF3C7),
+                            child: Icon(Icons.mail_outline_rounded,
+                                size: 16, color: const Color(0xFFB45309)),
+                          ),
+                          title: Text(email,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  fontSize: 14, color: colors.text)),
+                          subtitle: Text('Not on Metricorex yet',
+                              style: TextStyle(
+                                  fontSize: 11.5,
+                                  color: colors.textSecondary)),
+                          trailing: ActionChip(
+                            label: Text(
+                              alreadyAdded ? 'Invited' : 'Invite by email',
+                              style: const TextStyle(
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w700),
+                            ),
+                            visualDensity: VisualDensity.compact,
+                            onPressed: alreadyAdded
+                                ? null
+                                : () => selectCandidate(candidate),
+                          ),
+                          onTap: alreadyAdded
+                              ? null
+                              : () => selectCandidate(candidate),
+                        );
+                      }
+                      return ListTile(
+                        dense: true,
+                        visualDensity: VisualDensity.compact,
+                        enabled: !alreadyAdded,
+                        leading: CircleAvatar(
+                          radius: 16,
+                          backgroundColor: colors.primaryBg,
+                          child: Icon(Icons.person_rounded,
+                              size: 16, color: colors.primary),
+                        ),
+                        title: Text(candidate.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                fontSize: 14, color: colors.text)),
+                        subtitle: Text('Registered user',
+                            style: TextStyle(
+                                fontSize: 11.5,
+                                color: colors.textSecondary)),
+                        trailing: alreadyAdded
+                            ? const Icon(Icons.check_circle,
+                                size: 18, color: Color(0xFF22C55E))
+                            : TextButton(
+                                onPressed: () => selectCandidate(candidate),
+                                child: const Text('Add'),
+                              ),
+                        onTap: alreadyAdded
+                            ? null
+                            : () => selectCandidate(candidate),
+                      );
+                    },
+                  ),
+                ),
+              );
+            }
+
             return SafeArea(
               child: Padding(
                 padding: EdgeInsets.only(
@@ -3542,6 +3863,9 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                   top: 16,
                   bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 16,
                 ),
+                // SingleChildScrollView — the roster + team list + chips can
+                // exceed the sheet height on small screens.
+                child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3599,7 +3923,88 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                       ),
                     ),
                     const SizedBox(height: 14),
+                    // Search / lookup field — a FULL email triggers the
+                    // exact contact lookup, anything else runs the user
+                    // search, and empty shows the platform roster again.
+                    TextField(
+                      controller: searchController,
+                      keyboardType: TextInputType.emailAddress,
+                      textInputAction: TextInputAction.search,
+                      onChanged: onQueryChanged,
+                      onSubmitted: (value) {
+                        debounce?.cancel();
+                        runLookup(value);
+                      },
+                      decoration: InputDecoration(
+                        labelText: 'Add people',
+                        hintText: 'Search by name or email',
+                        prefixIcon: const Icon(Icons.search, size: 18),
+                        border: const OutlineInputBorder(),
+                        isDense: true,
+                        suffixIcon: query.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.close, size: 18),
+                                tooltip: 'Clear',
+                                onPressed: () {
+                                  debounce?.cancel();
+                                  searchController.clear();
+                                  runLookup('');
+                                },
+                              )
+                            : null,
+                      ),
+                    ),
+                    // Platform roster rows (browse mode) — labeled so they
+                    // read apart from the "Team members" quick-add below.
+                    if (!searching &&
+                        searchError == null &&
+                        query.isEmpty &&
+                        results.isNotEmpty) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(top: 10),
+                        child: Text('On Metricorex',
+                            style: TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w700,
+                                color: colors.textSecondary)),
+                      ),
+                      const SizedBox(height: 6),
+                    ],
+                    searchArea(),
+                    // Selected people.
+                    if (totalSelected > 0) ...[
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          ...selectedUsers.entries.map((entry) => Chip(
+                                label: Text(entry.value,
+                                    style:
+                                        const TextStyle(fontSize: 11.5)),
+                                avatar: Icon(Icons.person_rounded,
+                                    size: 14, color: colors.primary),
+                                visualDensity: VisualDensity.compact,
+                                onDeleted: () => setSheetState(
+                                    () => selectedUsers.remove(entry.key)),
+                              )),
+                          ...guestEmails.map((email) => Chip(
+                                label: Text(email,
+                                    style:
+                                        const TextStyle(fontSize: 11.5)),
+                                avatar: const Icon(Icons.mail_outline_rounded,
+                                    size: 14, color: Color(0xFFB45309)),
+                                visualDensity: VisualDensity.compact,
+                                onDeleted: () =>
+                                    setSheetState(() => guestEmails.remove(email)),
+                              )),
+                        ],
+                      ),
+                    ],
+                    // Team roster quick-add (business accounts) — its own
+                    // labeled section.
                     if (teamMembers.isNotEmpty) ...[
+                      const SizedBox(height: 14),
                       Text('Team members',
                           style: TextStyle(
                               fontSize: 12.5,
@@ -3613,7 +4018,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                           itemCount: teamMembers.length,
                           itemBuilder: (context, index) {
                             final member = teamMembers[index];
-                            final selected = selectedIds.contains(member.id);
+                            final selected =
+                                selectedUsers.containsKey(member.id);
                             return ListTile(
                               dense: true,
                               visualDensity: VisualDensity.compact,
@@ -3640,59 +4046,14 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                               trailing: Checkbox(
                                 value: selected,
                                 activeColor: colors.primary,
-                                onChanged: (value) => setSheetState(() {
-                                  value == true
-                                      ? selectedIds.add(member.id)
-                                      : selectedIds.remove(member.id);
-                                }),
+                                onChanged: (_) => toggleTeamMember(member),
                               ),
-                              onTap: () => setSheetState(() {
-                                selected
-                                    ? selectedIds.remove(member.id)
-                                    : selectedIds.add(member.id);
-                              }),
+                              onTap: () => toggleTeamMember(member),
                             );
                           },
                         ),
                       ),
-                      const SizedBox(height: 8),
                     ],
-                    TextField(
-                      controller: emailController,
-                      keyboardType: TextInputType.emailAddress,
-                      textInputAction: TextInputAction.done,
-                      onSubmitted: (_) => setSheetState(addEmailFromInput),
-                      decoration: InputDecoration(
-                        labelText: 'Invite by email',
-                        hintText: 'name@company.com',
-                        prefixIcon:
-                            Icon(Icons.alternate_email, size: 18),
-                        border: const OutlineInputBorder(),
-                        isDense: true,
-                        suffixIcon: IconButton(
-                          icon: Icon(Icons.add_rounded,
-                              size: 20, color: colors.primary),
-                          onPressed: () => setSheetState(addEmailFromInput),
-                        ),
-                      ),
-                    ),
-                    if (guestEmails.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: guestEmails
-                              .map((email) => Chip(
-                                    label: Text(email,
-                                        style: const TextStyle(fontSize: 11.5)),
-                                    visualDensity: VisualDensity.compact,
-                                    onDeleted: () =>
-                                        setSheetState(() => guestEmails.remove(email)),
-                                  ))
-                              .toList(),
-                        ),
-                      ),
                     const SizedBox(height: 16),
                     SizedBox(
                       width: double.infinity,
@@ -3709,11 +4070,16 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
                                 height: 18,
                                 child: CircularProgressIndicator(
                                     strokeWidth: 2, color: Colors.white))
-                            : const Text('Send invitations',
-                                style: TextStyle(fontWeight: FontWeight.w700)),
+                            : Text(
+                                totalSelected > 0
+                                    ? 'Send invitations ($totalSelected)'
+                                    : 'Send invitations',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w700)),
                       ),
                     ),
                   ],
+                ),
                 ),
               ),
             );
@@ -3721,6 +4087,11 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         );
       },
     );
+
+    // The sheet is closed — kill any pending debounce so it cannot fire a
+    // lookup (and a stray network call) after dismissal.
+    debounce?.cancel();
+    searchController.dispose();
   }
 
   Widget _dockButton({

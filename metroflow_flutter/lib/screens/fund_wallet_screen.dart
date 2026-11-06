@@ -8,6 +8,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../main.dart';
 import '../services/api.dart';
 import '../models/wallet.dart';
+import '../providers/balance_visibility_provider.dart';
 import '../theme/app_theme.dart';
 import '../utils/app_toast.dart';
 import '../utils/payment_launcher.dart';
@@ -494,6 +495,10 @@ class _FundWalletScreenState extends ConsumerState<FundWalletScreen> {
     ];
     if (options.isEmpty) return const SizedBox.shrink();
 
+    // BALANCE HIDE/SHOW: mask wallet balances behind dots while privacy
+    // mode is on (same mask as the dashboard hero + wallet cards).
+    final balanceHidden = ref.watch(balanceVisibilityProvider);
+
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
@@ -528,7 +533,9 @@ class _FundWalletScreenState extends ConsumerState<FundWalletScreen> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '${option.currency == 'USD' ? '\u0024' : '\u20A6'}${option.balance.toStringAsFixed(2)}',
+                      balanceHidden
+                          ? BalanceVisibilityNotifier.mask()
+                          : '${option.currency == 'USD' ? '\u0024' : '\u20A6'}${option.balance.toStringAsFixed(2)}',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 11.5,

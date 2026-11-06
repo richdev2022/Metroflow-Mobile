@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../screens/chat_detail_screen.dart';
 import '../utils/app_feedback.dart';
+import '../utils/app_toast.dart';
 import '../utils/logger.dart';
 import 'api.dart';
 import 'app_badge_service.dart';
@@ -604,7 +605,10 @@ class PushNotificationService {
         fullScreenIntent: false,
         // WhatsApp-style inline reply: the RemoteInput collects the text on
         // the notification and hands it to the background action handler, so
-        // the user can answer without the app ever opening.
+        // the user can answer without the app ever opening. cancelNotification
+        // stays false — the shade entry must survive the press, so a FAILED
+        // send leaves it in place for a retry; _safeSendChatReply cancels it
+        // only once the send has actually gone through.
         actions: const [
           AndroidNotificationAction(
             kChatReplyActionId,
@@ -808,6 +812,10 @@ class PushNotificationService {
   /// token) — that is what lets a user reply straight from the notification
   /// shade without the app ever opening (WhatsApp behaviour). Fire-and-forget;
   /// never throws, so a failed reply can never crash a notification action.
+  /// On a SUCCESSFUL send the shade entry for the conversation is cleared
+  /// (same id formula as [showChatNotification]); on failure it is left alone
+  /// and a best-effort toast surfaces the problem (the toast silently no-ops
+  /// in the background isolate, where the plugin channel is not registered).
   static Future<void> _safeSendChatReply(String? input, String? payload) async {
     try {
       final text = (input ?? '').trim();
@@ -817,8 +825,21 @@ class PushNotificationService {
           (data['conversation_id'] ?? data['conversationId'] ?? '').toString();
       if (conversationId.isEmpty) return;
       await ApiService().sendMessage(conversationId, {'content': text});
+      // Reply sent — NOW clear the shade entry (same id formula as
+      // [showChatNotification]). Done here, in the handler, rather than via
+      // the action's cancelNotification flag, so a failed send keeps the
+      // notification in place for a retry.
+      try {
+        await _instance._localNotifications.cancel(
+          _kChatNotificationIdBase + (conversationId.hashCode % 50000),
+        );
+      } catch (_) {}
     } catch (e) {
       debugPrint('inline chat reply failed: $e');
+      try {
+        AppToast.show('Message not sent — please try again',
+            type: AppToastType.error);
+      } catch (_) {}
     }
   }
 

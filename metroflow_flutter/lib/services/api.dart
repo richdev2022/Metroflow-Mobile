@@ -1350,6 +1350,20 @@ class ApiService {
     );
   }
 
+  /// GET /social/search/users?q=&limit=&cursor= — platform-wide user search.
+  /// An EMPTY q runs the endpoint in "discover mode": the whole active roster
+  /// except the caller. Used by the call-room invite sheet's people picker
+  /// (mirrors the personal app's searchUsers).
+  Future<Response> searchUsers(String q, {int limit = 20, String? cursor}) =>
+      _dio.get(
+        '/social/search/users',
+        queryParameters: {
+          'q': q,
+          'limit': limit,
+          if (cursor != null) 'cursor': cursor,
+        },
+      );
+
   /// GET /meetings/:id (accepts UUID or code) — used by the call-room invite
   /// sheet to resolve the shareable meeting code.
   Future<Response> getMeetingDetail(String idOrCode) async {
