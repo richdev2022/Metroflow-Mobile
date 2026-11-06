@@ -99,6 +99,31 @@ const String kPendingIncomingCallPrefKey = 'pending_incoming_call';
 const String kCallActionAccept = 'accept_call';
 const String kCallActionDecline = 'decline_call';
 
+/// Inline chat reply (WhatsApp-style): the Reply button on a chat-message
+/// notification collects free text on the notification itself — an Android
+/// `RemoteInput` / an iOS `UNTextInputNotificationAction` — and delivers it to
+/// the action handler WITHOUT opening the app. Both platforms route the text
+/// through [kChatReplyActionId]; the iOS action lives in the
+/// [kChatReplyCategoryId] category set as the notification's categoryIdentifier.
+const String kChatReplyActionId = 'reply_chat';
+const String kChatReplyCategoryId = 'chat_message_reply';
+
+/// iOS/macOS notification categories registered at plugin initialization. The
+/// text-input action is what renders the inline reply field in the notification.
+final List<DarwinNotificationCategory> kDarwinNotificationCategories = [
+  DarwinNotificationCategory(
+    kChatReplyCategoryId,
+    actions: <DarwinNotificationAction>[
+      DarwinNotificationAction.text(
+        kChatReplyActionId,
+        'Reply',
+        buttonTitle: 'Send',
+        placeholder: 'Type a message',
+      ),
+    ],
+  ),
+];
+
 /// Raw resources (android/app/src/main/res/raw/*.mp3) used by the
 /// notification channels. Raw resource names exclude the extension.
 ///  - call_ringtone.mp3      → "calls" channel (user-supplied ringtone)
@@ -215,12 +240,15 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   }
 }
 
-/// Background/terminated notification ACTION BUTTON handler (Accept /
-/// Decline on the incoming-call notification). MUST be top-level with the
-/// entry-point pragma or flutter_local_notifications throws at runtime; it
-/// runs in its OWN isolate, so it relies only on statics + fresh plugin
-/// instances.
+/// Background/terminated notification ACTION BUTTON handler (inline chat
+/// reply + Accept/Decline on the incoming-call notification). MUST be
+/// top-level with the entry-point pragma or flutter_local_notifications
+/// throws at runtime; it runs in its OWN isolate, so it relies only on
+/// statics + fresh plugin instances.
 ///
+/// - Reply (chat inline reply) → the typed text is sent straight to the chat
+///   API for the notification's conversation, WITHOUT opening the app (WhatsApp
+///   behaviour). Fire-and-forget, never throws.
 /// - Decline → REST POST /calls/:id/reject via ApiService (the socket-only
 ///   `call:reject` emit is useless from a dead process) + cancel the ring
 ///   notification. Fire-and-forget, never throws.
@@ -233,6 +261,12 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 Future<void> backgroundNotificationActionHandler(NotificationResponse response) async {
   try {
     final actionId = response.actionId ?? '';
+    if (actionId == kChatReplyActionId) {
+      // Inline reply from the shade — send it now, in this isolate.
+      await PushNotificationService._safeSendChatReply(
+          response.input, response.payload);
+      return;
+    }
     if (actionId != kCallActionAccept && actionId != kCallActionDecline) {
       return; // plain tap — handled by the main isolate / cold-start path
     }
@@ -412,22 +446,31 @@ class PushNotificationService {
     // here unconditionally: when Firebase later also calls
     // FirebaseMessaging.requestPermission the OS just returns the already-
     // granted status (the system prompt only ever shows once).
-    const darwinInit = DarwinInitializationSettings(
+    final darwinInit = DarwinInitializationSettings(
       requestAlertPermission: true,
       requestSoundPermission: true,
       requestBadgePermission: true,
       requestCriticalPermission: false,
+      // Registers the inline-reply category so iOS renders the Reply text field
+      // on chat notifications (kChatReplyCategoryId set on their details).
+      notificationCategories: kDarwinNotificationCategories,
     );
-    const initSettings = InitializationSettings(android: androidInit, iOS: darwinInit);
+    final initSettings = InitializationSettings(android: androidInit, iOS: darwinInit);
 
     await _localNotifications.initialize(
       initSettings,
       onDidReceiveNotificationResponse: (response) {
-        // Notification ACTION BUTTONS (Accept/Decline on the incoming-call
-        // notification) branch BEFORE the generic tap deep-linking.
+        // Notification ACTION BUTTONS branch BEFORE the generic tap
+        // deep-linking: Accept/Decline on the incoming-call notification and
+        // the inline chat Reply (its RemoteInput/UNTextInput text is in
+        // response.input).
         final actionId = response.actionId ?? '';
         if (actionId == kCallActionAccept || actionId == kCallActionDecline) {
           _handleCallNotificationAction(actionId, response.payload);
+          return;
+        }
+        if (actionId == kChatReplyActionId) {
+          _handleChatReply(response.input, response.payload);
           return;
         }
         _handleNotificationTap(response.payload);
@@ -559,6 +602,21 @@ class PushNotificationService {
         channelName: 'Messages',
         channelDescription: 'Chat messages.',
         fullScreenIntent: false,
+        // WhatsApp-style inline reply: the RemoteInput collects the text on
+        // the notification and hands it to the background action handler, so
+        // the user can answer without the app ever opening.
+        actions: const [
+          AndroidNotificationAction(
+            kChatReplyActionId,
+            'Reply',
+            allowGeneratedReplies: true,
+            showsUserInterface: false,
+            cancelNotification: false,
+            inputs: [
+              AndroidNotificationActionInput(label: 'Type a message'),
+            ],
+          ),
+        ],
       );
       await _instance._localNotifications.show(
         _kChatNotificationIdBase + (conversationId.isEmpty ? 0 : conversationId.hashCode % 50000),
@@ -572,6 +630,9 @@ class PushNotificationService {
             sound: kIosChatReceiveAlertSound,
             presentBanner: true,
             presentList: true,
+            // Owns the inline Reply text action registered in
+            // kDarwinNotificationCategories.
+            categoryIdentifier: kChatReplyCategoryId,
           ),
         ),
         payload: _encodePayload(payload),
@@ -622,14 +683,17 @@ class PushNotificationService {
   static Future<void> ensureBackgroundInitialized() async {
     try {
       const androidInit = AndroidInitializationSettings('ic_notification');
-      const darwinInit = DarwinInitializationSettings(
+      final darwinInit = DarwinInitializationSettings(
         requestAlertPermission: false,
         requestSoundPermission: false,
         requestBadgePermission: false,
         requestCriticalPermission: false,
+        // Re-assert the reply category in this isolate so a notification shown
+        // from a dead process still renders the Reply text field on iOS.
+        notificationCategories: kDarwinNotificationCategories,
       );
       await _instance._localNotifications.initialize(
-        const InitializationSettings(android: androidInit, iOS: darwinInit),
+        InitializationSettings(android: androidInit, iOS: darwinInit),
         // Action buttons pressed while the app is dead land here — the
         // main-isolate handler is NOT registered in this isolate.
         onDidReceiveBackgroundNotificationResponse:
@@ -727,6 +791,34 @@ class PushNotificationService {
       // Anything else: no-op (plain taps fall through to _handleNotificationTap).
     } catch (e) {
       debugPrint('_handleCallNotificationAction failed: $e');
+    }
+  }
+
+  /// Main-isolate inline chat reply (the app process is alive and the action
+  /// handler runs here instead of the background isolate). Mirrors the
+  /// background path — fire-and-forget.
+  void _handleChatReply(String? input, String? payload) {
+    unawaited(_safeSendChatReply(input, payload));
+  }
+
+  /// Sends an inline chat reply to the notification's conversation.
+  ///
+  /// Works from BOTH isolates, so it stays STATIC and touches only the
+  /// [ApiService] singleton (its Dio interceptor attaches the stored bearer
+  /// token) — that is what lets a user reply straight from the notification
+  /// shade without the app ever opening (WhatsApp behaviour). Fire-and-forget;
+  /// never throws, so a failed reply can never crash a notification action.
+  static Future<void> _safeSendChatReply(String? input, String? payload) async {
+    try {
+      final text = (input ?? '').trim();
+      if (text.isEmpty) return; // blank reply → nothing to send
+      final data = _decodePayload(payload);
+      final conversationId =
+          (data['conversation_id'] ?? data['conversationId'] ?? '').toString();
+      if (conversationId.isEmpty) return;
+      await ApiService().sendMessage(conversationId, {'content': text});
+    } catch (e) {
+      debugPrint('inline chat reply failed: $e');
     }
   }
 

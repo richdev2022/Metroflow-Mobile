@@ -27,6 +27,7 @@ class PinInputBoxes extends StatefulWidget {
     this.autofocus = false,
     this.boxSize = 52,
     this.errorText,
+    this.allowVisibilityToggle = true,
   });
 
   /// Optional external controller — when provided the caller owns it (and
@@ -49,6 +50,11 @@ class PinInputBoxes extends StatefulWidget {
   /// Optional validation message rendered below the boxes.
   final String? errorText;
 
+  /// When true (default) an eye IconButton is rendered AFTER the boxes that
+  /// toggles ALL four fields between obscured (•) and plain digits. The PIN
+  /// starts obscured (banking standard) and the state is local to the widget.
+  final bool allowVisibilityToggle;
+
   @override
   State<PinInputBoxes> createState() => _PinInputBoxesState();
 }
@@ -58,6 +64,9 @@ class _PinInputBoxesState extends State<PinInputBoxes> {
   late final List<FocusNode> _nodes;
   late final List<TextEditingController> _boxControllers;
   bool _syncing = false;
+
+  /// Digits start masked (•); the eye toggle flips every box at once.
+  bool _obscured = true;
 
   TextEditingController get _effectiveController =>
       widget.controller ?? (_internalController ??= TextEditingController());
@@ -201,15 +210,46 @@ class _PinInputBoxesState extends State<PinInputBoxes> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: List.generate(4, (index) {
-            return Padding(
-              padding: EdgeInsets.only(right: index == 3 ? 0 : 12),
-              child: _pinBox(index, scheme),
-            );
-          }),
-        ),
+        // RESPONSIVE: 4 boxes + the eye toggle must never overflow a 320dp
+        // phone — when the row does not fit, the box size shrinks instead of
+        // overflowing (the gap and the toggle keep their width).
+        LayoutBuilder(builder: (context, constraints) {
+          const gap = 12.0;
+          final toggleW = widget.allowVisibilityToggle ? 40.0 : 0.0;
+          var box = widget.boxSize;
+          if (4 * box + 3 * gap + toggleW > constraints.maxWidth) {
+            box =
+                ((constraints.maxWidth - 3 * gap - toggleW) / 4).clamp(30.0, box);
+          }
+          return Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (int index = 0; index < 4; index++)
+                Padding(
+                  padding: EdgeInsets.only(right: index == 3 ? 0 : gap),
+                  child: _pinBox(index, scheme, box),
+                ),
+              if (widget.allowVisibilityToggle)
+                SizedBox(
+                  width: 40,
+                  height: 48,
+                  child: IconButton(
+                    tooltip: _obscured ? 'Show PIN' : 'Hide PIN',
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    icon: Icon(
+                      _obscured
+                          ? Icons.visibility_rounded
+                          : Icons.visibility_off_rounded,
+                      size: 22,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                    onPressed: () => setState(() => _obscured = !_obscured),
+                  ),
+                ),
+            ],
+          );
+        }),
         if (hasError)
           Padding(
             padding: const EdgeInsets.only(top: 8),
@@ -227,9 +267,7 @@ class _PinInputBoxesState extends State<PinInputBoxes> {
     );
   }
 
-  Widget _pinBox(int index, ColorScheme scheme) {
-    final size = widget.boxSize;
-
+  Widget _pinBox(int index, ColorScheme scheme, double size) {
     return AnimatedBuilder(
       animation: Listenable.merge([_nodes[index], _boxControllers[index]]),
       builder: (context, _) {
@@ -278,7 +316,7 @@ class _PinInputBoxesState extends State<PinInputBoxes> {
               FilteringTextInputFormatter.digitsOnly,
               LengthLimitingTextInputFormatter(4), // allow paste of the whole PIN
             ],
-            obscureText: true,
+            obscureText: _obscured,
             obscuringCharacter: '•',
             style: TextStyle(
               fontSize: size * 0.46,

@@ -2,10 +2,12 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../models/bank.dart';
 import '../models/transfer.dart';
+import '../providers/balance_visibility_provider.dart';
 import '../services/api.dart';
 import '../theme/app_theme.dart';
 import '../widgets/pin_input_boxes.dart';
@@ -21,7 +23,7 @@ import '../widgets/pin_input_boxes.dart';
 /// Hosted in two places:
 ///  - wallet_screen: `asPage: false` — renders as a draggable bottom sheet.
 ///  - single_transfer_screen: `asPage: true` — renders as a page body.
-class SingleTransferSheet extends StatefulWidget {
+class SingleTransferSheet extends ConsumerStatefulWidget {
   const SingleTransferSheet({
     super.key,
     this.initialWalletType = 'user',
@@ -55,7 +57,7 @@ class SingleTransferSheet extends StatefulWidget {
   State<SingleTransferSheet> createState() => _SingleTransferSheetState();
 }
 
-class _SingleTransferSheetState extends State<SingleTransferSheet> {
+class _SingleTransferSheetState extends ConsumerState<SingleTransferSheet> {
   Map<String, dynamic> wallets = {};
   bool canManageBusinessWallet = false;
   List<Bank> banks = [];
@@ -1112,6 +1114,11 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
           final currency = (wallet['currency']?.toString() ?? 'NGN').toUpperCase();
           final balance = double.tryParse(wallet['balance']?.toString() ?? '0') ?? 0.0;
           final symbol = currency == 'USD' ? r'$' : (currency == 'EUR' ? '€' : (currency == 'GBP' ? '£' : '₦'));
+          // BALANCE HIDE/SHOW: mask wallet balances behind dots while privacy
+          // mode is on (same mask as the dashboard hero + wallet cards).
+          final balanceLabel = ref.watch(balanceVisibilityProvider)
+              ? BalanceVisibilityNotifier.mask()
+              : '$symbol${balance.toStringAsFixed(2)}';
           return GestureDetector(
             onTap: () => setState(() => selectedWalletType = type),
             child: Container(
@@ -1145,7 +1152,7 @@ class _SingleTransferSheetState extends State<SingleTransferSheet> {
                     ),
                   ),
                   Text(
-                    '$symbol${balance.toStringAsFixed(2)}',
+                    balanceLabel,
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
