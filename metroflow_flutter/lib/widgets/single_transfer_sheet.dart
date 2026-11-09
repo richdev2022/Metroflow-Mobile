@@ -54,7 +54,7 @@ class SingleTransferSheet extends ConsumerStatefulWidget {
   final Map<String, dynamic>? prefill;
 
   @override
-  State<SingleTransferSheet> createState() => _SingleTransferSheetState();
+  ConsumerState<SingleTransferSheet> createState() => _SingleTransferSheetState();
 }
 
 class _SingleTransferSheetState extends ConsumerState<SingleTransferSheet> {
