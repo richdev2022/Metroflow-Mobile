@@ -14,9 +14,14 @@ on:
       - "metroflow_flutter/pubspec.yaml"
       - ".github/workflows/ios-testflight.yml"
 
+# One TestFlight pipeline per branch/ref: superseded runs are CANCELLED
+# instead of piling up behind macos-15 arm64 capacity ("The job was not
+# acquired by Runner of type hosted ... jobs targeting macOS arm64 runners
+# may experience longer queue times"). Safe for deploys — an interrupted
+# fastlane upload leaves no partial build state on App Store Connect.
 concurrency:
-  group: ios-testflight
-  cancel-in-progress: false
+  group: ios-testflight-${{ github.ref }}
+  cancel-in-progress: true
 
 # GITHUB_TOKEN needs contents:write so `match` can push the encrypted
 # signing material to the `ios-signing` branch.
@@ -26,6 +31,25 @@ permissions:
 jobs:
   testflight:
     name: Build & upload to TestFlight
+    # ARM64 EXCEPTION — macos-15 (arm64) is deliberately KEPT despite hosted
+    # arm64 capacity constraints ("The job was not acquired by Runner of type
+    # hosted ... jobs targeting macOS arm64 runners may experience longer
+    # queue times"). This job genuinely requires the arm64 image; it cannot
+    # build on Intel macos-13 (newest Xcode 15.2) or even macos-14 (newest
+    # Xcode 16.2), because:
+    #  - device_info_plus 12.4.0 (pubspec.lock) calls
+    #    NSProcessInfo.isiOSAppOnVision, which only exists in the iOS 26 SDK
+    #    (Xcode 26), and
+    #  - the Firebase iOS SDK resolved by SwiftPM uses Swift 6.1 features
+    #    ("sending", access-level-on-imports) needing the Swift 6.1+ toolchain
+    #    (documented compile failures in FIRAllocatedUnfairLock.swift /
+    #    HeartbeatStorage.swift — see commit 94d8547).
+    # Xcode 26.x ships ONLY on arm64-hosted macOS images (macos-15+), so the
+    # arm64 label is a hard requirement, not a preference — switching to
+    # macos-13 would trade a queued job for a guaranteed compile failure.
+    # Capacity relief comes from the cancel-in-progress concurrency guard
+    # above instead. (Xcode selection below already targets 26.x, which is
+    # exactly what the macos-15 image ships — no Xcode adjustment needed.)
     # macos-15 (NOT macos-14): the Firebase iOS SDK resolved by SwiftPM now uses
     # Swift 6.1 features ("sending", access-level-on-imports). macos-14's newest
     # Xcode is too old to compile it (build fails in FIRAllocatedUnfairLock.swift

@@ -19,6 +19,12 @@ on:
 permissions:
   contents: read
 
+# Cancel superseded runs of the same branch/ref instead of piling up queued
+# duplicates (each would re-read the whole App Store Connect state).
+concurrency:
+  group: ios-asc-debug-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   dump:
     runs-on: ubuntu-latest

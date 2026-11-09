@@ -38,6 +38,12 @@ on:
 permissions:
   contents: read
 
+# Cancel superseded runs of the same branch/ref instead of piling up queued
+# duplicates (each would re-apply idempotent ASC metadata patches).
+concurrency:
+  group: ios-asc-fill-metadata-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   fill:
     runs-on: ubuntu-latest
