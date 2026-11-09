@@ -1,3 +1,11 @@
+// Metricorex API client — sole network boundary for the Flutter app.
+// Backend contracts (see metroflow-backend server/features/personal/routes):
+//   /insights/summary          GET   (alias of /overview)
+//   /insights/nudges           GET
+//   /splits/candidates?q=&limit= GET  (every Metricorex user, ILIKE name/username/email)
+//   /splits                    POST  { participants[], emails[]? }  (emails → invites)
+//   /live/:id/shop/:listingId/pin POST { pin: true|false }
+// Socket events: live:shop_updated { session_id, session_code, items }.
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
