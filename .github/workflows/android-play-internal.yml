@@ -162,11 +162,13 @@ jobs:
 
       - name: Upload AAB artifact (backup copy)
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: metricorex-aab-${{ github.run_number }}
           path: metroflow_flutter/build/app/outputs/bundle/release/app-release.aab
           if-no-files-found: error
 
+        retention-days: 1
       - name: Prepare Play release notes
         env:
           NOTES: ${{ github.event.inputs.release_notes }}

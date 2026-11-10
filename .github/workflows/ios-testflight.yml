@@ -213,7 +213,9 @@ jobs:
       - name: Upload IPA artifact (backup copy)
         if: always()
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: metricorex-ios-ipa
           path: metroflow_flutter/ios/build/ios/ipa/*.ipa
           if-no-files-found: ignore
+        retention-days: 1
