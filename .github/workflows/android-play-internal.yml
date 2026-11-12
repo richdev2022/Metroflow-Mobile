@@ -167,8 +167,8 @@ jobs:
           name: metricorex-aab-${{ github.run_number }}
           path: metroflow_flutter/build/app/outputs/bundle/release/app-release.aab
           if-no-files-found: error
+          retention-days: 1
 
-        retention-days: 1
       - name: Prepare Play release notes
         env:
           NOTES: ${{ github.event.inputs.release_notes }}

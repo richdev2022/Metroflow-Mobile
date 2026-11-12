@@ -171,11 +171,11 @@ jobs:
           name: metricorex-production-aab-${{ github.run_number }}
           path: metroflow_flutter/build/app/outputs/bundle/release/app-release.aab
           if-no-files-found: error
+          retention-days: 1
 
       # fastlane supply: creates an edit, uploads the AAB to the production
       # track, attaches the release notes, commits the edit. Google review
       # then gates the live rollout.
-        retention-days: 1
       - name: Publish to Play production track
         run: |
           fastlane supply \

@@ -166,14 +166,15 @@ jobs:
         with:
           name: release-apk
           path: metroflow_flutter/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 1
 
-        retention-days: 1
       - name: Upload AAB
         uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
           name: release-aab
           path: metroflow_flutter/build/app/outputs/bundle/release/app-release.aab
+          retention-days: 1
 
       # ---------------------------------------------------------------------
       # DIRECT PLAY STORE PUSH — DISABLED (2026-10-14).
@@ -184,7 +185,6 @@ jobs:
       # release/android-production-1.0), production via
       # store-production-release.yml (store-release-* tags).
       # ---------------------------------------------------------------------
-        retention-days: 1
       - name: Upload to Google Play (internal testing)
         if: false # was: env.PLAY_SERVICE_ACCOUNT_JSON != '' — see comment above.
         # Publishing is centralized in android-play-internal.yml (manual
