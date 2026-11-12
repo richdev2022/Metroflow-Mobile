@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
@@ -12,35 +13,54 @@ import '../utils/app_toast.dart';
 import '../widgets/app_update_modal.dart';
 import 'api.dart';
 
-/// In-app update checker.
+/// In-app update checker — SIMPLE flow (2026-11).
 ///
-/// Flow: on login and on app start the app asks the backend whether a newer
-/// release exists (`GET /api/public/app-updates/check`). When one does, a
-/// polished modal is shown:
+/// The admin publishes a release with a store URL or a custom link and flips
+/// the "new release available" toggle. Users get a modal instantly:
 ///   - required updates  -> non-dismissable, only "Update now"
-///   - optional updates  -> "Remind me later" persists the dismissed version
-///                          code so the same release never nags twice
+///   - optional updates  -> "Not now" skips it, but the prompt returns on the
+///                          user's next login; tapping "Update now" records
+///                          the release as handled so it stops nagging
+///
+/// "Instantly" is delivered by checking on login, on app start, on every
+/// foreground resume and on a 60-second poll while the app is open.
 ///
 /// Robustness rules (by design, all silent for automatic checks):
 ///   - any network/parse failure => no prompt (the app keeps working)
 ///   - endpoint missing (old backend) => 404 => no prompt
 ///   - web builds and non-phone platforms => no-op
-///   - one prompt at a time; one check prompt per version per session;
-///     required updates ignore every dismissal
+///   - one prompt at a time; required updates ignore every dismissal
 class AppUpdateService {
-  AppUpdateService._();
+  AppUpdateService._() {
+    // Lifecycle listener: fires the check on every foreground resume, so an
+    // admin flipping the toggle reaches a backgrounded app the moment the
+    // user returns to it. (AppLifecycleListener self-registers on creation.)
+    AppLifecycleListener(
+      onResume: () {
+        _resumed = true;
+        checkAndPrompt(source: 'resume');
+      },
+      onStateChange: (state) => _resumed = state == AppLifecycleState.resumed,
+    );
+  }
   static final AppUpdateService instance = AppUpdateService._();
 
-  /// SharedPreferences key holding the last OPTIONAL release the user
-  /// postponed. Required updates never read this.
-  static const String _dismissedPrefKey = 'app_update.dismissed_version_code';
+  /// SharedPreferences key holding the release the user SKIPPED. Cleared on
+  /// the next login so the prompt returns, per the product flow.
+  static const String _skippedPrefKey = 'app_update.skipped_release';
+
+  /// Release the user already tapped "Update now" for (optional updates) —
+  /// never auto-prompted again.
+  static const String _handledPrefKey = 'app_update.handled_release';
 
   static const Duration _httpTimeout = Duration(seconds: 8);
 
-  /// Version code already prompted in this app session — prevents the login
-  /// hook and the startup hook from double-prompting the same release.
-  int? _promptedThisSession;
+  /// Poll cadence while the app is foregrounded — how quickly an admin's
+  /// "new release available" flip reaches an open app.
+  static const Duration _pollInterval = Duration(seconds: 60);
 
+  Timer? _pollTimer;
+  bool _resumed = true;
   bool _dialogOpen = false;
 
   Dio _client() =>
@@ -50,7 +70,24 @@ class AppUpdateService {
   // Public API
   // ---------------------------------------------------------------------------
 
-  /// Automatic check (login / app start). Never throws, never toasts.
+  /// Starts the 60-second foreground poll + lifecycle hooks. Safe to call
+  /// multiple times.
+  void startPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(_pollInterval, (_) {
+      if (_resumed && !_dialogOpen) {
+        checkAndPrompt(source: 'poll');
+      }
+    });
+  }
+
+  void stopPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = null;
+  }
+
+  /// Automatic check (login / app start / resume / poll). Never throws,
+  /// never toasts.
   Future<void> checkAndPrompt({String source = 'auto'}) async {
     if (kIsWeb) return;
     try {
@@ -64,9 +101,14 @@ class AppUpdateService {
         return;
       }
 
-      if (_dialogOpen || _promptedThisSession == info.latestVersionCode) return;
-      if (await dismissedVersionCode() == info.latestVersionCode) {
-        debugPrint('[AppUpdate] v${info.latestVersionCode} previously dismissed — skipping');
+      if (_dialogOpen) return;
+      if (await handledRelease() == info.trackingKey) {
+        debugPrint('[AppUpdate] ${info.trackingKey} already handled — skipping');
+        return;
+      }
+      if (await skippedRelease() == info.trackingKey) {
+        debugPrint(
+            '[AppUpdate] ${info.trackingKey} previously skipped until next login');
         return;
       }
       debugPrint('[AppUpdate] update available -> prompting ($source)');
@@ -114,6 +156,9 @@ class AppUpdateService {
         '$apiBaseUrl/public/app-updates/check',
         queryParameters: {
           'platform': platform,
+          // Which app this is — the backend keeps Personal and Business
+          // releases apart so each app is prompted only for itself.
+          'app': pkg.packageName.endsWith('.personal') ? 'personal' : 'business',
           'current_version_code': pkg.buildNumber,
           'current_version_name': pkg.version,
         },
@@ -126,6 +171,9 @@ class AppUpdateService {
       return AppUpdateInfo.fromApi(
         payload,
         platform: platform,
+        appType: pkg.packageName.endsWith('.personal')
+            ? 'personal'
+            : 'business',
         currentVersionCode: int.tryParse(pkg.buildNumber),
         currentVersionName: pkg.version,
       );
@@ -135,17 +183,16 @@ class AppUpdateService {
     }
   }
 
-  /// Opens the right store page for the running platform. Priority:
-  ///   1. store_url published with the release (admin-controlled)
-   ///  2. Android: market:// deep link, then the https Play fallback
-  ///   3. iOS: iTunes lookup by bundle id -> human trackViewUrl
-  /// Returns false when every candidate fails (UI then shows guidance).
-  Future<bool> openStore(AppUpdateInfo info) async {
+  /// Opens the admin-configured download URL (store listing or custom link).
+  /// Fallbacks: Android market:// deep link + https Play page; iOS iTunes
+  /// lookup by bundle id. Returns false when every candidate fails (the UI
+  /// then shows guidance).
+  Future<bool> openDownload(AppUpdateInfo info) async {
     try {
       final pkg = await PackageInfo.fromPlatform();
       final candidates = <String>[
-        if (info.storeUrl != null && info.storeUrl!.trim().isNotEmpty)
-          info.storeUrl!.trim(),
+        if (info.downloadUrl != null && info.downloadUrl!.trim().isNotEmpty)
+          info.downloadUrl!.trim(),
         if (Platform.isAndroid) ...[
           'market://details?id=${pkg.packageName}',
           'https://play.google.com/store/apps/details?id=${pkg.packageName}',
@@ -173,25 +220,57 @@ class AppUpdateService {
         }
       }
     } catch (e) {
-      debugPrint('[AppUpdate] openStore failed: $e');
+      debugPrint('[AppUpdate] openDownload failed: $e');
     }
     return false;
   }
 
-  Future<int?> dismissedVersionCode() async {
+  /// Convenience alias kept for older call sites.
+  Future<bool> openStore(AppUpdateInfo info) => openDownload(info);
+
+  Future<String?> skippedRelease() async {
     try {
-      return (await SharedPreferences.getInstance()).getInt(_dismissedPrefKey);
+      return (await SharedPreferences.getInstance()).getString(_skippedPrefKey);
     } catch (_) {
       return null;
     }
   }
 
-  Future<void> rememberDismissed(int versionCode) async {
+  Future<void> rememberSkipped(String trackingKey) async {
     try {
       await (await SharedPreferences.getInstance())
-          .setInt(_dismissedPrefKey, versionCode);
+          .setString(_skippedPrefKey, trackingKey);
     } catch (_) {
       // persistence is best-effort; worst case the user is re-prompted once
+    }
+  }
+
+  Future<String?> handledRelease() async {
+    try {
+      return (await SharedPreferences.getInstance()).getString(_handledPrefKey);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> rememberHandled(String trackingKey) async {
+    try {
+      await (await SharedPreferences.getInstance())
+          .setString(_handledPrefKey, trackingKey);
+    } catch (_) {
+      // best-effort; worst case the user is prompted once more
+    }
+  }
+
+  /// Called on every fresh LOGIN: a skipped release prompts again from the
+  /// next session, exactly as the product flow specifies.
+  Future<void> clearSessionDismissals() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_skippedPrefKey);
+      await prefs.remove(_handledPrefKey);
+    } catch (_) {
+      // ignore — the prompt simply returns a session early
     }
   }
 
@@ -206,7 +285,6 @@ class AppUpdateService {
       debugPrint('[AppUpdate] no navigator context yet — prompt skipped');
       return;
     }
-    _promptedThisSession = info.latestVersionCode;
     _dialogOpen = true;
     showDialog<void>(
       context: context,
@@ -217,9 +295,19 @@ class AppUpdateService {
         child: AppUpdateModal(
           info: info,
           showLater: !info.updateRequired,
-          onUpdate: () => openStore(info),
+          onUpdate: () async {
+            final opened = await openDownload(info);
+            // Optional updates: tapping "Update now" ends the nagging for
+            // this release. Required ones keep blocking until updated.
+            if (!info.updateRequired) {
+              await rememberHandled(info.trackingKey);
+            }
+            return opened;
+          },
           onLater: () {
-            rememberDismissed(info.latestVersionCode);
+            if (!info.updateRequired) {
+              rememberSkipped(info.trackingKey);
+            }
             if (Navigator.of(dialogContext).canPop()) {
               Navigator.of(dialogContext).pop();
             }

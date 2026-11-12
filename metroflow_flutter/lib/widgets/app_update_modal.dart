@@ -10,8 +10,12 @@ import '../utils/app_toast.dart';
 ///
 /// Visual language mirrors [UpgradeDialog]: rounded 24 card, brand-gradient
 /// hero, white (or dark-surface) body, gradient pill CTA. The widget itself
-/// is dumb UI — behaviour (dismiss persistence, store launch, forced mode)
+/// is dumb UI — behaviour (skip persistence, download launch, forced mode)
 /// lives in AppUpdateService, which wires the callbacks.
+///
+/// Copy intentionally avoids version numbers — the admin flow no longer has
+/// them. Required updates cannot be skipped; optional ones offer "Not now"
+/// (the prompt returns on the user's next login).
 class AppUpdateModal extends StatelessWidget {
   const AppUpdateModal({
     super.key,
@@ -23,10 +27,11 @@ class AppUpdateModal extends StatelessWidget {
 
   final AppUpdateInfo info;
 
-  /// Opens the store page. Returns true when a store page was opened.
+  /// Opens the store page or the custom download link. Returns true when a
+  /// destination was opened.
   final Future<bool> Function() onUpdate;
 
-  /// Postpones this release (optional updates only). Null for forced ones.
+  /// Skips this release (optional updates only). Null for forced ones.
   final VoidCallback? onLater;
 
   final bool showLater;
@@ -44,10 +49,10 @@ class AppUpdateModal extends StatelessWidget {
     final bodyColor = isDark ? const Color(0xFF16213A) : Colors.white;
     final primaryText = isDark ? const Color(0xFFF1F5F9) : const Color(0xFF1E293B);
     final secondaryText = isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
-    final chipBg = isDark ? Colors.white12 : const Color(0xFFEFF6FF);
     final notesBg = isDark ? const Color(0xFF0F1A2E) : const Color(0xFFF8FAFC);
 
     final required = info.updateRequired;
+    final isCustomLink = info.urlType == 'custom';
 
     return Dialog(
       backgroundColor: Colors.transparent,
@@ -81,7 +86,7 @@ class AppUpdateModal extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         const Text(
-                          'MetriCorex',
+                          'Metricorex',
                           style: TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.w700,
@@ -109,7 +114,7 @@ class AppUpdateModal extends StatelessWidget {
                               ),
                               const SizedBox(width: 4),
                               Text(
-                                required ? 'UPDATE REQUIRED' : 'NEW VERSION',
+                                required ? 'UPDATE REQUIRED' : 'NEW RELEASE',
                                 style: const TextStyle(
                                   color: Colors.white,
                                   fontSize: 10,
@@ -140,7 +145,7 @@ class AppUpdateModal extends StatelessWidget {
                     Text(
                       required
                           ? 'Update required to continue'
-                          : 'A new version is available',
+                          : 'A new release is available',
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 20,
@@ -151,10 +156,10 @@ class AppUpdateModal extends StatelessWidget {
                     const SizedBox(height: 6),
                     Text(
                       required
-                          ? 'Version ${info.latestLabel} is required to keep using '
-                              'MetriCorex securely. Please update now.'
-                          : 'MetriCorex ${info.latestLabel} brings improvements '
-                              'and fixes. Update for the best experience.',
+                          ? 'Please update to the latest version to keep using '
+                              'Metricorex securely. This update cannot be skipped.'
+                          : 'A new version of Metricorex is ready with improvements '
+                              'and fixes. Update now for the best experience.',
                       style: const TextStyle(
                         color: Color(0xE6E0E7FF),
                         fontSize: 13,
@@ -173,33 +178,7 @@ class AppUpdateModal extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Version chips
-                      Row(
-                        children: [
-                          _versionChip(
-                            label: 'INSTALLED',
-                            value: info.currentLabel,
-                            background: chipBg,
-                            accent: secondaryText,
-                            valueColor: primaryText,
-                          ),
-                          const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 8),
-                            child: Icon(Icons.arrow_forward,
-                                size: 16, color: Color(0xFF94A3B8)),
-                          ),
-                          _versionChip(
-                            label: 'LATEST',
-                            value:
-                                '${info.latestLabel} (build ${info.latestVersionCode})',
-                            background: chipBg,
-                            accent: AppColors.primary,
-                            valueColor: AppColors.primaryDark,
-                          ),
-                        ],
-                      ),
                       if (info.releaseNotes != null) ...[
-                        const SizedBox(height: 14),
                         Text(
                           "WHAT'S NEW",
                           style: TextStyle(
@@ -231,16 +210,21 @@ class AppUpdateModal extends StatelessWidget {
                             ),
                           ),
                         ),
-                      ],
-                      const SizedBox(height: 18),
-                      _UpdateButton(onUpdate: onUpdate, storeName: _storeName),
+                        const SizedBox(height: 18),
+                      ] else
+                        const SizedBox(height: 4),
+                      _UpdateButton(
+                        onUpdate: onUpdate,
+                        storeName: _storeName,
+                        isCustomLink: isCustomLink,
+                      ),
                       if (showLater && onLater != null) ...[
                         const SizedBox(height: 6),
                         Center(
                           child: TextButton(
                             onPressed: onLater,
                             child: Text(
-                              'Remind me later',
+                              'Not now',
                               style: TextStyle(
                                 color: secondaryText,
                                 fontSize: 13.5,
@@ -260,58 +244,18 @@ class AppUpdateModal extends StatelessWidget {
       ),
     );
   }
-
-  Widget _versionChip({
-    required String label,
-    required String value,
-    required Color background,
-    required Color accent,
-    required Color valueColor,
-  }) {
-    return Flexible(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: background,
-          borderRadius: BorderRadius.circular(999),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              label,
-              style: TextStyle(
-                color: accent,
-                fontSize: 9,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.8,
-              ),
-            ),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                value,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: valueColor,
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 class _UpdateButton extends StatefulWidget {
-  const _UpdateButton({required this.onUpdate, required this.storeName});
+  const _UpdateButton({
+    required this.onUpdate,
+    required this.storeName,
+    required this.isCustomLink,
+  });
 
   final Future<bool> Function() onUpdate;
   final String storeName;
+  final bool isCustomLink;
 
   @override
   State<_UpdateButton> createState() => _UpdateButtonState();
@@ -327,8 +271,10 @@ class _UpdateButtonState extends State<_UpdateButton> {
       final opened = await widget.onUpdate();
       if (!opened && mounted) {
         AppToast.show(
-          "Couldn't open ${widget.storeName}. Please open it and search for "
-          'MetriCorex to update.',
+          widget.isCustomLink
+              ? "Couldn't open the download link. Please try again."
+              : "Couldn't open ${widget.storeName}. Please open it and search for "
+                  'Metricorex to update.',
           type: AppToastType.error,
           isLong: true,
         );
@@ -368,10 +314,10 @@ class _UpdateButtonState extends State<_UpdateButton> {
             ),
           ),
           child: _launching
-              ? const Row(
+              ? Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    SizedBox(
+                    const SizedBox(
                       width: 16,
                       height: 16,
                       child: CircularProgressIndicator(
@@ -379,10 +325,10 @@ class _UpdateButtonState extends State<_UpdateButton> {
                         valueColor: AlwaysStoppedAnimation(Colors.white),
                       ),
                     ),
-                    SizedBox(width: 10),
+                    const SizedBox(width: 10),
                     Text(
-                      'Opening store…',
-                      style: TextStyle(
+                      widget.isCustomLink ? 'Opening link…' : 'Opening store…',
+                      style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.w700,
                         fontSize: 15,

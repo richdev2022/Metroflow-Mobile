@@ -14,6 +14,7 @@ import 'providers/theme_provider.dart';
 import 'providers/auth_provider.dart';
 import 'services/api.dart';
 import 'services/app_badge_service.dart';
+import 'services/app_update_service.dart';
 import 'services/biometrics.dart';
 import 'services/callkit_service.dart';
 import 'services/push_notification_service.dart';
@@ -766,6 +767,11 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       authNotifier.logout(unregisterDevice: false);
       _router.go('/login');
     });
+
+    // Instant update prompts: a 60-second foreground poll plus the lifecycle
+    // listener inside AppUpdateService mean an admin flipping "new release
+    // available" reaches an open app within a minute, without push plumbing.
+    AppUpdateService.instance.startPolling();
   }
 
   @override
@@ -819,7 +825,12 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
       // App is coming back to foreground - first re-check auth
       await authNotifier.checkAuth(); // Re-check auth to validate token
-      
+
+      // Foreground resume is one of the instant-update triggers — a release
+      // published while the user was away pops right after they return.
+      // (The service de-dupes: one dialog at a time, skips respected.)
+      AppUpdateService.instance.checkAndPrompt(source: 'resume');
+
       // Get updated auth state
       final updatedAuthState = ref.read(authProvider);
       

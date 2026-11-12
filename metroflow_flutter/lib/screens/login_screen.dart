@@ -313,10 +313,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       }
       // One-time permissions primer (never blocks — flag-gated inside).
       await PermissionPrimer.maybeShow();
-      // In-app update prompt: checked shortly after landing so the target
-      // screen settles first. Silent on any failure; force-updates always
-      // show, optional ones respect per-version dismissal.
-      Future.delayed(const Duration(seconds: 2), () {
+      // In-app update prompt: a fresh LOGIN resets any skip so a postponed
+      // release asks again (product flow). Checked shortly after landing so
+      // the target screen settles first. Silent on any failure; force-updates
+      // always show, optional ones respect the skip-until-next-login rule.
+      Future.delayed(const Duration(seconds: 2), () async {
+        await AppUpdateService.instance.clearSessionDismissals();
         AppUpdateService.instance.checkAndPrompt(source: 'login');
       });
     } catch (e) {
@@ -395,7 +397,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       await PermissionPrimer.maybeShow();
       // Same post-login update prompt as password login (de-duped inside
       // AppUpdateService when the startup hook already ran).
-      Future.delayed(const Duration(seconds: 2), () {
+      Future.delayed(const Duration(seconds: 2), () async {
+        await AppUpdateService.instance.clearSessionDismissals();
         AppUpdateService.instance.checkAndPrompt(source: 'google-login');
       });
     } catch (e) {
