@@ -189,8 +189,8 @@ class AuthNotifier extends Notifier<AuthState> {
       }
 
       // Connect socket if authenticated
-      if (isTokenValid && userId != null && businessId != null) {
-        _socketService.connect(userId, businessId, token: token);
+      if (isTokenValid && userId != null) {
+        _socketService.connect(userId, businessId ?? '', token: token);
       }
 
       state = state.copyWith(
@@ -249,9 +249,9 @@ class AuthNotifier extends Notifier<AuthState> {
       }
 
       await Future.wait([
-        _storageService.setToken(token),
-        _storageService.setUserId(userId),
-        _storageService.setBusinessId(businessId),
+        _storageService.setToken(token?.toString()),
+        _storageService.setUserId(userId?.toString()),
+        _storageService.setBusinessId(businessId?.toString()),
         _storageService.setUserName(userName),
       ]);
 
@@ -264,9 +264,9 @@ class AuthNotifier extends Notifier<AuthState> {
       // Save biometrics credentials if enabled
       if (biometricsForAccount) {
         await _storageService.setBiometricsCredentials(
-          token: token,
-          userId: userId,
-          businessId: businessId,
+          token: token?.toString(),
+          userId: userId?.toString(),
+          businessId: businessId?.toString(),
           userName: userName,
         );
       }
@@ -336,7 +336,7 @@ class AuthNotifier extends Notifier<AuthState> {
 
       await Future.wait([
         _storageService.setToken(token),
-        _storageService.setUserId(userId),
+        _storageService.setUserId(userId?.toString()),
         _storageService.setBusinessId(newBusinessId),
         if (userName.isNotEmpty) _storageService.setUserName(userName),
       ]);
@@ -643,9 +643,9 @@ class AuthNotifier extends Notifier<AuthState> {
       if (token != null) {
         await Future.wait([
           _storageService.setToken(token),
-          _storageService.setUserId(userId),
-          _storageService.setBusinessId(businessId),
-          _storageService.setUserName(userName),
+          _storageService.setUserId(userId?.toString()),
+          _storageService.setBusinessId(businessId?.toString()),
+          _storageService.setUserName(userName?.toString()),
         ]);
 
         // Save biometrics credentials if enabled
@@ -689,15 +689,15 @@ class AuthNotifier extends Notifier<AuthState> {
       
       final token = data['token'];
       final userId = data['userId'] ?? data['user']?['id'];
-      final businessId = data['businessId'] ?? data['businessId'] ?? data['user']?['businessId'];
+      final businessId = data['businessId'] ?? data['business']?['id'] ?? data['user']?['businessId'];
       final userName = (data['name'] ?? data['user']?['name'] ?? email)
           .toString();
 
       if (token != null) {
         await Future.wait([
-          _storageService.setToken(token),
-          _storageService.setUserId(userId),
-          _storageService.setBusinessId(businessId),
+          _storageService.setToken(token?.toString()),
+          _storageService.setUserId(userId?.toString()),
+          _storageService.setBusinessId(businessId?.toString()),
           _storageService.setUserName(userName),
         ]);
 

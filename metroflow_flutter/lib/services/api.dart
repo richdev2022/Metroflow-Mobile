@@ -2631,13 +2631,26 @@ class StorageService {
     }
   }
 
-  Future<void> setToken(String token) async {
+  /// LOGIN CRASH FIX (type 'Null' is not a subtype of type 'String'):
+  /// these setters used to demand NON-NULL Strings, but the backend
+  /// legitimately omits fields for some accounts (missing businessId on a
+  /// workspace-less login, integer ids) — the dynamic→String downcast threw
+  /// a TypeError inside the login try-block right after the success
+  /// feedback. Every session setter now accepts ANY JSON scalar (Object?),
+  /// coerces via toString() and removes the key when absent.
+  Future<void> setToken(Object? token) async {
+    final value = token?.toString();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('token', token);
+    if (value == null || value.isEmpty) {
+      await prefs.remove('token');
+      await _deleteTokenSecurely();
+      return;
+    }
+    await prefs.setString('token', value);
     // Primary: secure storage. The SharedPreferences copy is kept for
     // backward compatibility (dio interceptor and existing code paths read
     // prefs directly).
-    await _writeTokenSecurely(token);
+    await _writeTokenSecurely(value);
   }
 
   Future<String?> getToken() async {
@@ -2670,9 +2683,14 @@ class StorageService {
     await _deleteTokenSecurely();
   }
 
-  Future<void> setUserId(String userId) async {
+  Future<void> setUserId(Object? userId) async {
+    final value = userId?.toString();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('userId', userId);
+    if (value == null || value.isEmpty) {
+      await prefs.remove('userId');
+      return;
+    }
+    await prefs.setString('userId', value);
   }
 
   Future<String?> getUserId() async {
@@ -2680,9 +2698,14 @@ class StorageService {
     return prefs.getString('userId');
   }
 
-  Future<void> setBusinessId(String businessId) async {
+  Future<void> setBusinessId(Object? businessId) async {
+    final value = businessId?.toString();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('businessId', businessId);
+    if (value == null || value.isEmpty) {
+      await prefs.remove('businessId');
+      return;
+    }
+    await prefs.setString('businessId', value);
   }
 
   Future<String?> getBusinessId() async {
@@ -2690,9 +2713,14 @@ class StorageService {
     return prefs.getString('businessId');
   }
 
-  Future<void> setUserName(String userName) async {
+  Future<void> setUserName(Object? userName) async {
+    final value = userName?.toString();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('userName', userName);
+    if (value == null || value.isEmpty) {
+      await prefs.remove('userName');
+      return;
+    }
+    await prefs.setString('userName', value);
   }
 
   Future<String?> getUserName() async {
@@ -2746,17 +2774,40 @@ class StorageService {
   }
 
   // Biometrics credential storage
+  /// Nullable on every field (any JSON scalar accepted): some logins lack
+  /// businessId/userName — requiring Strings here crashed enrollment with
+  /// the same Null→String TypeError.
   Future<void> setBiometricsCredentials({
-    required String token,
-    required String userId,
-    required String businessId,
-    required String userName,
+    Object? token,
+    Object? userId,
+    Object? businessId,
+    Object? userName,
   }) async {
+    final tokenValue = token?.toString();
+    final userIdValue = userId?.toString();
+    final businessIdValue = businessId?.toString();
+    final userNameValue = userName?.toString();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('biometrics_token', token);
-    await prefs.setString('biometrics_userId', userId);
-    await prefs.setString('biometrics_businessId', businessId);
-    await prefs.setString('biometrics_userName', userName);
+    if (tokenValue == null || tokenValue.isEmpty) {
+      await prefs.remove('biometrics_token');
+    } else {
+      await prefs.setString('biometrics_token', tokenValue);
+    }
+    if (userIdValue == null || userIdValue.isEmpty) {
+      await prefs.remove('biometrics_userId');
+    } else {
+      await prefs.setString('biometrics_userId', userIdValue);
+    }
+    if (businessIdValue == null || businessIdValue.isEmpty) {
+      await prefs.remove('biometrics_businessId');
+    } else {
+      await prefs.setString('biometrics_businessId', businessIdValue);
+    }
+    if (userNameValue == null || userNameValue.isEmpty) {
+      await prefs.remove('biometrics_userName');
+    } else {
+      await prefs.setString('biometrics_userName', userNameValue);
+    }
   }
 
   Future<Map<String, String>?> getBiometricsCredentials() async {
@@ -2765,12 +2816,14 @@ class StorageService {
     final userId = prefs.getString('biometrics_userId');
     final businessId = prefs.getString('biometrics_businessId');
     final userName = prefs.getString('biometrics_userName');
-    if (token != null && userId != null && businessId != null && userName != null) {
+    // Only token+userId are REQUIRED — accounts without a workspace
+    // legitimately have no businessId.
+    if (token != null && token.isNotEmpty && userId != null && userId.isNotEmpty) {
       return {
         'token': token,
         'userId': userId,
-        'businessId': businessId,
-        'userName': userName,
+        'businessId': businessId ?? '',
+        'userName': userName ?? '',
       };
     }
     return null;

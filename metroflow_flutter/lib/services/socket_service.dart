@@ -222,7 +222,7 @@ class SocketService {
     if (token != null && token.isNotEmpty) _authToken = token;
 
     final optionsBuilder = socket_io.OptionBuilder()
-        .setTransports(['websocket'])
+        .setTransports(['polling', 'websocket'])
         .enableAutoConnect()
         .enableReconnection() // Enable auto reconnection
         .setReconnectionDelay(1000) // Initial delay
