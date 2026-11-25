@@ -98,9 +98,9 @@ jobs:
         working-directory: metroflow_flutter/ios
         run: |
           missing=0
-          for v in APP_STORE_CONNECT_KEY_ID APP_STORE_CONNECT_ISSUER_ID APP_STORE_CONNECT_KEY_P8 APPLE_TEAM_ID; do
+          for v in APP_STORE_CONNECT_KEY_ID APP_STORE_CONNECT_ISSUER_ID APP_STORE_CONNECT_KEY_P8 APPLE_TEAM_ID MATCH_PASSWORD MATCH_KEYCHAIN_PASSWORD; do
             if [ -z "${!v}" ]; then
-              echo "::error::GitHub secret '$v' is not set — follow docs/TESTFLIGHT_SETUP.md (step 3) to add it."
+              echo "::error::GitHub secret '$v' is not set — add it under repo Settings → Secrets and variables → Actions. MATCH_PASSWORD/MATCH_KEYCHAIN_PASSWORD are the match encryption passwords previously hardcoded in this file (see its git history); rotate them later via 'match nuke'."
               missing=1
             fi
           done
@@ -195,10 +195,13 @@ jobs:
           FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT: "60"
           FASTLANE_XCODEBUILD_SETTINGS_RETRIES: "5"
           # match: encrypted signing storage on the `ios-signing` branch.
-          # MATCH_PASSWORD encrypts the cert/profile files in that branch
-          # (repo is private; rotate via repo secrets if ever needed).
-          MATCH_PASSWORD: "Metricorex-iOS-signing-2026-x7QkP92mVbT4wZsR"
-          MATCH_KEYCHAIN_PASSWORD: "Metricorex-iOS-keychain-2026-j3NvL8hFdC6yWaGe"
+          # MATCH_PASSWORD encrypts the cert/profile files in that branch.
+          # SECURITY: these MUST come from repo secrets — the values used to
+          # be hardcoded here, which leaked them into every Actions log and
+          # the git history. Rotate them in repo Settings → Secrets after
+          # this commit lands.
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          MATCH_KEYCHAIN_PASSWORD: ${{ secrets.MATCH_KEYCHAIN_PASSWORD }}
           MATCH_GIT_URL: "https://x-access-token:${{ github.token }}@github.com/richdev2022/Metroflow-Mobile.git"
           # Google Sign-In iOS OAuth client — gym/xcodebuild read these as
           # build-setting overrides (same conditional-export guard as the

@@ -105,12 +105,12 @@ platform :ios do
     UI.user_error!("Bundle ID #{APP_IDENTIFIER} not found on App Store Connect") if bundle_id.nil?
 
     already = bundle_id.get_capabilities.any? do |cap|
-      cap.capability_type.to_s.upcase.include?("SIGN_IN_WITH_APPLE")
+      cap.capability_type.to_s.upcase.include?("APPLE_ID_AUTH")
     end
     if already
       UI.success("Sign In with Apple capability already enabled.")
     else
-      bundle_id.create_capability("SIGN_IN_WITH_APPLE")
+      bundle_id.create_capability("APPLE_ID_AUTH")
       UI.success("Sign In with Apple capability ENABLED on bundle ID #{APP_IDENTIFIER}.")
     end
   end
