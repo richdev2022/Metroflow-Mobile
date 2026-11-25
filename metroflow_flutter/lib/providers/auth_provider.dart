@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api.dart';
+import '../services/apple_auth_service.dart';
 import '../services/biometrics.dart';
 import '../services/google_auth_service.dart';
 import '../services/push_notification_service.dart';
@@ -109,6 +110,7 @@ class AuthNotifier extends Notifier<AuthState> {
   final StorageService _storageService = StorageService();
   final SocketService _socketService = SocketService();
   final GoogleAuthService _googleAuthService = GoogleAuthService();
+  final AppleAuthService _appleAuthService = AppleAuthService();
 
   /// One-shot flag armed by [logout] when the FCM device registration was
   /// deliberately KEPT (security/idle/session-expiry logouts pass
@@ -481,6 +483,146 @@ class AuthNotifier extends Notifier<AuthState> {
     }
   }
 
+  /// Signs in with Apple (iOS, App Store Guideline 4.8): opens the Apple
+  /// sheet, then exchanges the credential for an app session via
+  /// POST /auth/apple and persists the session EXACTLY like password/Google
+  /// login does (token/userId/businessId/userName + biometrics credentials,
+  /// socket connect, idle timer).
+  ///
+  /// Returns `false` when the user cancelled the Apple sheet (not an error).
+  /// Throws a friendly [Exception] on failure.
+  /// [referralCode] — Refer & Earn: attaches an optional referral code when
+  /// this Apple sign-in creates a NEW account (ignored for existing users).
+  Future<bool> loginWithApple({String? referralCode}) async {
+    AppleSignInResult? result;
+    try {
+      result = await _appleAuthService.signIn();
+    } catch (e) {
+      // AppleAuthService already maps errors to friendly messages.
+      rethrow;
+    }
+
+    if (result == null) {
+      // User closed the Apple sheet — not an error.
+      return false;
+    }
+
+    try {
+      final response = await _apiService.appleAuth(
+        identityToken: result.identityToken,
+        authorizationCode: result.authorizationCode,
+        // Apple only returns name/email on the FIRST grant — forward them
+        // when present so the backend can register a displayable identity.
+        user: <String, dynamic>{
+          'identifier': result.userIdentifier,
+          if (result.givenName != null) 'givenName': result.givenName,
+          if (result.familyName != null) 'familyName': result.familyName,
+          if (result.email != null) 'email': result.email,
+        },
+        referralCode: referralCode,
+      );
+      final data = response.data;
+
+      final token = data['token'];
+      if (token == null || (token is String && token.isEmpty)) {
+        throw Exception('Apple sign-in failed: no session token returned');
+      }
+
+      final user = data['user'] is Map
+          ? Map<String, dynamic>.from(data['user'] as Map)
+          : <String, dynamic>{};
+      final userId = (data['userId'] ?? user['id'])?.toString();
+      final businessId = data['businessId']?.toString();
+      // First-grant name beats the (null) backend name; fall back to the
+      // Apple-derived display name so the UI can greet the user immediately.
+      final appleDisplayName = <String?[
+        result.givenName,
+        result.familyName,
+      ].whereType<String>().join(' ').trim();
+      final userName = (user['name']?.toString().isNotEmpty ?? false)
+          ? user['name'].toString()
+          : (appleDisplayName.isNotEmpty ? appleDisplayName : '');
+      final avatarUrl = user['avatarUrl']?.toString();
+      final authProvider =
+          (user['authProvider']?.toString().isNotEmpty ?? false)
+              ? user['authProvider'].toString()
+              : 'apple';
+      final requiresPasswordSetup = data['requiresPasswordSetup'] == true;
+      // SSO onboarding gate — server says whether the business profile is
+      // complete (real name, industry, phone, logo).
+      final profileCompleted = data['profileCompleted'] == true;
+
+      // ACCOUNT-SWITCH BIOMETRIC WIPE — same contract as password login:
+      // a different Apple account signing in wipes the previous account's
+      // enrollment completely before the new session is persisted.
+      final previousUserId = await _resolveEnrolledUserId();
+      if (userId != null &&
+          userId.isNotEmpty &&
+          previousUserId != null &&
+          previousUserId.isNotEmpty &&
+          previousUserId != userId) {
+        await _wipeBiometricsForAccountSwitch(previousUserId);
+      }
+
+      // Same session persistence path as password/Google login.
+      await _storageService.setToken(token.toString());
+      if (userId != null) await _storageService.setUserId(userId);
+      if (businessId != null) await _storageService.setBusinessId(businessId);
+      await _storageService.setUserName(userName);
+      await _storageService.setAvatarUrl(avatarUrl);
+      await _storageService.setAuthProvider(authProvider);
+      await _storageService.setRequiresPasswordSetup(requiresPasswordSetup);
+      await _storageService.setProfileCompleted(profileCompleted);
+
+      // PER-ACCOUNT biometrics (same contract as password login): read the
+      // flag for the account that just signed in — never inherit the
+      // previous account's switch.
+      final biometricsForAccount = await BiometricService.isEnabled(userId);
+
+      // Save biometrics credentials if enabled (same as password login).
+      if (biometricsForAccount && userId != null && businessId != null) {
+        await _storageService.setBiometricsCredentials(
+          token: token.toString(),
+          userId: userId,
+          businessId: businessId,
+          userName: userName,
+        );
+      }
+
+      // Connect socket
+      if (userId != null && businessId != null) {
+        _socketService.connect(userId, businessId, token: token);
+      }
+
+      state = state.copyWith(
+        token: token.toString(),
+        userId: userId,
+        businessId: businessId,
+        userName: userName,
+        avatarUrl: avatarUrl,
+        authProvider: authProvider,
+        requiresPasswordSetup: requiresPasswordSetup,
+        isAuthenticated: true,
+        biometricsEnabled: biometricsForAccount,
+        profileCompleted: profileCompleted,
+      );
+      resetIdleTimer();
+
+      // Keep the server-backed biometric enrollment fresh for this device.
+      unawaited(_reenrollBiometricsIfNeeded());
+
+      // Non-blocking, one-time hint to create a password from Settings.
+      await maybeSuggestPasswordSetup();
+      return true;
+    } on DioException catch (e) {
+      final backendMessage = e.response?.data?['message'] ??
+          e.response?.data?['error'] ??
+          e.message ??
+          'Apple sign-in failed';
+      throw Exception(backendMessage);
+    }
+  }
+
   /// Fetches the current user profile from GET /auth/me. The result is
   /// cached in memory for [meCacheTtl] and mirrored into AuthState
   /// ([hasPassword] / [authProvider] getters) and persistent storage.
@@ -815,6 +957,8 @@ class AuthNotifier extends Notifier<AuthState> {
       // Sign out of the Google account picker too so the next Google
       // sign-in re-opens the account chooser (best effort, never blocks).
       await _googleAuthService.signOut();
+      // Apple's sheet is stateless client-side; kept as a parity no-op.
+      await _appleAuthService.signOut();
 
       // Disconnect socket
       _socketService.disconnect();

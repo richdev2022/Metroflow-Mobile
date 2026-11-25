@@ -1,7 +1,13 @@
 name: metricorex_flutter
 description: Metricorex business management app
 publish_to: "none"
-version: 1.0.0+1
+# Build number = Android versionCode. MUST stay above every versionCode ever
+# uploaded to Google Play: the internal track already serves epoch-second
+# codes up to 1791923832 (users hold them), and the closed-testing track
+# holds 60001/60002 (ci/play-old-resubmit scheme). 1,800,000,000 clears both
+# while staying well under Play's 2,100,000,000 cap. CI workflows add
+# run_number on top of the same 1.8e9 baseline (see .github/workflows/*).
+version: 1.0.0+1800000000
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -58,6 +64,10 @@ dependencies:
   audioplayers: ^6.1.0
   record: ^7.1.1
   google_sign_in: ^6.2.1
+  # Sign In with Apple (App Store Guideline 4.8 — the app offers Google SSO,
+  # so iOS builds must offer an equivalent Apple option). Apple calls live
+  # only on iOS; the login screen gates the button behind a platform check.
+  sign_in_with_apple: ^6.1.0
   flutter_secure_storage: ^9.2.2
   # FCM push notifications (incoming calls/messages while app is closed).
   # firebase_messaging 15.x works with firebase_core 3.x on Flutter >=3.3.

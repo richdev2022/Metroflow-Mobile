@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:dio/dio.dart';
 import 'dart:async';
+import '../components/apple_sign_in_button.dart';
 import '../components/google_sign_in_button.dart';
 import '../theme/app_theme.dart';
 import '../providers/auth_provider.dart';
@@ -25,6 +26,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _passwordController = TextEditingController();
   bool _isLoading = false;
   bool _isGoogleLoading = false;
+  bool _isAppleLoading = false;
   bool _biometricLoading = false;
   bool _biometricsAvailable = false;
   bool _showBiometricsSetupModal = false;
@@ -364,43 +366,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       final success = await ref.read(authProvider.notifier).loginWithGoogle();
       if (!success) return; // user cancelled — no error, stay on screen
 
-      // SSO PROFILE-COMPLETION GATE (role-aware): invited members complete
-      // their PERSONAL profile (photo, name, read-only email, phone OTP,
-      // skip); business admins complete the BUSINESS profile (name,
-      // industry, phone, logo). The backend now returns role-aware flags on
-      // /auth/google — requiresProfileCompletion wins over profileCompleted,
-      // and a skip (profilePromptDismissed) sticks on both gates.
-      final meResponse = await ApiService().getMe();
-      final meData = meResponse.data is Map ? meResponse.data['data'] : null;
-      if (meData is Map && meData['requiresProfileCompletion'] == true) {
-        if (mounted) {
-          context.go('/profile-completion');
-          return;
-        }
-      }
-      final profileCompleted = ref.read(authProvider).profileCompleted;
-      final dismissed = meData is Map ? meData['profilePromptDismissed'] : null;
-      if (profileCompleted == false && dismissed != true) {
-        if (mounted) context.go('/profile-complete');
-        return;
-      }
-
-      await _checkKycAndNavigate();
-      // Same first-login ordering as password login: the biometric activation
-      // offer (when shown) must be answered before the permissions primer
-      // stacks on top of it.
-      final gate = _biometricGate;
-      if (gate != null && !gate.isCompleted) {
-        await gate.future;
-      }
-      // One-time permissions primer (never blocks — flag-gated inside).
-      await PermissionPrimer.maybeShow();
-      // Same post-login update prompt as password login (de-duped inside
-      // AppUpdateService when the startup hook already ran).
-      Future.delayed(const Duration(seconds: 2), () async {
-        await AppUpdateService.instance.clearSessionDismissals();
-        AppUpdateService.instance.checkAndPrompt(source: 'google-login');
-      });
+      // Google + Apple share the exact same post-login routing (profile
+      // gates -> KYC -> biometric gate -> permissions primer -> update
+      // prompt) via _completeSsoSignIn below.
+      await _completeSsoSignIn('google-login');
     } catch (e) {
       if (mounted) {
         await _showAlert('Google Sign-In', _friendlyError(e));
@@ -412,6 +381,89 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         });
       }
     }
+  }
+
+  /// Apple SSO (iOS, Guideline 4.8): sign in with the Apple sheet, then
+  /// reuse the exact same post-login routing as Google SSO (profile gates →
+  /// KYC check → biometrics prompt / kyc-prompt / main). The backend route
+  /// (POST /auth/apple) mirrors /auth/google's contract.
+  Future<void> _handleAppleSignIn() async {
+    if (_isAppleLoading) return;
+    if (!AppleSignInButton.isSupported) return;
+
+    // MAINTENANCE GATE (same rationale as password login above).
+    if (await MaintenanceGate.checkNow()) {
+      await _showAlert(
+          'Under maintenance',
+          'Metricorex is undergoing scheduled maintenance. '
+          'Please try again in a little while.');
+      return;
+    }
+
+    setState(() {
+      _isAppleLoading = true;
+    });
+
+    try {
+      final success = await ref.read(authProvider.notifier).loginWithApple();
+      if (!success) return; // user cancelled the Apple sheet — not an error
+
+      await _completeSsoSignIn('apple-login');
+    } catch (e) {
+      if (mounted) {
+        await _showAlert('Apple Sign-In', _friendlyError(e));
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isAppleLoading = false;
+        });
+      }
+    }
+  }
+
+  /// Shared post-login routing for BOTH SSO providers (Google + Apple):
+  /// role-aware profile-completion gates → KYC check → first-login ordering
+  /// (biometric offer → permissions primer) → in-app update prompt.
+  Future<void> _completeSsoSignIn(String updateSource) async {
+    // SSO PROFILE-COMPLETION GATE (role-aware): invited members complete
+    // their PERSONAL profile (photo, name, read-only email, phone OTP,
+    // skip); business admins complete the BUSINESS profile (name,
+    // industry, phone, logo). The backend returns role-aware flags on the
+    // SSO endpoints — requiresProfileCompletion wins over profileCompleted,
+    // and a skip (profilePromptDismissed) sticks on both gates.
+    final meResponse = await ApiService().getMe();
+    final meData = meResponse.data is Map ? meResponse.data['data'] : null;
+    if (meData is Map && meData['requiresProfileCompletion'] == true) {
+      if (mounted) {
+        context.go('/profile-completion');
+        return;
+      }
+    }
+    final profileCompleted = ref.read(authProvider).profileCompleted;
+    final dismissed = meData is Map ? meData['profilePromptDismissed'] : null;
+    if (profileCompleted == false && dismissed != true) {
+      if (mounted) context.go('/profile-complete');
+      return;
+    }
+
+    await _checkKycAndNavigate();
+    // Same first-login ordering as password login: the biometric activation
+    // offer (when shown) must be answered before the permissions primer
+    // stacks on top of it.
+    final gate = _biometricGate;
+    if (gate != null && !gate.isCompleted) {
+      await gate.future;
+    }
+    // One-time permissions primer (never blocks — flag-gated inside).
+    await PermissionPrimer.maybeShow();
+    // Same post-login update prompt as password login (de-duped inside
+    // AppUpdateService when the startup hook already ran). Skipped releases
+    // re-prompt from the next session (handled marker survives).
+    Future.delayed(const Duration(seconds: 2), () async {
+      await AppUpdateService.instance.clearSessionDismissals();
+      AppUpdateService.instance.checkAndPrompt(source: updateSource);
+    });
   }
 
   String _friendlyError(Object e) {
@@ -541,6 +593,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 onPressed: _handleGoogleSignIn,
                 isLoading: _isGoogleLoading,
               ),
+              // Guideline 4.8: where a third-party login (Google) is offered
+              // on iOS, an equivalent Apple option must be offered too. The
+              // button is iOS-only so Android/web keep the existing layout.
+              if (AppleSignInButton.isSupported) ...[
+                const SizedBox(height: 12),
+                AppleSignInButton(
+                  onPressed: _handleAppleSignIn,
+                  isLoading: _isAppleLoading,
+                ),
+              ],
               const SizedBox(height: 22),
               AuthSwitchPrompt(
                 question: "Don't have an account?",

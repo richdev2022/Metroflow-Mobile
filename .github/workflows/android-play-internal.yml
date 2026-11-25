@@ -13,12 +13,19 @@ name: Android Play Release
 #                                 flutter-build.yml; publishing REQUIRES them —
 #                                 Play rejects debug-signed bundles).
 #
-# versionCode strategy: GitHub run_number + 50000 — deterministic and
-# strictly increasing per workflow run, DISJOINT from flutter-build.yml
-# (+1000) and store-production-release.yml (+90000). Epoch seconds are
-# FORBIDDEN: they produced ~1.79B codes and trip Play's "version code
-# significantly higher than your previous version code" warning
-# (Play cap: 2,100,000,000).
+# versionCode strategy: GitHub run_number + 1800000000 — deterministic and
+# strictly increasing per workflow run, SHARED BASELINE with
+# store-production-release.yml and flutter-build.yml (run_number is
+# repo-wide and monotonic, so every code is unique and increasing).
+#
+# WHY THE 1.8e9 BASELINE: the internal track ALREADY serves epoch-second
+# versionCodes (last one 1791923832 — users hold it), and closed-testing
+# holds 60001/60002 (old resubmit scheme). Any code below those is rejected
+# with "You can't rollout this release because it doesn't allow any
+# existing users to upgrade to the newly added app bundles". 1.8e9 clears
+# every previously burned code while staying under Play's 2,100,000,000
+# cap (~300M headroom). Epoch seconds are FORBIDDEN — they produced ~1.79B
+# codes and trip Play's "version code significantly higher" warning.
 
 on:
   workflow_dispatch:
@@ -154,7 +161,9 @@ jobs:
           echo "NDK $NDK_REV installed via direct download."
 
       - name: Compute versionCode
-        run: echo "VERSION_CODE=$(( ${{ github.run_number }} + 50000 ))" >> "$GITHUB_ENV"
+        # 1.8e9 baseline + run_number — above every burned code (epoch
+        # 1791923832 on the internal track, 60001/60002 on closed testing).
+        run: echo "VERSION_CODE=$(( ${{ github.run_number }} + 1800000000 ))" >> "$GITHUB_ENV"
 
       - name: Build signed AAB
         working-directory: metroflow_flutter

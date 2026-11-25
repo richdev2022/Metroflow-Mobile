@@ -2,13 +2,21 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Push Notifications capability — RELEASE (App Store / TestFlight).
-	     "production" makes Xcode's automatic signing pick an Apple
-	     DISTRIBUTION profile when archiving on CI (distribution profiles do
-	     not require registered devices — development profiles do, which made
-	     cloud-signed archives fail with "Your team has no devices").
-	     APNs delivery for TestFlight/App Store builds uses production. -->
-	<key>aps-environment</key>
-	<string>production</string>
+        <!-- Push Notifications capability — RELEASE (App Store / TestFlight).
+             "production" makes Xcode's automatic signing pick an Apple
+             DISTRIBUTION profile when archiving on CI (distribution profiles do
+             not require registered devices — development profiles do, which made
+             cloud-signed archives fail with "Your team has no devices").
+             APNs delivery for TestFlight/App Store builds uses production. -->
+        <key>aps-environment</key>
+        <string>production</string>
+        <!-- Sign In with Apple capability (App Store Guideline 4.8 — the app
+             offers Google SSO, so iOS must offer an Apple equivalent).
+             Required by the sign_in_with_apple plugin; the App ID in the
+             developer portal must ALSO have the capability enabled and the
+             provisioning profile must include it (automatic signing does
+             this once the entitlement is here). -->
+        <key>com.apple.developer.applesignin</key>
+        <string>Default</string>
 </dict>
 </plist>

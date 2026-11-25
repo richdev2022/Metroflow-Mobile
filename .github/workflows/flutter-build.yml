@@ -141,16 +141,19 @@ jobs:
             echo "ANDROID_KEY_PASSWORD=$ANDROID_KEY_PASSWORD"
           } >> "$GITHUB_ENV"
 
-      # versionCode = run_number + 1000 — small, strictly increasing, far
-      # below Play's 2,100,000,000 cap. NEVER use date/epoch codes again:
-      # date +%s (~1.79e9) burned five codes on the internal track
-      # (1791920059..1791923832) and tripped Play's "version code
-      # significantly higher than previous" warning; the space would be
-      # exhausted by ~2036. Publishing is CENTRALIZED in
-      # android-play-internal.yml (+50000) and store-production-release.yml
-      # (+90000) — this workflow only builds artifacts.
+      # versionCode = run_number + 1800000000 — same 1.8e9 baseline as the
+      # publishing workflows (android-play-internal.yml,
+      # store-production-release.yml). This workflow only builds artifacts
+      # (no Play upload), but its AAB artifact has historically been
+      # re-submitted to Play manually, so its codes MUST also stay above
+      # every burned code: epoch-second codes (last 1791923832) are live on
+      # the internal track and 60001/60002 (old resubmit scheme) on
+      # closed-testing. NEVER use date/epoch codes again — they burned five
+      # codes on the internal track (1791920059..1791923832) and forced this
+      # 1.8e9 baseline. Publishing stays centralized in android-play-internal.yml
+      # and store-production-release.yml.
       - name: Compute versionCode
-        run: echo "VERSION_CODE=$(( ${{ github.run_number }} + 1000 ))" >> "$GITHUB_ENV"
+        run: echo "VERSION_CODE=$(( ${{ github.run_number }} + 1800000000 ))" >> "$GITHUB_ENV"
 
       - name: Build APK
         working-directory: metroflow_flutter

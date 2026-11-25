@@ -488,6 +488,36 @@ class ApiService {
     });
   }
 
+  /// Apple Sign-In (iOS, App Store Guideline 4.8): exchanges the Apple
+  /// identity token for an app session. REQUEST CONTRACT (backend route is
+  /// owned by the backend workstream — implemented to mirror /auth/google):
+  ///   POST /auth/apple {
+  ///     identityToken:     String  — Apple JWT, verified server-side,
+  ///     authorizationCode: String  — one-time code (server may exchange),
+  ///     user: { givenName?, familyName?, email? }  — ONLY the first grant
+  ///            returns these; subsequent grants omit the `user` object,
+  ///     referralCode?: String — optional, same semantics as /auth/google.
+  ///   }
+  /// RESPONSE SHAPE (identical to /auth/google): success, token, userId,
+  /// businessId, isNewUser, requiresPasswordSetup, profileCompleted, role,
+  /// requiresProfileCompletion, phoneVerified, profilePromptDismissed,
+  /// avatarUrl, phoneNumber, user { id, name, email, avatarUrl,
+  /// authProvider: 'apple', hasPassword }.
+  Future<Response> appleAuth({
+    required String identityToken,
+    required String authorizationCode,
+    Map<String, dynamic>? user,
+    String? referralCode,
+  }) async {
+    return await _dio.post('/auth/apple', data: {
+      'identityToken': identityToken,
+      'authorizationCode': authorizationCode,
+      if (user != null && user.isNotEmpty) 'user': user,
+      if (referralCode != null && referralCode.trim().isNotEmpty)
+        'referralCode': referralCode.trim().toUpperCase(),
+    });
+  }
+
   // ---------------------------------------------------------------------------
   // Refer & Earn
   // ---------------------------------------------------------------------------

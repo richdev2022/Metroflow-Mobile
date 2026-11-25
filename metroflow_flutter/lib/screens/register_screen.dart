@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../components/apple_sign_in_button.dart';
 import '../components/google_sign_in_button.dart';
 import '../providers/auth_provider.dart';
 import '../services/api.dart';
@@ -517,7 +518,34 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
           );
       if (!success) return; // user cancelled — stay on screen
       if (!mounted) return;
-      await _routeAfterGoogleAuth();
+      await _routeAfterSsoAuth();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_friendlyError(e)),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
+
+  /// Apple SSO sign-up/sign-in (iOS, Guideline 4.8): reuses loginWithApple
+  /// (same session persistence as Google SSO), then routes identically.
+  Future<void> _handleAppleSignIn() async {
+    if (isLoading) return;
+    if (!AppleSignInButton.isSupported) return;
+    setState(() => isLoading = true);
+    try {
+      final success = await ref.read(authProvider.notifier).loginWithApple(
+            referralCode: referralCodeController.text.trim().toUpperCase(),
+          );
+      if (!success) return; // user cancelled the Apple sheet — stay on screen
+      if (!mounted) return;
+      await _routeAfterSsoAuth();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -540,12 +568,12 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     return message;
   }
 
-  /// Post-Google-auth routing: always straight to the dashboard. KYC is no
-  /// longer an onboarding step — main_screen's finance gate demands BVN/NIN
-  /// only when the user tries to use wallet/transfers/payroll/payment links/
-  /// subscriptions.
-  Future<void> _routeAfterGoogleAuth() async {
-    // SSO PROFILE-COMPLETION GATE (same as the login screen): Google sign-ups
+  /// Post-SSO-auth routing (Google + Apple): always straight to the
+  /// dashboard. KYC is no longer an onboarding step — main_screen's finance
+  /// gate demands BVN/NIN only when the user tries to use wallet/transfers/
+  /// payroll/payment links/subscriptions.
+  Future<void> _routeAfterSsoAuth() async {
+    // SSO PROFILE-COMPLETION GATE (same as the login screen): SSO sign-ups
     // must fill in business name / industry / phone / logo before the
     // dashboard. KYC is no longer an onboarding step — main_screen's finance
     // gate demands BVN/NIN only when the user tries to USE money features.
@@ -709,6 +737,15 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 onPressed: _handleGoogleSignIn,
                 isLoading: isLoading,
               ),
+              // Guideline 4.8: the sign-up screen offers Google SSO, so iOS
+              // must offer an equivalent Apple option in the same place.
+              if (AppleSignInButton.isSupported) ...[
+                const SizedBox(height: 12),
+                AppleSignInButton(
+                  onPressed: _handleAppleSignIn,
+                  isLoading: isLoading,
+                ),
+              ],
               const SizedBox(height: 22),
               AuthSwitchPrompt(
                 question: 'Already have an account?',
