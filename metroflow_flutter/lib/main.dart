@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/semantics.dart' show SemanticsBinding;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:app_links/app_links.dart';
@@ -92,6 +94,14 @@ import 'screens/metric_ai_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // WEB A11Y HOOK: booting with `?semantics=1` in the URL enables the
+  // semantics tree immediately (normally Flutter web waits for an assistive
+  // technology to request it). Screen readers and automated UI tests get a
+  // real DOM node per widget; native builds and plain web users are
+  // completely unaffected.
+  if (kIsWeb && Uri.base.queryParameters['semantics'] == '1') {
+    SemanticsBinding.instance.ensureSemantics();
+  }
   // RAM HYGIENE: Flutter's default image cache holds up to 1000 entries /
   // 100 MB of decoded bitmaps. On 2-4 GB devices that alone can push the
   // app into swap and get the process killed mid-use. Tighten both limits —
