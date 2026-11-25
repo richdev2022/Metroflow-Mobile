@@ -535,7 +535,7 @@ class AuthNotifier extends Notifier<AuthState> {
       final businessId = data['businessId']?.toString();
       // First-grant name beats the (null) backend name; fall back to the
       // Apple-derived display name so the UI can greet the user immediately.
-      final appleDisplayName = <String?[
+      final appleDisplayName = <String?>[
         result.givenName,
         result.familyName,
       ].whereType<String>().join(' ').trim();

@@ -88,8 +88,8 @@ class AppleAuthService {
         ],
       );
 
-      final identityToken = _utf8(credential.identityToken);
-      final authorizationCode = _utf8(credential.authorizationCode);
+      final identityToken = _clean(credential.identityToken);
+      final authorizationCode = _clean(credential.authorizationCode);
       if (identityToken == null || identityToken.isEmpty) {
         throw AppleSignInException(
           'Apple sign-in did not return an identity token. Please try again '
@@ -100,14 +100,17 @@ class AppleAuthService {
       return AppleSignInResult(
         identityToken: identityToken,
         authorizationCode: authorizationCode ?? '',
-        userIdentifier: credential.userIdentifier,
+        userIdentifier: _clean(credential.userIdentifier) ?? '',
         givenName: _clean(credential.givenName),
         familyName: _clean(credential.familyName),
         email: _clean(credential.email),
       );
-    } on SignInWithAppleCanceledException {
-      // User closed the Apple sheet — not an error.
-      return null;
+    } on SignInWithAppleAuthorizationException catch (e) {
+      if (e.code == AuthorizationErrorCode.canceled) {
+        // User closed the Apple sheet — not an error.
+        return null;
+      }
+      throw AppleSignInException(_mapAuthorizationError(e));
     } on SignInWithAppleNotSupportedException {
       throw AppleSignInException(
         'Sign in with Apple is not available on this device. Please continue '
@@ -130,9 +133,18 @@ class AppleAuthService {
     }
   }
 
-  static String? _utf8(List<int>? bytes) {
-    if (bytes == null || bytes.isEmpty) return null;
-    return utf8.decode(bytes, allowMalformed: true);
+  /// Maps plugin-level authorization failures to friendly messages.
+  /// `canceled` is handled upstream and never reaches here.
+  String _mapAuthorizationError(SignInWithAppleAuthorizationException e) {
+    switch (e.code) {
+      case AuthorizationErrorCode.invalidResponse:
+      case AuthorizationErrorCode.notHandled:
+        return 'Sign in with Apple is blocked by the app configuration. '
+            'Please update the app or contact support.';
+      default:
+        return 'Apple sign-in failed. Please try again or continue with your '
+            'email and password.';
+    }
   }
 
   static String? _clean(String? value) {
